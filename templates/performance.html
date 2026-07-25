@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📊 판매 실적</h1>
+<div class="subtitle">기간별 제품 판매량·순매출·순이익을 확인하세요. 판매 취소는 🔄 입출고 관리 화면에서 처리할 수 있어요.</div>
+<!-- 베스트셀러 TOP 10 -->
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+    <h3 style="margin:0;">🏆 베스트셀러 TOP 10</h3>
+    <div id="bestsellerTabs" style="display:flex; gap:6px;">
+      <button data-period="day" onclick="loadBestsellers('day')" class="tab-btn active">오늘</button>
+      <button data-period="week" onclick="loadBestsellers('week')" class="tab-btn">이번주</button>
+      <button data-period="month" onclick="loadBestsellers('month')" class="tab-btn">이번달</button>
+    </div>
+  </div>
+  <div id="bestsellerList" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:10px; padding:10px 0;">
+    <div style="color:var(--text-light); text-align:center; padding:20px;">⏳ 로딩 중...</div>
+  </div>
+</div>
+
+<div class="quick-filters" id="quickFilters" style="display:flex; gap:6px; margin-bottom:8px;">
+  <button data-range="today" onclick="pickRange('today')">오늘</button>
+  <button data-range="week" onclick="pickRange('week')">이번주</button>
+  <button data-range="month" onclick="pickRange('month')">이번달</button>
+</div>
+<div class="toolbar">
+  <input type="date" id="startDate" onchange="clearQuick(); load()">
+  <span style="align-self:center; color:var(--text-light); font-size:12px;">~</span>
+  <input type="date" id="endDate" onchange="clearQuick(); load()">
+  <select id="sortSel" onchange="load()">
+    <option value="qty">판매량 많은 순</option>
+    <option value="profit">이익 많은 순</option>
+  </select>
+  <button onclick="exportPerformance()">📊 엑셀 다운로드</button>
+</div>
+
+<div class="summary-cards">
+  <div class="summary-card"><div class="label">총 판매량</div><div class="value" id="sumQty">-</div></div>
+  <div class="summary-card"><div class="label">순매출</div><div class="value" id="sumRevenue">-</div></div>
+  <div class="summary-card"><div class="label">순이익</div><div class="value" id="sumProfit">-</div></div>
+</div>
+
+<table>
+  <thead>
+  <tr>
+    <th>#</th>
+    <th>제품명</th>
+    <th>브랜드</th>  <!-- 추가 -->
+    <th>카테고리</th>
+    <th>판매량</th>
+    <th>순매출</th>
+    <th>순이익</th>
+  </tr>
+</thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<script>
+// ---------- 베스트셀러 TOP 10 ----------
+async function loadBestsellers(period) {
+  document.querySelectorAll('#bestsellerTabs .tab-btn').forEach(b => b.classList.remove('active'));
+  const activeTabBtn = document.querySelector(`#bestsellerTabs .tab-btn[data-period="${period}"]`);
+  if (activeTabBtn) activeTabBtn.classList.add('active');
+
+  const container = document.getElementById('bestsellerList');
+  container.innerHTML = '<div style="color:var(--text-light); text-align:center; padding:20px;">⏳ 로딩 중...</div>';
+
+  try {
+    const rows = await api(`/api/bestsellers?period=${period}`);
+    if (!rows || rows.length === 0) {
+      container.innerHTML = '<div style="color:var(--text-light); text-align:center; padding:20px;">📭 해당 기간의 판매 데이터가 없습니다.</div>';
+      return;
+    }
+    container.innerHTML = rows.map((r, idx) => {
+  const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx+1}`;
+  return `
+    <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center;">
+      <div style="font-size:24px;">${medal}</div>
+      <div style="font-weight:600; font-size:14px; margin:4px 0;">${escapeHtml(r.name)}</div>
+      ${r.brand_name ? `<div style="font-size:12px; color:var(--text-light);">🏷️ ${escapeHtml(r.brand_name)}</div>` : ''}
+      <div style="font-size:12px; color:var(--text-light);">판매 ${fmt(r.sold_qty)}개</div>
+      <div style="font-size:12px; color:var(--accent);">${fmt(r.revenue)}원</div>
+    </div>
+  `;
+    }).join('');
+  } catch (e) {
+    console.error('베스트셀러 로드 오류:', e);
+    container.innerHTML = '<div style="color:var(--danger); text-align:center; padding:20px;">⚠️ 데이터를 불러올 수 없습니다.</div>';
+  }
+}
+
+function todayStr(d) { return d.toISOString().slice(0, 10); }
+
+function pickRange(range) {
+  document.querySelectorAll('#quickFilters button').forEach(b => b.classList.remove('selected'));
+  document.querySelector(`[data-range="${range}"]`).classList.add('selected');
+  const now = new Date();
+  let start;
+  if (range === 'today') start = new Date(now);
+  else if (range === 'week') { start = new Date(now); start.setDate(now.getDate() - now.getDay()); }
+  else { start = new Date(now.getFullYear(), now.getMonth(), 1); }
+  document.getElementById('startDate').value = todayStr(start);
+  document.getElementById('endDate').value = todayStr(now);
+  load();
+}
+
+function clearQuick() {
+  document.querySelectorAll('#quickFilters button').forEach(b => b.classList.remove('selected'));
+}
+
+async function load() {
+  // 로딩 표시
+  document.getElementById('sumQty').textContent = '⏳';
+  document.getElementById('sumRevenue').textContent = '⏳';
+  document.getElementById('sumProfit').textContent = '⏳';
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
+
+  try {
+    const params = new URLSearchParams({
+      start_date: document.getElementById('startDate').value,
+      end_date: document.getElementById('endDate').value,
+      sort: document.getElementById('sortSel').value,
+    });
+    const rows = await api('/api/performance?' + params.toString());
+    const tbody = document.getElementById('tbody');
+    if (!rows || rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">📊</span>해당 기간의 판매 실적이 없습니다.</div></td></tr>';
+      document.getElementById('sumQty').textContent = '0개';
+      document.getElementById('sumRevenue').textContent = '0원';
+      document.getElementById('sumProfit').textContent = '0원';
+      return;
+    }
+
+    tbody.innerHTML = rows.map((r, idx) => `
+      <tr>
+    <td><span class="row-number">${idx + 1}</span></td>
+    <td>${escapeHtml(r.product_name)}</td>
+    <td>${r.brand_name ? `<span class="brand-tag" style="background:${r.brand_color || '#8a8f98'};">${escapeHtml(r.brand_name)}</span>` : '-'}</td>
+    <td>${r.category_name ? `<span class="chip" style="background:${r.category_color}">${escapeHtml(r.category_name)}</span>` : '<span style="color:var(--text-light)">미분류</span>'}</td>
+    <td>${fmt(r.sold_qty)}</td>
+    <td>${fmt(r.revenue)}원</td>
+    <td>${fmt(r.profit)}원</td>
+  </tr>
+    `).join('');
+
+    const totalQty = (rows || []).reduce((a, r) => a + (r.sold_qty || 0), 0);
+    const totalRevenue = (rows || []).reduce((a, r) => a + (r.revenue || 0), 0);
+    const totalProfit = (rows || []).reduce((a, r) => a + (r.profit || 0), 0);
+    document.getElementById('sumQty').textContent = fmt(totalQty) + '개';
+    document.getElementById('sumRevenue').textContent = fmt(totalRevenue) + '원';
+    document.getElementById('sumProfit').textContent = fmt(totalProfit) + '원';
+  } catch (e) {
+    console.error('❌ 실적 로드 오류:', e);
+    toast('데이터를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+    document.getElementById('sumQty').textContent = '오류';
+    document.getElementById('sumRevenue').textContent = '오류';
+    document.getElementById('sumProfit').textContent = '오류';
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
+  }
+}
+
+async function exportPerformance() {
+  const start = document.getElementById('startDate').value;
+  const end = document.getElementById('endDate').value;
+  window.open(`/api/export/performance?start_date=${start}&end_date=${end}`, '_blank');
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  pickRange('month');
+  loadBestsellers('day');
+});
+</script>
+{% endblock %}

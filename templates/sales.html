@@ -1,0 +1,1092 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>💰 판매 등록</h1>
+<div class="subtitle">제품을 클릭해서 장바구니에 담고, 결제수단을 선택해 등록하세요. (탭 이동해도 장바구니가 유지됩니다)</div>
+
+<!-- 탭 -->
+<div class="tab-row">
+  <button class="tab-btn active" data-tab="normal" onclick="switchTab('normal')">일반 판매</button>
+  <button class="tab-btn" data-tab="preorder" onclick="switchTab('preorder')">선결제</button>
+</div>
+
+<!-- ============================================================ -->
+<!-- 일반 판매 탭 -->
+<!-- ============================================================ -->
+<div id="tab-normal" class="tab-content">
+  <div class="toolbar">
+    <select id="f_store" onchange="onStoreChange()">
+      <option value="">매장 선택</option>
+    </select>
+    <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" oninput="onSearchInput()" style="width:220px;">
+    <button onclick="loadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
+  </div>
+
+  <div class="sale-layout">
+    <div class="sale-left">
+      <div class="cat-tabs" id="catTabs"></div>
+      <div class="product-grid" id="grid">
+        <div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 '전체 보기'를 클릭하세요.</div>
+      </div>
+    </div>
+
+    <div class="sale-right">
+      <!-- 상단 고정 영역 -->
+      <div class="cart-header">
+        <div class="cart-title">🛒 장바구니</div>
+        <div class="cart-total"><span>합계</span><span id="cartTotal">0원</span></div>
+        <div class="pay-btns">
+          <button id="pay-현금" onclick="selectPayment('현금')">현금</button>
+          <button id="pay-카드" onclick="selectPayment('카드')">카드</button>
+          <button id="pay-계좌이체" onclick="selectPayment('계좌이체')">계좌이체</button>
+        </div>
+        <input type="text" id="f_staff" placeholder="담당자 (선택)" style="width:100%; margin-bottom:8px; padding:8px;">
+        <button class="primary" style="width:100%; padding:12px; font-size:16px;" onclick="checkout()">등록하기</button>
+      </div>
+      <!-- 중간: 스크롤 영역 -->
+      <div class="cart-items-wrap">
+        <div id="cartList"><div class="cart-empty">담긴 제품이 없습니다</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 선결제 탭 -->
+<!-- ============================================================ -->
+<div id="tab-preorder" class="tab-content" style="display:none;">
+  <div class="toolbar">
+    <select id="pre_store" onchange="onPreStoreChange()">
+      <option value="">매장 선택</option>
+    </select>
+    <input type="text" id="pre_searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" oninput="onPreSearchInput()" style="width:220px;">
+    <button onclick="loadAllPreProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
+  </div>
+
+  <div class="sale-layout">
+    <div class="sale-left">
+      <div class="cat-tabs" id="pre_catTabs"></div>
+      <div class="product-grid" id="pre_grid">
+        <div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 '전체 보기'를 클릭하세요.</div>
+      </div>
+    </div>
+
+    <div class="sale-right">
+      <!-- 상단 고정 영역: 고객 정보 + 합계 + 결제수단 + 등록 -->
+      <div class="cart-header">
+        <div style="margin-bottom:8px;">
+          <div class="form-field" style="margin-bottom:4px;">
+            <label style="font-size:12px; color:var(--text-light);">👤 고객명</label>
+            <input type="text" id="pre_customer_name" placeholder="고객명" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          </div>
+          <div class="form-field" style="margin-bottom:4px;">
+            <label style="font-size:12px; color:var(--text-light);">📞 연락처</label>
+            <input type="text" id="pre_customer_phone" placeholder="연락처" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          </div>
+          <div class="form-field" style="margin-bottom:4px;">
+            <label style="font-size:12px; color:var(--text-light);">🏠 주소</label>
+            <input type="text" id="pre_customer_address" placeholder="주소" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          </div>
+          <div class="form-field" style="margin-bottom:4px;">
+            <label style="font-size:12px; color:var(--text-light);">📝 요청사항</label>
+            <textarea id="pre_request_memo" placeholder="요청사항을 입력하세요." style="width:100%; height:40px; resize:vertical; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text); font-family:inherit; font-size:13px;"></textarea>
+          </div>
+        </div>
+        <div class="cart-title" style="margin-top:4px;">🛒 장바구니</div>
+        <div class="cart-total"><span>합계</span><span id="pre_cartTotal">0원</span></div>
+        <div class="pay-btns">
+          <button id="pre_pay-현금" onclick="selectPrePayment('현금')">현금</button>
+          <button id="pre_pay-카드" onclick="selectPrePayment('카드')">카드</button>
+          <button id="pre_pay-계좌이체" onclick="selectPrePayment('계좌이체')">계좌이체</button>
+        </div>
+        <button class="primary" style="width:100%; padding:12px; font-size:16px;" onclick="checkoutPreOrder()">💳 선결제 등록</button>
+      </div>
+      <!-- 중간: 스크롤 영역 (장바구니 아이템) -->
+      <div class="cart-items-wrap">
+        <div id="pre_cartList"><div class="cart-empty">담긴 제품이 없습니다</div></div>
+      </div>
+      <!-- 하단: 출고 대기 목록 (스크롤) -->
+      <div style="margin-top:12px; border-top:2px solid var(--border); padding-top:8px; flex-shrink:0; max-height:200px; overflow-y:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <strong style="color:var(--text);">📦 출고 대기</strong>
+          <button onclick="loadPreOrders()" style="font-size:12px; padding:2px 8px;">🔄 새로고침</button>
+        </div>
+        <div id="pre_order_list" style="font-size:13px;">
+          <div style="color:var(--text-light); text-align:center; padding:10px 0;">출고 대기 주문이 없습니다.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 추가 스타일 -->
+<!-- ============================================================ -->
+<style>
+/* 🔥 제품 카드 4열 배치 */
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.product-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+.product-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+}
+.product-card.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.product-card .pname {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.product-card .pprice {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+}
+.product-card .pqty {
+  color: var(--text-light);
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.cat-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.cat-tab {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  cursor: pointer;
+  font-size: 13px;
+}
+.cat-tab:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.cat-tab.active {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+body.dark-mode .cat-tab.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* 🔥 장바구니 컨테이너 - 고정 + 스크롤 */
+.sale-right {
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+  height: 100%;
+}
+
+/* 상단 고정 영역 */
+.cart-header {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+
+/* 장바구니 아이템 스크롤 영역 */
+.cart-items-wrap {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+/* 스크롤바 스타일 (얇고 투명) */
+.cart-items-wrap::-webkit-scrollbar {
+  width: 4px;
+}
+.cart-items-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cart-items-wrap::-webkit-scrollbar-thumb {
+  background: var(--text-light);
+  border-radius: 4px;
+}
+.cart-items-wrap::-webkit-scrollbar-thumb:hover {
+  background: var(--text);
+}
+
+/* 🔥 서비스 버튼 & 할인 입력 필드 크기 증가 */
+.discount-input {
+  width: 120px !important;
+  padding: 6px 8px !important;
+  font-size: 14px !important;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+}
+.discount-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 🔥 모바일 반응형 */
+@media (max-width: 768px) {
+  .product-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .product-card {
+    padding: 10px 8px;
+  }
+  .product-card .pname {
+    font-size: 12px;
+  }
+  .product-card .pprice {
+    font-size: 13px;
+  }
+  
+  /* 모바일에서 고정 해제 */
+  .sale-right {
+    max-height: none;
+    height: auto;
+  }
+  .cart-header {
+    position: static;
+  }
+  .cart-items-wrap {
+    overflow-y: visible;
+    max-height: none;
+  }
+}
+</style>
+
+<!-- ============================================================ -->
+<!-- JavaScript -->
+<!-- ============================================================ -->
+<script>
+console.log('✅ 판매 등록 페이지 로드됨');
+
+// ---------- 공통 변수 ----------
+let categories = [];
+let products = [];
+let stores = [];
+let selectedCategory = 'all';
+let payment = null;
+
+const CART_STORAGE_KEY = 'normal_cart';
+let cart = loadCartFromStorage(CART_STORAGE_KEY);
+let normalSearchQuery = '';
+
+const PRE_CART_STORAGE_KEY = 'pre_cart';
+let preCart = loadCartFromStorage(PRE_CART_STORAGE_KEY);
+let prePayment = null;
+let preSelectedCategory = 'all';
+let preSearchQuery = '';
+
+// ---------- 매장/카테고리/제품 로드 ----------
+async function loadStores() {
+  console.log('📡 loadStores() 시작');
+  const sel = document.getElementById('f_store');
+  const preSel = document.getElementById('pre_store');
+  if (!sel || !preSel) {
+    console.error('❌ 매장 선택 요소를 찾을 수 없음');
+    return;
+  }
+
+  try {
+    let storesData = await api('/api/stores');
+    console.log('✅ 매장 데이터 수신:', storesData);
+
+    if (!storesData || !Array.isArray(storesData) || storesData.length === 0) {
+      storesData = [
+        { id: 1, name: '본점' },
+        { id: 2, name: '강남역점' }
+      ];
+      console.log('⚠️ fallback 매장 사용');
+    }
+
+    stores = storesData;
+    const opts = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    sel.innerHTML = opts;
+    preSel.innerHTML = opts;
+
+    // 🔥 전역 매장 ID 적용
+    const globalStoreId = localStorage.getItem('global_store_id');
+    if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
+      sel.value = globalStoreId;
+      preSel.value = globalStoreId;
+    } else if (stores.length > 0) {
+      sel.value = stores[0].id;
+      preSel.value = stores[0].id;
+      localStorage.setItem('global_store_id', stores[0].id);
+    }
+
+    await loadCategories();
+    await loadProducts();
+    await loadPreProducts();
+    await loadPreOrders();
+    renderCart();
+    renderPreCart();
+
+  } catch (e) {
+    console.error('❌ 매장 로드 오류:', e);
+    const fallbackStores = [
+      { id: 1, name: '본점' },
+      { id: 2, name: '강남역점' }
+    ];
+    stores = fallbackStores;
+    const opts = fallbackStores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    sel.innerHTML = opts;
+    preSel.innerHTML = opts;
+    if (fallbackStores.length > 0) {
+      sel.value = fallbackStores[0].id;
+      preSel.value = fallbackStores[0].id;
+    }
+    toast('매장 목록을 불러오지 못해 기본 매장을 표시합니다.', true, '⚠️');
+    await loadCategories();
+    await loadPreProducts();
+    await loadPreOrders();
+    renderCart();
+    renderPreCart();
+  }
+}
+
+async function loadCategories() {
+  console.log('📡 카테고리 목록 로드 시작...');
+  try {
+    categories = await api('/api/categories');
+    console.log('✅ 카테고리 데이터 수신:', categories);
+    renderTabs();
+    renderPreTabs();
+  } catch (e) {
+    console.error('❌ 카테고리 로드 오류:', e);
+    toast('카테고리를 불러오지 못했습니다.', true, '⚠️');
+    categories = [];
+    renderTabs();
+    renderPreTabs();
+  }
+}
+
+function renderTabs() {
+  const wrap = document.getElementById('catTabs');
+  const tabs = [{ id: 'all', name: '전체', color: '#37352F' }, ...categories];
+  wrap.innerHTML = tabs.map(c => `
+    <div class="cat-tab ${selectedCategory == c.id ? 'active' : ''}" onclick="pickCategory('${c.id}')">${escapeHtml(c.name)}</div>
+  `).join('');
+}
+
+function renderPreTabs() {
+  const wrap = document.getElementById('pre_catTabs');
+  const tabs = [{ id: 'all', name: '전체', color: '#37352F' }, ...categories];
+  wrap.innerHTML = tabs.map(c => `
+    <div class="cat-tab ${preSelectedCategory == c.id ? 'active' : ''}" onclick="pickPreCategory('${c.id}')">${escapeHtml(c.name)}</div>
+  `).join('');
+}
+
+function pickCategory(id) {
+  selectedCategory = id === 'all' ? 'all' : parseInt(id, 10);
+  renderTabs();
+  renderGrid();
+}
+
+function pickPreCategory(id) {
+  preSelectedCategory = id === 'all' ? 'all' : parseInt(id, 10);
+  renderPreTabs();
+  renderPreGrid();
+}
+
+// ---------- 일반 판매 제품 로드 ----------
+async function loadProducts(forceLoad = false) {
+  console.log('📡 제품 목록 로드 시작... (forceLoad:', forceLoad, ')');
+  const store_id = document.getElementById('f_store').value;
+  if (!store_id) {
+    console.warn('⚠️ 유효한 매장이 선택되지 않음');
+    document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">🏪</span>유효한 매장을 선택해주세요.</div>';
+    return;
+  }
+
+  const q = document.getElementById('searchBox').value.trim();
+  
+  if (!q && !forceLoad) {
+    document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+    return;
+  }
+
+  const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc' });
+  if (q) params.append('q', q);
+
+  try {
+    products = await api('/api/products?' + params.toString());
+    console.log(`✅ 제품 데이터 수신 (${products.length}개)`);
+    renderGrid();
+  } catch (e) {
+    console.error('❌ 제품 로드 오류:', e);
+    toast('제품 목록을 불러오지 못했습니다.', true, '⚠️');
+    document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">📦</span>제품을 불러올 수 없습니다.</div>';
+  }
+}
+
+function onSearchInput() {
+  const q = document.getElementById('searchBox').value.trim();
+  if (q) {
+    loadProducts(false);
+  } else {
+    document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+    products = [];
+  }
+}
+
+function loadAllProducts() {
+  document.getElementById('searchBox').value = '';
+  loadProducts(true);
+}
+
+function onStoreChange() {
+  console.log('🔄 일반 판매 매장 변경됨:', document.getElementById('f_store').value);
+  const val = document.getElementById('f_store').value;
+  localStorage.setItem('global_store_id', val);
+  cart = {};
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+  document.getElementById('searchBox').value = '';
+  loadProducts();
+}
+
+function onPreStoreChange() {
+  console.log('🔄 선결제 매장 변경됨:', document.getElementById('pre_store').value);
+  const val = document.getElementById('pre_store').value;
+  localStorage.setItem('global_store_id', val);
+  preCart = {};
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+  document.getElementById('pre_searchBox').value = '';
+  loadPreProducts();
+}
+
+// ---------- 일반 판매 그리드 ----------
+function renderGrid() {
+  const grid = document.getElementById('grid');
+  let list = products;
+
+  if (!list || list.length === 0) {
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">📦</span>표시할 제품이 없습니다.</div>';
+    return;
+  }
+
+  if (selectedCategory !== 'all') {
+    list = list.filter(p => p.category_id === selectedCategory);
+  }
+
+  if (list.length === 0) {
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div>';
+    return;
+  }
+
+  grid.innerHTML = list.map(p => {
+    const cat = categories.find(c => c.id === p.category_id);
+    const catName = cat ? cat.name : '미분류';
+    const catColor = cat ? cat.color : '#8a8f98';
+    return `
+      <div class="product-card ${p.qty <= 0 ? 'disabled' : ''}" onclick="${p.qty > 0 ? `addToCart(${p.id})` : ''}">
+        <div class="pname">${escapeHtml(p.name)}</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+          <div style="display:flex; gap:4px; flex-wrap:wrap;">
+            <span class="chip" style="background:${catColor}; font-size:10px; padding:2px 8px;">${escapeHtml(catName)}</span>
+            ${p.brand_name ? `<span class="chip" style="background:${p.brand_color || '#8a8f98'}; font-size:10px; padding:2px 8px; color:white;">${escapeHtml(p.brand_name)}</span>` : ''}
+          </div>
+          <span class="pprice">${fmt(p.sale_price)}원</span>
+        </div>
+        <div class="pqty">재고 ${fmt(p.qty)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ---------- 선결제 제품 로드 ----------
+async function loadPreProducts(forceLoad = false) {
+  console.log('📡 선결제 제품 목록 로드 시작... (forceLoad:', forceLoad, ')');
+  const store_id = document.getElementById('pre_store').value;
+  if (!store_id) {
+    document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🏪</span>유효한 매장을 선택해주세요.</div>';
+    return;
+  }
+
+  const q = document.getElementById('pre_searchBox').value.trim();
+  
+  if (!q && !forceLoad) {
+    document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+    return;
+  }
+
+  const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc' });
+  if (q) params.append('q', q);
+
+  try {
+    products = await api('/api/products?' + params.toString());
+    console.log(`✅ 선결제 제품 데이터 수신 (${products.length}개)`);
+    renderPreGrid();
+  } catch (e) {
+    console.error('❌ 선결제 제품 로드 오류:', e);
+    document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">📦</span>제품을 불러올 수 없습니다.</div>';
+  }
+}
+
+function onPreSearchInput() {
+  const q = document.getElementById('pre_searchBox').value.trim();
+  if (q) {
+    loadPreProducts(false);
+  } else {
+    document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+    products = [];
+  }
+}
+
+function loadAllPreProducts() {
+  document.getElementById('pre_searchBox').value = '';
+  loadPreProducts(true);
+}
+
+function onPreStoreChange() {
+  console.log('🔄 선결제 매장 변경됨:', document.getElementById('pre_store').value);
+  preCart = {};
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+  document.getElementById('pre_searchBox').value = '';
+  products = [];
+  document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+}
+
+// ---------- 선결제 그리드 ----------
+function renderPreGrid() {
+  const grid = document.getElementById('pre_grid');
+  let list = products;
+
+  if (!list || list.length === 0) {
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">📦</span>표시할 제품이 없습니다.</div>';
+    return;
+  }
+
+  if (preSelectedCategory !== 'all') {
+    list = list.filter(p => p.category_id === preSelectedCategory);
+  }
+
+  if (list.length === 0) {
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div>';
+    return;
+  }
+
+  grid.innerHTML = list.map(p => {
+    const cat = categories.find(c => c.id === p.category_id);
+    const catName = cat ? cat.name : '미분류';
+    const catColor = cat ? cat.color : '#8a8f98';
+    return `
+      <div class="product-card" onclick="addToPreCart(${p.id})">
+        <div class="pname">${escapeHtml(p.name)}</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+          <div style="display:flex; gap:4px; flex-wrap:wrap;">
+            <span class="chip" style="background:${catColor}; font-size:10px; padding:2px 8px;">${escapeHtml(catName)}</span>
+            ${p.brand_name ? `<span class="chip" style="background:${p.brand_color || '#8a8f98'}; font-size:10px; padding:2px 8px; color:white;">${escapeHtml(p.brand_name)}</span>` : ''}
+          </div>
+          <span class="pprice">${fmt(p.sale_price)}원</span>
+        </div>
+        <div class="pqty">재고 ${fmt(p.qty)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ---------- 일반 판매 장바구니 ----------
+function addToCart(pid) {
+  const product = products.find(p => p.id === pid);
+  if (!product) return;
+
+  const key = `${pid}_normal`;
+  const existing = cart[key];
+  const currentQty = existing ? existing.qty : 0;
+  if (currentQty + 1 > product.qty) {
+    toast(`재고(${product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
+    return;
+  }
+
+  if (existing) {
+    existing.qty += 1;
+  } else {
+    cart[key] = { product, qty: 1, type: 'normal', discountAmount: 0 };
+  }
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+}
+
+function changeQty(key, delta) {
+  const item = cart[key];
+  if (!item) return;
+  const newQty = item.qty + delta;
+  if (newQty <= 0) { delete cart[key]; saveCartToStorage(CART_STORAGE_KEY, cart); renderCart(); return; }
+  if (newQty > item.product.qty) {
+    toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
+    renderCart();
+    return;
+  }
+  item.qty = newQty;
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+}
+
+function setQty(key, value) {
+  const qty = parseInt(value);
+  if (isNaN(qty) || qty < 1) { renderCart(); return; }
+  const item = cart[key];
+  if (!item) return;
+  if (qty > item.product.qty) {
+    toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
+    renderCart();
+    return;
+  }
+  item.qty = qty;
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+}
+
+function removeFromCart(key) {
+  delete cart[key];
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+}
+
+// 🔥 서비스 버튼 (체크박스 → 버튼)
+function toggleService(key) {
+  const item = cart[key];
+  if (!item) return;
+  const newType = item.type === 'service' ? 'normal' : 'service';
+  const newKey = `${item.product.id}_${newType}`;
+  delete cart[key];
+  cart[newKey] = { product: item.product, qty: item.qty, type: newType, discountAmount: 0 };
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+}
+
+function updateDiscount(key, value) {
+  const item = cart[key];
+  if (!item || item.type === 'service') return;
+  const discount = parseInt(value);
+  item.discountAmount = (isNaN(discount) || discount < 0) ? 0 : discount;
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+}
+
+function renderCart() {
+  const list = document.getElementById('cartList');
+  let items = Object.entries(cart);
+  const validItems = items.filter(([, item]) => item && item.product && item.product.id != null);
+  if (validItems.length !== items.length) {
+    cart = Object.fromEntries(validItems);
+    saveCartToStorage(CART_STORAGE_KEY, cart);
+  }
+  items = validItems;
+  if (items.length === 0) {
+    list.innerHTML = '<div class="cart-empty">담긴 제품이 없습니다</div>';
+    document.getElementById('cartTotal').textContent = '0원';
+    return;
+  }
+
+  let total = 0;
+  list.innerHTML = items.map(([key, item]) => {
+    const unitPrice = item.product.sale_price || 0;
+    const qty = item.qty;
+    const isService = item.type === 'service';
+    const discount = isService ? 0 : (item.discountAmount || 0);
+    const subtotal = isService ? 0 : ((unitPrice * qty) - discount);
+    total += subtotal;
+
+    return `
+      <div class="cart-item">
+        <div class="ci-name">
+          ${escapeHtml(item.product.name)}
+          ${isService ? ' <span style="color:var(--text-light); font-size:11px;">(서비스)</span>' : ''}
+          <div class="ci-sub">${fmt(unitPrice)}원 × ${qty} = ${isService ? '0원' : fmt(unitPrice * qty) + '원' + (discount > 0 ? ` - ${fmt(discount)}원` : '')}</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <button onclick="toggleService('${key}')" 
+                    style="padding:4px 12px; font-size:13px; border-radius:4px; border:1px solid ${isService ? 'var(--accent)' : 'var(--border)'}; background:${isService ? 'var(--accent)' : 'var(--card-bg)'}; color:${isService ? '#fff' : 'var(--text)'}; cursor:pointer; min-width:60px;">
+              ${isService ? '✅ 서비스' : '서비스'}
+            </button>
+            <input type="number" class="discount-input" placeholder="할인금액" 
+                   value="${discount > 0 ? discount : ''}" 
+                   onchange="updateDiscount('${key}', this.value)" 
+                   ${isService ? 'disabled' : ''}>
+          </div>
+          <div class="qty-ctrl">
+            <button onclick="changeQty('${key}', -1)">-</button>
+            <input type="number" class="qty-input" value="${qty}" min="1" max="${item.product.qty}" 
+                   onchange="setQty('${key}', this.value)" onfocus="this.select()">
+            <button onclick="changeQty('${key}', 1)">+</button>
+          </div>
+        </div>
+        <button onclick="removeFromCart('${key}')" style="color:var(--danger); border:none; background:none; font-size:16px; padding:0 4px;">✕</button>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('cartTotal').textContent = fmt(total) + '원';
+}
+
+function selectPayment(method) {
+  payment = method;
+  document.querySelectorAll('#tab-normal .pay-btns button').forEach(b => b.classList.remove('selected'));
+  document.getElementById(`pay-${method}`).classList.add('selected');
+}
+
+async function checkout() {
+  const items = Object.values(cart).map(item => {
+    const unitPrice = item.product.sale_price || 0;
+    const qty = item.qty;
+    const isService = item.type === 'service';
+    const discount = isService ? 0 : (item.discountAmount || 0);
+    const totalAmount = isService ? 0 : ((unitPrice * qty) - discount);
+    const finalUnitPrice = qty > 0 ? Math.floor(totalAmount / qty) : 0;
+    return { product_id: item.product.id, quantity: qty, unit_price: finalUnitPrice };
+  });
+
+  if (items.length === 0) { toast('장바구니가 비어있습니다.', true, '⚠️'); return; }
+  if (!payment) { toast('결제수단을 선택해주세요.', true, '⚠️'); return; }
+  const storeId = document.getElementById('f_store').value;
+  if (!storeId) {
+    toast('유효한 매장을 선택해주세요.', true, '⚠️');
+    return;
+  }
+
+  const payload = {
+    store_id: parseInt(storeId, 10),
+    payment_method: payment,
+    staff: document.getElementById('f_staff').value || null,
+    items: items,
+  };
+  try {
+    await api('/api/sales', { method: 'POST', body: JSON.stringify(payload) });
+    toast('판매가 등록되었습니다.', false, '✅');
+    cart = {};
+    saveCartToStorage(CART_STORAGE_KEY, cart);
+    renderCart();
+    const q = document.getElementById('searchBox').value.trim();
+    if (q) {
+      loadProducts(false);
+    } else {
+      loadProducts(true);
+    }
+  } catch (e) {
+    console.error('❌ 판매 등록 오류:', e);
+  }
+}
+
+// ---------- 선결제 장바구니 ----------
+function addToPreCart(pid) {
+  const product = products.find(p => p.id === pid);
+  if (!product) return;
+
+  const key = `${pid}_pre`;
+  const existing = preCart[key];
+  if (existing) {
+    existing.qty += 1;
+  } else {
+    preCart[key] = { product, qty: 1, type: 'normal', discountAmount: 0 };
+  }
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+}
+
+function changePreQty(key, delta) {
+  const item = preCart[key];
+  if (!item) return;
+  const newQty = item.qty + delta;
+  if (newQty <= 0) { delete preCart[key]; saveCartToStorage(PRE_CART_STORAGE_KEY, preCart); renderPreCart(); return; }
+  item.qty = newQty;
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+}
+
+function setPreQty(key, value) {
+  const qty = parseInt(value);
+  if (isNaN(qty) || qty < 1) { renderPreCart(); return; }
+  const item = preCart[key];
+  if (!item) return;
+  item.qty = qty;
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+}
+
+function removeFromPreCart(key) {
+  delete preCart[key];
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+}
+
+function updatePreDiscount(key, value) {
+  const item = preCart[key];
+  if (!item) return;
+  const discount = parseInt(value);
+  item.discountAmount = (isNaN(discount) || discount < 0) ? 0 : discount;
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+}
+
+// 선결제 장바구니 렌더링 (서비스 버튼 + 할인 입력 동일)
+function renderPreCart() {
+  const list = document.getElementById('pre_cartList');
+  let items = Object.entries(preCart);
+  const validItems = items.filter(([, item]) => item && item.product && item.product.id != null);
+  if (validItems.length !== items.length) {
+    preCart = Object.fromEntries(validItems);
+    saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  }
+  items = validItems;
+  if (items.length === 0) {
+    list.innerHTML = '<div class="cart-empty">담긴 제품이 없습니다</div>';
+    document.getElementById('pre_cartTotal').textContent = '0원';
+    return;
+  }
+
+  let total = 0;
+  list.innerHTML = items.map(([key, item]) => {
+    const unitPrice = item.product.sale_price || 0;
+    const qty = item.qty;
+    const discount = item.discountAmount || 0;
+    const subtotal = (unitPrice * qty) - discount;
+    total += subtotal;
+
+    return `
+      <div class="cart-item">
+        <div class="ci-name">
+          ${escapeHtml(item.product.name)}
+          <div class="ci-sub">${fmt(unitPrice)}원 × ${qty} = ${fmt(unitPrice * qty)}원${discount > 0 ? ` - ${fmt(discount)}원` : ''}</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <input type="number" class="discount-input" placeholder="할인금액" 
+                   value="${discount > 0 ? discount : ''}" 
+                   onchange="updatePreDiscount('${key}', this.value)">
+          </div>
+          <div class="qty-ctrl">
+            <button onclick="changePreQty('${key}', -1)">-</button>
+            <input type="number" class="qty-input" value="${qty}" min="1" 
+                   onchange="setPreQty('${key}', this.value)" onfocus="this.select()">
+            <button onclick="changePreQty('${key}', 1)">+</button>
+          </div>
+        </div>
+        <button onclick="removeFromPreCart('${key}')" style="color:var(--danger); border:none; background:none; font-size:16px; padding:0 4px;">✕</button>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('pre_cartTotal').textContent = fmt(total) + '원';
+}
+
+function selectPrePayment(method) {
+  prePayment = method;
+  document.querySelectorAll('#tab-preorder .pay-btns button').forEach(b => b.classList.remove('selected'));
+  document.getElementById(`pre_pay-${method}`).classList.add('selected');
+}
+
+async function checkoutPreOrder() {
+  const items = Object.values(preCart).map(item => {
+    const unitPrice = item.product.sale_price || 0;
+    const qty = item.qty;
+    const discount = item.discountAmount || 0;
+    const totalAmount = (unitPrice * qty) - discount;
+    const finalUnitPrice = qty > 0 ? Math.floor(totalAmount / qty) : 0;
+    return {
+      product_id: item.product.id,
+      quantity: qty,
+      unit_price: finalUnitPrice,
+      discount_amount: discount
+    };
+  });
+
+  if (items.length === 0) {
+    toast('장바구니가 비어있습니다.', true, '⚠️');
+    return;
+  }
+  if (!prePayment) {
+    toast('결제수단을 선택해주세요.', true, '⚠️');
+    return;
+  }
+  const storeId = document.getElementById('pre_store').value;
+  if (!storeId) {
+    toast('유효한 매장을 선택해주세요.', true, '⚠️');
+    return;
+  }
+
+  const customer_name = document.getElementById('pre_customer_name').value.trim();
+  const customer_phone = document.getElementById('pre_customer_phone').value.trim();
+  const customer_address = document.getElementById('pre_customer_address').value.trim();
+  const request_memo = document.getElementById('pre_request_memo').value.trim();
+
+  const payload = {
+    store_id: parseInt(storeId, 10),
+    payment_method: prePayment,
+    customer_name: customer_name || null,
+    customer_phone: customer_phone || null,
+    customer_address: customer_address || null,
+    request_memo: request_memo || null,
+    items: items,
+  };
+
+  try {
+    const result = await api('/api/pre_orders', { method: 'POST', body: JSON.stringify(payload) });
+    console.log('✅ 선결제 등록 성공:', result);
+    toast('선결제 주문이 등록되었습니다.', false, '✅');
+    preCart = {};
+    saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+    renderPreCart();
+    document.getElementById('pre_customer_name').value = '';
+    document.getElementById('pre_customer_phone').value = '';
+    document.getElementById('pre_customer_address').value = '';
+    document.getElementById('pre_request_memo').value = '';
+    await loadPreOrders();
+    const q = document.getElementById('pre_searchBox').value.trim();
+    if (q) {
+      loadPreProducts(false);
+    } else {
+      loadPreProducts(true);
+    }
+  } catch (e) {
+    console.error('❌ 선결제 등록 오류 상세:', e);
+  }
+}
+
+// ---------- 선결제 출고 대기 목록 ----------
+async function loadPreOrders() {
+  const store_id = document.getElementById('pre_store').value;
+  if (!store_id) {
+    document.getElementById('pre_order_list').innerHTML = '<div style="color:var(--text-light); text-align:center; padding:10px 0;">매장을 선택해주세요.</div>';
+    return;
+  }
+
+  try {
+    const orders = await api(`/api/pre_orders?store_id=${store_id}&status=대기`);
+    const container = document.getElementById('pre_order_list');
+    if (!orders || orders.length === 0) {
+      container.innerHTML = '<div style="color:var(--text-light); text-align:center; padding:10px 0;">출고 대기 주문이 없습니다.</div>';
+      return;
+    }
+
+    container.innerHTML = orders.map(o => `
+      <div style="border:1px solid var(--border); border-radius:6px; padding:8px; margin-bottom:6px; background:var(--card-bg);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <strong style="color:var(--text); font-size:13px;">#${o.id}</strong>
+          <span style="font-size:11px; color:var(--text-light);">${o.created_at}</span>
+        </div>
+        <div style="font-size:12px; color:var(--text-light);">
+          ${o.customer_name ? `👤 ${escapeHtml(o.customer_name)}` : ''}
+          ${o.customer_phone ? `📞 ${escapeHtml(o.customer_phone)}` : ''}
+          ${o.customer_address ? `🏠 ${escapeHtml(o.customer_address)}` : ''}
+          ${o.request_memo ? `📝 ${escapeHtml(o.request_memo)}` : ''}
+        </div>
+        <div style="font-size:12px; margin:2px 0; color:var(--text);">
+          ${o.items.map(item => {
+            const product = products.find(p => p.id === item.product_id);
+            const pname = product ? product.name : `#${item.product_id}`;
+            return `<div>${escapeHtml(pname)} × ${item.quantity} = ${fmt((item.unit_price * item.quantity) - (item.discount_amount || 0))}원</div>`;
+          }).join('')}
+        </div>
+        <div style="font-size:11px; color:var(--text-light);">💰 총액: ${fmt(o.total_amount)}원 (${o.payment_method})</div>
+        <div style="display:flex; gap:4px; margin-top:6px;">
+          <button class="primary" onclick="confirmPreOrder(${o.id})" style="padding:2px 10px; font-size:11px;">✅ 출고 확정</button>
+          <button class="danger" onclick="deletePreOrder(${o.id})" style="padding:2px 10px; font-size:11px;">🗑️ 취소</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    console.error('❌ 출고 대기 목록 로드 오류:', e);
+    document.getElementById('pre_order_list').innerHTML = '<div style="color:var(--danger); text-align:center; padding:10px 0;">⚠️ 데이터를 불러올 수 없습니다.</div>';
+  }
+}
+
+async function confirmPreOrder(orderId) {
+  if (!confirm('이 주문을 출고 확정하시겠습니까? (재고가 차감됩니다)')) return;
+  try {
+    await api(`/api/pre_orders/${orderId}/confirm`, { method: 'PUT' });
+    toast('출고 확정되었습니다.', false, '✅');
+    await loadPreOrders();
+    const q = document.getElementById('pre_searchBox').value.trim();
+    if (q) {
+      loadPreProducts(false);
+    } else {
+      loadPreProducts(true);
+    }
+  } catch (e) {
+    console.error('❌ 출고 확정 오류:', e);
+  }
+}
+
+async function deletePreOrder(orderId) {
+  if (!confirm('이 주문을 취소하시겠습니까? (복구할 수 없습니다)')) return;
+  try {
+    await api(`/api/pre_orders/${orderId}`, { method: 'DELETE' });
+    toast('주문이 취소되었습니다.', false, '✅');
+    await loadPreOrders();
+  } catch (e) {
+    console.error('❌ 주문 취소 오류:', e);
+  }
+}
+
+// ---------- 탭 전환 ----------
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+
+  const selectedBtn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+  if (selectedBtn) {
+    selectedBtn.classList.add('active');
+  }
+
+  const content = document.getElementById(`tab-${tab}`);
+  if (content) {
+    content.style.display = 'block';
+  }
+
+  if (tab === 'preorder') {
+    loadPreOrders();
+    const q = document.getElementById('pre_searchBox').value.trim();
+    if (q) {
+      loadPreProducts(false);
+    } else {
+      document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+    }
+  }
+}
+
+// ---------- 초기화 ----------
+document.addEventListener('DOMContentLoaded', async function() {
+  console.log('🚀 판매 등록 초기화 시작');
+  
+  // ✅ 페이지 로드 시 sessionStorage에서 장바구니 복원 (다른 페이지 이동 후 복귀 시 유지)
+  cart = loadCartFromStorage(CART_STORAGE_KEY);
+  preCart = loadCartFromStorage(PRE_CART_STORAGE_KEY);
+  renderCart();
+  renderPreCart();
+  
+  await loadStores();
+  console.log('✅ 판매 등록 초기화 완료');
+});
+</script>
+
+{% endblock %}

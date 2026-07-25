@@ -1,0 +1,1004 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📦 제품 관리</h1>
+<div class="subtitle">제품명을 검색하거나 '전체 보기'를 클릭하여 목록을 확인하세요.</div>
+
+<!-- 다중 등록 탭 -->
+<div class="tab-row">
+  <button class="tab-btn active" data-tab="single" onclick="switchProductTab('single')">단일 등록</button>
+  <button class="tab-btn" data-tab="multi" onclick="switchProductTab('multi')">다중 등록</button>
+</div>
+
+<!-- 단일 등록 -->
+<div id="tab-single" class="tab-content">
+  <div class="card">
+    <div class="form-grid">
+      <div class="form-field">
+        <label>제품명 *</label>
+        <input type="text" id="f_name" placeholder="예: 레몬에이드 액상">
+      </div>
+      <div class="form-field">
+        <label>브랜드</label>
+        <input type="text" id="f_brand_new" placeholder="브랜드명 직접 입력">
+      </div>
+      <div class="form-field">
+        <label>카테고리</label>
+        <select id="f_category"></select>
+      </div>
+      <div class="form-field">
+        <label>원가</label>
+        <input type="number" id="f_cost" placeholder="0" oninput="autoCalcCardCost()">
+      </div>
+      <div class="form-field">
+        <label>카드원가 (자동 계산)</label>
+        <input type="number" id="f_cardcost" placeholder="0" readonly style="background:var(--input-bg);">
+      </div>
+      <div class="form-field">
+        <label>판매가</label>
+        <input type="number" id="f_sale" placeholder="0" oninput="autoCalcCardCost()">
+      </div>
+      <div class="form-field">
+        <label>초기 재고</label>
+        <input type="number" id="f_initial_qty" placeholder="0" value="0">
+      </div>
+      <div class="form-field">
+        <label>등록 매장</label>
+        <select id="f_store">
+          <option value="">전체 매장</option>
+        </select>
+      </div>
+      <div class="form-field" style="grid-column: span 2;">
+        <label>메모</label>
+        <input type="text" id="f_memo" placeholder="선택 입력">
+      </div>
+      <div class="form-field">
+        <button class="primary" onclick="addProduct()" style="width:100%">+ 제품 등록</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 다중 등록 -->
+<div id="tab-multi" class="tab-content" style="display:none;">
+  <div class="card">
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+      <button onclick="addProductRow()" class="primary" style="padding:4px 12px;">+ 제품 추가</button>
+      <button onclick="removeProductRow()" class="danger" style="padding:4px 12px;">- 마지막 제품 제거</button>
+      <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;">
+        <input type="checkbox" id="autoCopy" checked> 이전 카드 값 자동 복사
+      </label>
+      <button onclick="saveMultiProducts()" class="success" style="padding:4px 16px;">💾 모두 저장</button>
+      <span id="multiSaveStatus" style="font-size:12px; color:var(--text-light);"></span>
+    </div>
+    <div id="productRows"></div>
+  </div>
+</div>
+
+<!-- 제품 목록 툴바 -->
+<div class="toolbar">
+  <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" oninput="debouncedLoad()">
+  <button onclick="loadAll()" class="primary">📋 전체 보기</button>
+  <select id="filterCategory" onchange="load()"><option value="">전체 카테고리</option></select>
+  <select id="filterBrand" onchange="load()"><option value="">전체 브랜드</option></select>
+  <select id="storeSelect" onchange="load()">
+    <option value="">전체 매장</option>
+  </select>
+  <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;">
+    <input type="checkbox" id="showInactive" onchange="load()" style="width:auto;"> 비활성 제품도 보기
+  </label>
+  <button onclick="downloadTemplate()">📥 템플릿</button>
+  <span style="display:inline-flex; align-items:center; gap:6px; background:var(--hover-bg); padding:4px 10px; border-radius:6px; border:1px solid var(--border);">
+    <label style="font-size:12px; color:var(--text-light);">📤 업로드 매장</label>
+    <select id="uploadStoreSelect" style="padding:4px 6px; font-size:12px; border:1px solid var(--border); border-radius:4px; background:var(--input-bg);">
+      <option value="">전체</option>
+    </select>
+    <button onclick="document.getElementById('excelUpload').click()" class="primary" style="padding:4px 10px; font-size:12px;">업로드</button>
+    <input type="file" id="excelUpload" accept=".csv" style="display:none" onchange="uploadExcel(event)">
+  </span>
+  <button onclick="exportProducts()">📊 다운로드</button>
+  <button class="primary" onclick="showBatchPriceModal()">💰 대량 가격 변경</button>
+  <button class="primary" onclick="showBatchEditModal()">✏️ 일괄 수정</button>
+</div>
+
+<div id="uploadResult" style="margin:8px 0; font-size:13px; padding:8px 12px; border-radius:6px; background:var(--card-bg); border:1px solid var(--border); min-height:20px; max-height:200px; overflow-y:auto; display:none;"></div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:30px;"><input type="checkbox" id="selectAll" onchange="toggleAllProducts()"></th>
+        <th onclick="sortBy('id')">#</th>
+        <th onclick="sortBy('name')">제품명</th>
+        <th>브랜드</th>
+        <th>카테고리</th>
+        <th onclick="sortBy('cost_price')">원가</th>
+        <th onclick="sortBy('card_cost_price')">카드원가</th>
+        <th onclick="sortBy('sale_price')">판매가</th>
+        <th>마진율</th>
+        <th>카드마진율</th>
+        <th onclick="sortBy('qty')">재고수량</th>
+        <th style="width:70px"></th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="12"><div class="empty"><span class="empty-icon">🔍</span>검색어를 입력하거나 '전체 보기'를 클릭하세요.</div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 제품 상세/수정 모달 -->
+<div id="productModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:560px; width:92%; max-height:85vh; overflow-y:auto; position:relative; box-shadow:var(--shadow);">
+    <button onclick="closeModal()" style="position:absolute; top:12px; right:16px; border:none; background:none; font-size:24px; cursor:pointer; color:var(--text);">✕</button>
+    <h2 id="modalTitle" style="color:var(--text); margin-top:0;">📦 제품 수정</h2>
+    <div id="modalBody"></div>
+    <hr style="border-color:var(--border);">
+    <h4 style="color:var(--text);">📋 가격 변경 이력</h4>
+    <div id="modalPriceHistory" style="font-size:13px; max-height:200px; overflow-y:auto;"></div>
+  </div>
+</div>
+
+<!-- 대량 가격 변경 모달 -->
+<div id="batchPriceModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:400px; width:92%; box-shadow:var(--shadow);">
+    <h3 style="color:var(--text); margin-top:0;">💰 대량 가격 변경</h3>
+    <p style="font-size:13px; color:var(--text-light); margin-bottom:12px;"><span id="selectedCountDisplay">0</span>개 제품 선택됨</p>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>변경 대상</label>
+      <select id="batchField" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        <option value="cost_price">원가</option>
+        <option value="card_cost_price">카드원가</option>
+        <option value="sale_price">판매가</option>
+      </select>
+    </div>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>방식</label>
+      <select id="batchOperation" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;" onchange="toggleBatchValueLabel()">
+        <option value="set">특정 값으로 설정</option>
+        <option value="percent">% 증감</option>
+      </select>
+    </div>
+    <div class="form-field" style="margin-bottom:16px;">
+      <label id="batchValueLabel">값</label>
+      <input type="number" id="batchValue" placeholder="0" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button onclick="closeBatchPriceModal()" style="padding:8px 16px;">취소</button>
+      <button class="primary" onclick="applyBatchPrice()" style="padding:8px 16px;">적용</button>
+    </div>
+  </div>
+</div>
+
+<!-- 일괄 수정 모달 -->
+<div id="batchEditModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:450px; width:92%; box-shadow:var(--shadow);">
+    <h3 style="color:var(--text); margin-top:0;">✏️ 일괄 수정</h3>
+    <p style="font-size:13px; color:var(--text-light); margin-bottom:12px;"><span id="batchEditCount">0</span>개 제품 선택됨</p>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>브랜드</label>
+      <input type="text" id="batchEditBrand" placeholder="브랜드명 직접 입력">
+    </div>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>카테고리</label>
+      <select id="batchEditCategory" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        <option value="">변경 안 함</option>
+      </select>
+    </div>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>원가</label>
+      <input type="number" id="batchEditCost" placeholder="변경 안 함" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+    </div>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>판매가</label>
+      <input type="number" id="batchEditSale" placeholder="변경 안 함" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+      <button onclick="closeBatchEditModal()" style="padding:8px 16px;">취소</button>
+      <button class="primary" onclick="applyBatchEdit()" style="padding:8px 16px;">💾 적용</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let products = [];
+let categories = [];
+let brands = [];
+let stores = [];
+let sortState = { col: 'qty', order: 'desc' };
+let debounceTimer;
+let editingProductId = null;
+let selectedProductIds = new Set();
+let initialLoadDone = false;
+let productRowCount = 1;
+
+// ---------- 자동 계산 ----------
+function autoCalcCardCost() {
+  const cost = parseInt(document.getElementById('f_cost').value) || 0;
+  const sale = parseInt(document.getElementById('f_sale').value) || 0;
+  if (sale > 0) {
+    const cardCost = Math.round(cost + sale - (sale / 1.1 * 0.975));
+    document.getElementById('f_cardcost').value = cardCost > 0 ? cardCost : 0;
+  } else {
+    document.getElementById('f_cardcost').value = '';
+  }
+}
+
+function autoCalcCardCostModal() {
+  const cost = parseInt(document.getElementById('edit_cost').value) || 0;
+  const sale = parseInt(document.getElementById('edit_sale').value) || 0;
+  if (sale > 0) {
+    const cardCost = Math.round(cost + sale - (sale / 1.1 * 0.975));
+    document.getElementById('edit_cardcost').value = cardCost > 0 ? cardCost : 0;
+  } else {
+    document.getElementById('edit_cardcost').value = '';
+  }
+}
+
+// ---------- 탭 전환 (최적화됨) ----------
+function switchProductTab(tab) {
+  document.querySelectorAll('.tab-row .tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.tab-row .tab-btn[data-tab="${tab}"]`).classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+  document.getElementById(`tab-${tab}`).style.display = 'block';
+  
+  // 🔥 최적화: multi 탭일 때만 렌더링
+  if (tab === 'multi') {
+    renderProductRows();
+  }
+}
+
+// ---------- 다중 등록 행 관리 ----------
+function renderProductRows() {
+  const container = document.getElementById('productRows');
+  let html = '';
+  for (let i = 0; i < productRowCount; i++) {
+    const copyAttr = i > 0 && document.getElementById('autoCopy').checked ? 'data-copy-from="0"' : '';
+    html += `
+      <div class="product-row card" style="padding:16px; margin-bottom:8px; border:1px solid var(--border);" data-index="${i}" ${copyAttr}>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:8px; align-items:end;">
+          <div class="form-field"><label>제품명</label><input type="text" class="multi-name" placeholder="제품명" value=""></div>
+          <div class="form-field"><label>브랜드</label><input type="text" class="multi-brand" placeholder="브랜드명 직접 입력"></div>
+          <div class="form-field"><label>카테고리</label>
+            <select class="multi-category" style="width:100%;">
+              <option value="">선택</option>
+              ${categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-field"><label>원가</label><input type="number" class="multi-cost" placeholder="0" value="0"></div>
+          <div class="form-field"><label>판매가</label><input type="number" class="multi-sale" placeholder="0" value="0"></div>
+          <div class="form-field"><label>초기 재고</label><input type="number" class="multi-qty" placeholder="0" value="0"></div>
+          <div class="form-field"><label>매장</label>
+            <select class="multi-store" style="width:100%;">
+              <option value="">전체</option>
+              ${stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div style="display:flex; gap:4px; align-items:center; justify-content:flex-end;">
+            <button onclick="removeProductRow(${i})" class="danger" style="padding:2px 8px; font-size:12px;">✕</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+  
+  if (document.getElementById('autoCopy').checked) {
+    const firstRow = container.querySelector('.product-row');
+    if (firstRow) {
+      const inputs = firstRow.querySelectorAll('input, select');
+      inputs.forEach(input => {
+        input.addEventListener('change', function() {
+          copyFirstRowValues();
+        });
+        input.addEventListener('input', function() {
+          copyFirstRowValues();
+        });
+      });
+    }
+  }
+}
+
+function copyFirstRowValues() {
+  if (!document.getElementById('autoCopy').checked) return;
+  const firstRow = document.querySelector('#productRows .product-row');
+  if (!firstRow) return;
+  
+  const firstValues = {
+    brand: firstRow.querySelector('.multi-brand')?.value || '',
+    category: firstRow.querySelector('.multi-category')?.value || '',
+    cost: firstRow.querySelector('.multi-cost')?.value || '0',
+    sale: firstRow.querySelector('.multi-sale')?.value || '0',
+    qty: firstRow.querySelector('.multi-qty')?.value || '0',
+    store: firstRow.querySelector('.multi-store')?.value || ''
+  };
+  
+  document.querySelectorAll('#productRows .product-row').forEach((row, idx) => {
+    if (idx === 0) return;
+    if (row.querySelector('.multi-brand')) row.querySelector('.multi-brand').value = firstValues.brand;
+    if (row.querySelector('.multi-category')) row.querySelector('.multi-category').value = firstValues.category;
+    if (row.querySelector('.multi-cost')) row.querySelector('.multi-cost').value = firstValues.cost;
+    if (row.querySelector('.multi-sale')) row.querySelector('.multi-sale').value = firstValues.sale;
+    if (row.querySelector('.multi-qty')) row.querySelector('.multi-qty').value = firstValues.qty;
+    if (row.querySelector('.multi-store')) row.querySelector('.multi-store').value = firstValues.store;
+  });
+}
+
+function addProductRow() {
+  if (productRowCount >= 10) {
+    toast('최대 10개까지 추가할 수 있습니다.', true, '⚠️');
+    return;
+  }
+  productRowCount++;
+  renderProductRows();
+}
+
+function removeProductRow(index) {
+  if (productRowCount <= 1) {
+    toast('최소 1개는 남겨야 합니다.', true, '⚠️');
+    return;
+  }
+  productRowCount--;
+  renderProductRows();
+}
+
+async function saveMultiProducts() {
+  const rows = document.querySelectorAll('#productRows .product-row');
+  const items = [];
+  let hasError = false;
+  
+  rows.forEach(row => {
+    const name = row.querySelector('.multi-name')?.value.trim();
+    if (!name) {
+      toast('모든 제품명을 입력해주세요.', true, '⚠️');
+      hasError = true;
+      return;
+    }
+    const brand_name = row.querySelector('.multi-brand')?.value.trim() || null;
+    const category_id = row.querySelector('.multi-category')?.value || null;
+    const cost = parseInt(row.querySelector('.multi-cost')?.value) || 0;
+    const sale = parseInt(row.querySelector('.multi-sale')?.value) || 0;
+    const qty = parseInt(row.querySelector('.multi-qty')?.value) || 0;
+    const store_id = row.querySelector('.multi-store')?.value || null;
+    
+    const cardCost = sale > 0 ? Math.round(cost + sale - (sale / 1.1 * 0.975)) : 0;
+    
+    items.push({
+      name, brand_name, category_id, cost_price: cost, 
+      card_cost_price: cardCost, sale_price: sale, 
+      initial_qty: qty, store_id: store_id || null
+    });
+  });
+  
+  if (hasError || items.length === 0) return;
+  
+  const status = document.getElementById('multiSaveStatus');
+  status.textContent = '저장 중...';
+  status.style.color = 'var(--text-light)';
+  
+  let success = 0;
+  let failed = 0;
+  
+  for (const item of items) {
+    try {
+      let brand_id = null;
+      if (item.brand_name) {
+        const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: item.brand_name }) });
+        brand_id = result.id;
+      }
+      const payload = { ...item, brand_id };
+      delete payload.brand_name;
+      await api('/api/products', { method: 'POST', body: JSON.stringify(payload) });
+      success++;
+    } catch (e) {
+      failed++;
+      console.error('등록 실패:', item.name, e);
+    }
+  }
+  
+  status.textContent = `✅ ${success}개 성공${failed > 0 ? `, ❌ ${failed}개 실패` : ''}`;
+  status.style.color = failed > 0 ? 'var(--danger)' : 'var(--accent)';
+  
+  if (success > 0) {
+    toast(`${success}개 제품이 등록되었습니다.`, failed > 0, failed > 0 ? '⚠️' : '✅');
+    load();
+    productRowCount = 1;
+    renderProductRows();
+  }
+}
+
+// ---------- 브랜드/카테고리/매장 로드 ----------
+async function loadBrands() {
+  try {
+    brands = await api('/api/brands');
+    document.getElementById('filterBrand').innerHTML = '<option value="">전체 브랜드</option>' + 
+      brands.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
+  } catch (e) {
+    console.error('브랜드 로드 오류:', e);
+  }
+}
+
+async function loadCategories() {
+  const catSelect = document.getElementById('f_category');
+  const filterSelect = document.getElementById('filterCategory');
+  catSelect.innerHTML = '<option value="">로딩 중...</option>';
+  filterSelect.innerHTML = '<option value="">전체 카테고리</option>';
+
+  try {
+    categories = await api('/api/categories');
+    const opts = categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    catSelect.innerHTML = '<option value="">미분류</option>' + opts;
+    filterSelect.innerHTML = '<option value="">전체 카테고리</option>' + opts;
+    document.querySelectorAll('.multi-category').forEach(sel => {
+      const current = sel.value;
+      sel.innerHTML = '<option value="">선택</option>' + opts;
+      sel.value = current;
+    });
+  } catch (e) {
+    console.error('카테고리 로드 오류:', e);
+    toast('카테고리를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+    catSelect.innerHTML = '<option value="">카테고리 없음 (오류)</option>';
+  }
+}
+
+async function loadStoresForSelects() {
+  const addStoreSelect = document.getElementById('f_store');
+  const filterStoreSelect = document.getElementById('storeSelect');
+  const uploadStoreSelect = document.getElementById('uploadStoreSelect');
+  
+  addStoreSelect.innerHTML = '<option value="">로딩 중...</option>';
+  filterStoreSelect.innerHTML = '<option value="">로딩 중...</option>';
+  uploadStoreSelect.innerHTML = '<option value="">로딩 중...</option>';
+
+  try {
+    stores = await api('/api/stores');
+    const opts = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    addStoreSelect.innerHTML = '<option value="">전체 매장</option>' + opts;
+    filterStoreSelect.innerHTML = '<option value="">전체 매장</option>' + opts;
+    uploadStoreSelect.innerHTML = '<option value="">전체 매장</option>' + opts;
+    document.querySelectorAll('.multi-store').forEach(sel => {
+      const current = sel.value;
+      sel.innerHTML = '<option value="">전체</option>' + opts;
+      sel.value = current;
+    });
+
+    // 🔥 전역 매장 ID 적용
+    const globalStoreId = localStorage.getItem('global_store_id');
+    if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
+      addStoreSelect.value = globalStoreId;
+      filterStoreSelect.value = globalStoreId;
+      uploadStoreSelect.value = globalStoreId;
+    }
+  } catch (e) {
+    console.error('매장 로드 오류:', e);
+    addStoreSelect.innerHTML = '<option value="">매장 오류</option>';
+    filterStoreSelect.innerHTML = '<option value="">매장 오류</option>';
+    uploadStoreSelect.innerHTML = '<option value="">매장 오류</option>';
+  }
+}
+
+function debouncedLoad() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    const q = document.getElementById('searchBox').value.trim();
+    if (q) {
+      initialLoadDone = true;
+      load();
+    } else {
+      initialLoadDone = false;
+      document.getElementById('tbody').innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">🔍</span>검색어를 입력하거나 \'전체 보기\'를 클릭하세요.</div></td></tr>';
+      document.getElementById('selectAll').checked = false;
+      document.getElementById('selectAll').disabled = true;
+      selectedProductIds.clear();
+      updateSelectedCount();
+    }
+  }, 250);
+}
+
+function loadAll() {
+  initialLoadDone = true;
+  document.getElementById('searchBox').value = '';
+  load();
+}
+
+function categoryChip(id) {
+  const c = categories.find(c => c.id === id);
+  if (!c) return '<span style="color:var(--text-light)">미분류</span>';
+  return `<span class="chip" style="background:${c.color}">${escapeHtml(c.name)}</span>`;
+}
+
+function brandTag(id) {
+  const b = brands.find(b => b.id === id);
+  if (!b) return '<span style="color:var(--text-light)">-</span>';
+  return `<span class="brand-tag" style="background:${b.color || '#8a8f98'};">${escapeHtml(b.name)}</span>`;
+}
+
+function sortBy(col) {
+  if (sortState.col === col) {
+    sortState.order = sortState.order === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortState = { col, order: 'asc' };
+  }
+  load();
+}
+
+async function load() {
+  if (!initialLoadDone) return;
+
+  try {
+    const q = document.getElementById('searchBox').value.trim();
+    const category_id = document.getElementById('filterCategory').value;
+    const brand_id = document.getElementById('filterBrand').value;
+    const show_inactive = document.getElementById('showInactive').checked ? '1' : '0';
+    const store_id = document.getElementById('storeSelect').value;
+    const params = new URLSearchParams({ q, category_id, brand_id, sort: sortState.col, order: sortState.order, show_inactive });
+    if (store_id) params.append('store_id', store_id);
+    products = await api('/api/products?' + params.toString());
+    render();
+  } catch (e) {
+    console.error('제품 로드 오류:', e);
+    toast('제품 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+    render();
+  }
+}
+
+function render() {
+  const tbody = document.getElementById('tbody');
+  if (!products || products.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">📦</span>등록된 제품이 없습니다.<div class="empty-hint">우측 상단의 📤 엑셀 업로드나 + 제품 등록 버튼을 이용해 추가하세요.</div></div></td></tr>';
+    document.getElementById('selectAll').checked = false;
+    document.getElementById('selectAll').disabled = true;
+    return;
+  }
+  document.getElementById('selectAll').disabled = false;
+  tbody.innerHTML = products.map((p, idx) => {
+    const margin = (p.sale_price > 0) ? ((p.sale_price - p.cost_price) / p.sale_price * 100) : null;
+    const cardMargin = (p.sale_price > 0 && p.card_cost_price > 0) ? ((p.sale_price - p.card_cost_price) / p.sale_price * 100) : null;
+    const checked = selectedProductIds.has(p.id) ? 'checked' : '';
+    return `
+    <tr style="${p.is_active ? '' : 'opacity:0.45'}; cursor:pointer;" onclick="showProductDetail(${p.id})">
+      <td onclick="event.stopPropagation();"><input type="checkbox" class="row-checkbox" value="${p.id}" ${checked} onchange="toggleProduct(${p.id})"></td>
+      <td><span class="row-number">${idx + 1}</span></td>
+      <td class="editable" contenteditable="true" onblur="updateField(${p.id}, 'name', this.textContent)" onclick="event.stopPropagation();">${escapeHtml(p.name)}</td>
+      <td>${brandTag(p.brand_id)}</td>
+      <td>${categoryChip(p.category_id)}</td>
+      <td class="editable" contenteditable="true" onblur="updateField(${p.id}, 'cost_price', this.textContent)" onclick="event.stopPropagation();">${fmt(p.cost_price)}</td>
+      <td class="editable" contenteditable="true" onblur="updateField(${p.id}, 'card_cost_price', this.textContent)" onclick="event.stopPropagation();">${fmt(p.card_cost_price)}</td>
+      <td class="editable" contenteditable="true" onblur="updateField(${p.id}, 'sale_price', this.textContent)" onclick="event.stopPropagation();">${fmt(p.sale_price)}</td>
+      <td class="${margin !== null && margin < 20 ? 'margin-warn' : ''}">${margin !== null ? margin.toFixed(1) + '%' : '-'}</td>
+      <td class="${cardMargin !== null && cardMargin < 20 ? 'margin-warn' : ''}">${cardMargin !== null ? cardMargin.toFixed(1) + '%' : '-'}</td>
+      <td>${fmt(p.qty)}</td>
+      <td><button class="danger" onclick="event.stopPropagation(); deleteProduct(${p.id})">삭제</button></td>
+    </tr>
+  `}).join('');
+  updateSelectedCount();
+}
+
+// ---------- 체크박스 ----------
+function toggleProduct(id) {
+  if (selectedProductIds.has(id)) {
+    selectedProductIds.delete(id);
+  } else {
+    selectedProductIds.add(id);
+  }
+  updateSelectedCount();
+  updateSelectAll();
+}
+
+function toggleAllProducts() {
+  const checked = document.getElementById('selectAll').checked;
+  if (checked) {
+    products.forEach(p => selectedProductIds.add(p.id));
+  } else {
+    selectedProductIds.clear();
+  }
+  render();
+}
+
+function updateSelectAll() {
+  const all = products.length > 0 && products.every(p => selectedProductIds.has(p.id));
+  document.getElementById('selectAll').checked = all;
+}
+
+function updateSelectedCount() {
+  const count = selectedProductIds.size;
+  document.getElementById('selectedCountDisplay').textContent = count;
+  document.getElementById('batchEditCount').textContent = count;
+}
+
+// ---------- 일괄 수정 ----------
+function showBatchEditModal() {
+  if (selectedProductIds.size === 0) {
+    toast('수정할 제품을 먼저 선택해주세요.', true, '⚠️');
+    return;
+  }
+  document.getElementById('batchEditCount').textContent = selectedProductIds.size;
+  const catSel = document.getElementById('batchEditCategory');
+  catSel.innerHTML = '<option value="">변경 안 함</option>' + categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  document.getElementById('batchEditModal').style.display = 'flex';
+}
+
+function closeBatchEditModal() {
+  document.getElementById('batchEditModal').style.display = 'none';
+}
+
+async function applyBatchEdit() {
+  const updates = {};
+  const brandNew = document.getElementById('batchEditBrand').value.trim();
+  const category_id = document.getElementById('batchEditCategory').value;
+  const cost = document.getElementById('batchEditCost').value;
+  const sale = document.getElementById('batchEditSale').value;
+  
+  if (brandNew) {
+    try {
+      const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: brandNew }) });
+      updates.brand_id = result.id;
+    } catch (e) {
+      toast('브랜드 추가 실패: ' + e.message, true, '⚠️');
+      return;
+    }
+  }
+  if (category_id) updates.category_id = parseInt(category_id);
+  if (cost !== '') updates.cost_price = parseInt(cost);
+  if (sale !== '') updates.sale_price = parseInt(sale);
+  
+  if (Object.keys(updates).length === 0) {
+    toast('수정할 항목을 선택해주세요.', true, '⚠️');
+    return;
+  }
+  
+  const product_ids = Array.from(selectedProductIds);
+  try {
+    const result = await api('/api/products/batch_update', {
+      method: 'POST',
+      body: JSON.stringify({ product_ids, updates })
+    });
+    toast(`${result.updated}개 제품이 수정되었습니다.`, false, '✅');
+    closeBatchEditModal();
+    selectedProductIds.clear();
+    await load();
+  } catch (e) {
+    console.error('일괄 수정 오류:', e);
+  }
+}
+
+// ---------- 대량 가격 변경 ----------
+function showBatchPriceModal() {
+  if (selectedProductIds.size === 0) {
+    toast('변경할 제품을 먼저 선택해주세요.', true, '⚠️');
+    return;
+  }
+  document.getElementById('selectedCountDisplay').textContent = selectedProductIds.size;
+  document.getElementById('batchPriceModal').style.display = 'flex';
+}
+
+function closeBatchPriceModal() {
+  document.getElementById('batchPriceModal').style.display = 'none';
+}
+
+function toggleBatchValueLabel() {
+  const op = document.getElementById('batchOperation').value;
+  const label = document.getElementById('batchValueLabel');
+  if (op === 'set') {
+    label.textContent = '설정 값';
+  } else {
+    label.textContent = '증감율 (%)';
+  }
+}
+
+async function applyBatchPrice() {
+  const field = document.getElementById('batchField').value;
+  const operation = document.getElementById('batchOperation').value;
+  const value = parseFloat(document.getElementById('batchValue').value);
+  if (isNaN(value) || (operation === 'set' && value < 0)) {
+    toast('올바른 값을 입력해주세요.', true, '⚠️');
+    return;
+  }
+  if (operation === 'percent' && (value < -100 || value > 1000)) {
+    toast('증감율은 -100 ~ 1000 사이여야 합니다.', true, '⚠️');
+    return;
+  }
+
+  const product_ids = Array.from(selectedProductIds);
+  try {
+    const result = await api('/api/products/batch_update_price', {
+      method: 'POST',
+      body: JSON.stringify({ product_ids, field, operation, value })
+    });
+    toast(`✅ ${result.updated}개 제품이 변경되었습니다.`, false, '✅');
+    closeBatchPriceModal();
+    selectedProductIds.clear();
+    await load();
+  } catch (e) {
+    console.error('대량 변경 오류:', e);
+  }
+}
+
+// ---------- 제품 상세/수정 모달 ----------
+async function showProductDetail(id) {
+  editingProductId = id;
+  const modal = document.getElementById('productModal');
+  modal.style.display = 'flex';
+  document.getElementById('modalTitle').textContent = `📦 제품 수정 #${id}`;
+
+  try {
+    const product = await api(`/api/products/${id}`);
+    const history = await api(`/api/products/${id}/price_history`);
+
+    const catOpts = categories.map(c => 
+      `<option value="${c.id}" ${c.id == product.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
+    ).join('');
+
+    document.getElementById('modalBody').innerHTML = `
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:12px 0;">
+        <div class="form-field" style="grid-column: span 2;">
+          <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">제품명 *</label>
+          <input type="text" id="edit_name" value="${escapeHtml(product.name)}" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+        </div>
+        <div class="form-field">
+          <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">브랜드</label>
+          <input type="text" id="edit_brand_new" placeholder="브랜드명 직접 입력" value="${escapeHtml(product.brand_name || '')}" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+        </div>
+        <div class="form-field">
+          <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">카테고리</label>
+          <select id="edit_category" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+            <option value="">미분류</option>
+            ${catOpts}
+          </select>
+        </div>
+        <div class="form-field">
+          <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">상태</label>
+          <select id="edit_status" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+            <option value="1" ${product.is_active ? 'selected' : ''}>✅ 활성</option>
+            <option value="0" ${!product.is_active ? 'selected' : ''}>❌ 비활성</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">원가</label>
+          <input type="number" id="edit_cost" value="${product.cost_price || 0}" oninput="autoCalcCardCostModal()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+        </div>
+        <div class="form-field">
+          <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">카드원가 (자동 계산)</label>
+          <input type="number" id="edit_cardcost" value="${product.card_cost_price || 0}" readonly style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+        </div>
+        <div class="form-field">
+          <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">판매가</label>
+          <input type="number" id="edit_sale" value="${product.sale_price || 0}" oninput="autoCalcCardCostModal()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+        </div>
+        <div class="form-field" style="grid-column: span 2;">
+          <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">메모</label>
+          <input type="text" id="edit_memo" value="${escapeHtml(product.memo || '')}" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+        </div>
+        <div style="grid-column: span 2; display:flex; gap:8px; margin-top:8px;">
+          <button class="primary" onclick="saveProductEdit()" style="flex:1;">💾 저장</button>
+          <button onclick="closeModal()" style="flex:1;">취소</button>
+        </div>
+      </div>
+    `;
+
+    const historyContainer = document.getElementById('modalPriceHistory');
+    if (history.length === 0) {
+      historyContainer.innerHTML = '<div class="empty" style="padding:12px;"><span class="empty-icon">📭</span>변경 이력이 없습니다.</div>';
+    } else {
+      historyContainer.innerHTML = `
+        <table style="width:100%; font-size:12px;">
+          <thead><tr><th>필드</th><th>이전값</th><th>새값</th><th>변경일시</th><th>담당자</th></tr></thead>
+          <tbody>${history.map(h => `
+            <tr>
+              <td>${h.field_name}</td>
+              <td>${fmt(h.old_value)}</td>
+              <td>${fmt(h.new_value)}</td>
+              <td>${h.changed_at}</td>
+              <td>${escapeHtml(h.staff || '-')}</td>
+            </tr>
+          `).join('')}</tbody>
+        </table>
+      `;
+    }
+  } catch (e) {
+    console.error('상세 로드 오류:', e);
+    document.getElementById('modalBody').innerHTML = '<div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div>';
+    document.getElementById('modalPriceHistory').innerHTML = '';
+  }
+}
+
+async function saveProductEdit() {
+  if (!editingProductId) return;
+
+  const name = document.getElementById('edit_name').value.trim();
+  if (!name) {
+    toast('제품명을 입력해주세요.', true, '⚠️');
+    return;
+  }
+
+  let brand_id = null;
+  const brandNew = document.getElementById('edit_brand_new').value.trim();
+  if (brandNew) {
+    try {
+      const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: brandNew }) });
+      brand_id = result.id;
+    } catch (e) {
+      toast('브랜드 추가 실패: ' + e.message, true, '⚠️');
+      return;
+    }
+  }
+
+  const payload = {
+    name: name,
+    brand_id: brand_id,
+    category_id: document.getElementById('edit_category').value || null,
+    is_active: parseInt(document.getElementById('edit_status').value),
+    cost_price: parseInt(document.getElementById('edit_cost').value) || 0,
+    card_cost_price: parseInt(document.getElementById('edit_cardcost').value) || 0,
+    sale_price: parseInt(document.getElementById('edit_sale').value) || 0,
+    memo: document.getElementById('edit_memo').value.trim() || null,
+    staff: '수정'
+  };
+
+  try {
+    await api(`/api/products/${editingProductId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    toast('제품 정보가 수정되었습니다.', false, '✅');
+    closeModal();
+    await load();
+  } catch (e) {
+    console.error('수정 오류:', e);
+    toast('수정 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+function closeModal() {
+  document.getElementById('productModal').style.display = 'none';
+  editingProductId = null;
+}
+
+// ---------- 단일 제품 등록 ----------
+async function addProduct() {
+  const name = document.getElementById('f_name').value.trim();
+  if (!name) { toast('제품명을 입력해주세요.', true, '⚠️'); return; }
+
+  const brandNew = document.getElementById('f_brand_new').value.trim();
+  let brand_id = null;
+  if (brandNew) {
+    try {
+      const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: brandNew }) });
+      brand_id = result.id;
+    } catch (e) {
+      toast('브랜드 추가 실패: ' + e.message, true, '⚠️');
+      return;
+    }
+  }
+
+  const store_id = document.getElementById('f_store').value;
+  const payload = {
+    name,
+    brand_id: brand_id,
+    category_id: document.getElementById('f_category').value || null,
+    cost_price: document.getElementById('f_cost').value || 0,
+    card_cost_price: document.getElementById('f_cardcost').value || 0,
+    sale_price: document.getElementById('f_sale').value || 0,
+    initial_qty: document.getElementById('f_initial_qty').value || 0,
+    memo: document.getElementById('f_memo').value.trim() || null,
+  };
+  if (store_id) payload.store_id = parseInt(store_id);
+
+  try {
+    await api('/api/products', { method: 'POST', body: JSON.stringify(payload) });
+    ['f_name','f_cost','f_cardcost','f_sale','f_initial_qty','f_memo','f_brand_new'].forEach(id => document.getElementById(id).value = '');
+    toast('제품을 등록했습니다.', false, '✅');
+    await load();
+  } catch (e) {
+    console.error('등록 오류:', e);
+  }
+}
+
+// ---------- 기타 CRUD ----------
+async function updateField(id, field, value) {
+  const payload = {};
+  if (field === 'name') {
+    value = value.trim();
+    if (!value) { load(); return; }
+    payload.name = value;
+  } else {
+    const num = parseInt(String(value).replace(/[^0-9-]/g, ''), 10);
+    payload[field] = isNaN(num) ? 0 : num;
+  }
+  try {
+    await api(`/api/products/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    await load();
+  } catch (e) {
+    console.error('수정 오류:', e);
+  }
+}
+
+async function deleteProduct(id) {
+  if (!confirm('이 제품을 영구 삭제하시겠습니까? 관련된 모든 입출고 내역과 재고 정보도 함께 삭제됩니다.')) return;
+  try {
+    await api(`/api/products/${id}`, { method: 'DELETE' });
+    toast('제품을 삭제했습니다.', false, '✅');
+    selectedProductIds.delete(id);
+    await load();
+  } catch (e) {
+    console.error('삭제 오류:', e);
+  }
+}
+
+function downloadTemplate() {
+  window.open('/api/import/template', '_blank');
+}
+
+async function uploadExcel(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const resultDiv = document.getElementById('uploadResult');
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<span style="color:var(--text-light);">⏳ 업로드 처리 중...</span>';
+
+  const store_id = document.getElementById('uploadStoreSelect').value;
+  if (!store_id) {
+    if (!confirm('매장이 선택되지 않았습니다. 전체 매장에 업로드하시겠습니까?')) {
+      resultDiv.innerHTML = '';
+      resultDiv.style.display = 'none';
+      event.target.value = '';
+      return;
+    }
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  if (store_id) {
+    formData.append('store_id', store_id);
+  }
+
+  try {
+    const res = await fetch('/api/import/products', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.error) {
+      resultDiv.innerHTML = `<span style="color:var(--danger);">❌ ${data.error}</span>`;
+      toast(data.error, true, '⚠️');
+    } else {
+      let html = '';
+      if (data.success > 0) html += `<div style="color:var(--accent); font-weight:600;">✅ 성공: ${data.success}건</div>`;
+      if (data.failed > 0) {
+        html += `<div style="color:var(--danger); font-weight:600;">❌ 실패: ${data.failed}건</div>`;
+        if (data.errors && data.errors.length > 0) {
+          html += `<div style="margin-top:6px; font-size:12px; max-height:100px; overflow-y:auto; background:var(--hover-bg); padding:6px 10px; border-radius:4px;">`;
+          data.errors.slice(0, 10).forEach(err => {
+            html += `<div style="padding:2px 0; border-bottom:1px solid var(--border);">${escapeHtml(err)}</div>`;
+          });
+          if (data.errors.length > 10) html += `<div>... 외 ${data.errors.length - 10}개 오류</div>`;
+          html += `</div>`;
+        }
+      }
+      if (data.success === 0 && data.failed === 0) {
+        html = `<span style="color:var(--text-light);">⚠️ 처리된 행이 없습니다. 파일 내용을 확인하세요.</span>`;
+      }
+      resultDiv.innerHTML = html;
+      toast(`업로드 완료: ${data.success}건 성공`, data.failed > 0, data.failed > 0 ? '⚠️' : '✅');
+      if (data.success > 0) await load();
+    }
+  } catch (e) {
+    console.error('업로드 오류:', e);
+    resultDiv.innerHTML = `<span style="color:var(--danger);">❌ 업로드 중 오류가 발생했습니다.</span>`;
+    toast('업로드 중 오류가 발생했습니다.', true, '⚠️');
+  }
+  event.target.value = '';
+}
+
+async function exportProducts() {
+  const store_id = document.getElementById('storeSelect').value || '';
+  window.open(`/api/export/${store_id || 'all'}/products`, '_blank');
+}
+
+// ---------- 초기화 ----------
+document.addEventListener('DOMContentLoaded', function() {
+  loadCategories();
+  loadBrands();
+  loadStoresForSelects();
+  load();
+  renderProductRows();
+});
+</script>
+{% endblock %}

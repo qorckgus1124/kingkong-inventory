@@ -1,0 +1,467 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🔄 매장 간 재고 이동</h1>
+<div class="subtitle">한 매장에서 다른 매장으로 재고를 이동합니다. 제품을 선택하고 수량을 입력하세요.</div>
+
+<div class="card">
+  <div class="form-grid">
+    <div class="form-field">
+      <label>출발 매장 *</label>
+      <select id="fromStore" onchange="onFromStoreChange()">
+        <option value="">매장 선택</option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label>도착 매장 *</label>
+      <select id="toStore">
+        <option value="">매장 선택</option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label>담당자</label>
+      <input type="text" id="staff" placeholder="이름">
+    </div>
+    <div class="form-field">
+      <label>메모 (이동처)</label>
+      <input type="text" id="memo" placeholder="예: 신사 이동">
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="toolbar" style="margin-bottom:12px;">
+    <input type="text" id="searchBox" placeholder="🔍 제품명 검색" oninput="onSearchInput()" style="width:220px;">
+    <button onclick="loadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
+    <button onclick="doBatchTransfer()" class="primary" id="batchTransferBtn" disabled>🚚 선택된 제품 이동</button>
+    <span style="font-size:12px; color:var(--text-light);" id="selectedCount">0개 선택</span>
+  </div>
+
+  <!-- 진행률 표시 -->
+  <div id="transferProgressWrap" style="display:none; margin-bottom:12px;">
+    <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-light);">
+      <span id="transferProgressText">진행 중...</span>
+      <span id="transferProgressPercent">0%</span>
+    </div>
+    <div class="progress-wrap">
+      <div class="progress-bar" id="transferProgressBar" style="width:0%;"></div>
+    </div>
+  </div>
+
+  <div class="sale-layout">
+    <div class="sale-left" style="flex:1; min-width:0;">
+      <div class="product-grid" id="transferProductGrid">
+        <div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 '전체 보기'를 클릭하세요.</div>
+      </div>
+    </div>
+    <div class="sale-right" style="width:320px; flex-shrink:0;">
+      <div class="cart-title">🛒 이동 장바구니</div>
+      <div class="cart-items-wrap" id="transferCartWrap" style="max-height:300px; overflow-y:auto;">
+        <div id="transferCartList"><div class="cart-empty">선택한 제품이 없습니다</div></div>
+      </div>
+      <div class="cart-footer" style="border-top:1px solid var(--border); padding-top:12px; margin-top:8px;">
+        <div class="cart-total"><span>총 이동 수량</span><span id="transferTotalQty">0개</span></div>
+        <button class="primary" style="width:100%;" onclick="doBatchTransfer()">🚚 이동 실행</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="result" style="margin-top:12px;"></div>
+
+<script>
+let stores = [];
+let products = [];
+let transferCart = {};
+let searchQuery = '';
+let currentFromStore = '';
+
+// ---------- 매장 로드 ----------
+async function loadStores() {
+  const fromSel = document.getElementById('fromStore');
+  const toSel = document.getElementById('toStore');
+  fromSel.innerHTML = '<option value="">로딩 중...</option>';
+  toSel.innerHTML = '<option value="">로딩 중...</option>';
+
+  try {
+    stores = await api('/api/stores');
+    if (!stores || stores.length === 0) {
+      fromSel.innerHTML = '<option value="">매장 없음</option>';
+      toSel.innerHTML = '<option value="">매장 없음</option>';
+      toast('등록된 매장이 없습니다.', true, '⚠️');
+      return;
+    }
+    const opts = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    fromSel.innerHTML = opts;
+    toSel.innerHTML = opts;
+    
+    // 🔥 전역 매장 ID 적용 (출발 매장)
+    const globalStoreId = localStorage.getItem('global_store_id');
+    if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
+      fromSel.value = globalStoreId;
+      // 도착 매장은 출발 매장과 다른 매장으로 설정 (첫 번째 다른 매장)
+      const otherStore = stores.find(s => s.id != globalStoreId);
+      if (otherStore) {
+        toSel.value = otherStore.id;
+      } else if (stores.length > 1) {
+        toSel.value = stores[1].id;
+      } else {
+        toSel.value = stores[0].id;
+      }
+    } else if (stores.length > 0) {
+      fromSel.value = stores[0].id;
+      if (stores.length > 1) {
+        toSel.value = stores[1].id;
+      } else {
+        toSel.value = stores[0].id;
+      }
+      localStorage.setItem('global_store_id', stores[0].id);
+    }
+    
+    currentFromStore = fromSel.value;
+    document.getElementById('transferProductGrid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+  } catch (e) {
+    console.error('매장 로드 오류:', e);
+    toast('매장 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+    fromSel.innerHTML = '<option value="">매장 오류</option>';
+    toSel.innerHTML = '<option value="">매장 오류</option>';
+  }
+}
+
+function onFromStoreChange() {
+  const val = document.getElementById('fromStore').value;
+  localStorage.setItem('global_store_id', val);
+  currentFromStore = val;
+  document.getElementById('searchBox').value = '';
+  searchQuery = '';
+  transferCart = {};
+  renderTransferCart();
+  document.getElementById('transferProductGrid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+  document.getElementById('batchTransferBtn').disabled = true;
+  document.getElementById('selectedCount').textContent = '0개 선택';
+}
+
+function onSearchInput() {
+  searchQuery = document.getElementById('searchBox').value.trim();
+  if (searchQuery) {
+    loadProducts();
+  } else {
+    document.getElementById('transferProductGrid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+  }
+}
+
+function loadAllProducts() {
+  document.getElementById('searchBox').value = '';
+  searchQuery = '';
+  loadProducts();
+}
+
+// ---------- 제품 목록 로드 (재고 많은 순 정렬) ----------
+async function loadProducts() {
+  const store_id = document.getElementById('fromStore').value;
+  if (!store_id) {
+    document.getElementById('transferProductGrid').innerHTML = '<div class="empty">출발 매장을 선택해주세요.</div>';
+    return;
+  }
+
+  const q = document.getElementById('searchBox').value.trim();
+  const params = new URLSearchParams({ 
+    store_id, 
+    sort: 'qty', 
+    order: 'desc'
+  });
+  if (q) params.append('q', q);
+
+  try {
+    products = await api('/api/products?' + params.toString());
+    renderProductGrid();
+  } catch (e) {
+    console.error('제품 로드 오류:', e);
+    toast('제품 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+function renderProductGrid() {
+  const grid = document.getElementById('transferProductGrid');
+  if (!products || products.length === 0) {
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">📦</span>표시할 제품이 없습니다.</div>';
+    return;
+  }
+
+  grid.innerHTML = products.map(p => {
+    const inCart = transferCart[p.id] ? transferCart[p.id].qty : 0;
+    const disabled = p.qty <= 0 ? 'disabled' : '';
+    return `
+      <div class="product-card ${disabled}" onclick="${p.qty > 0 ? `addToTransferCart(${p.id})` : ''}">
+        <div class="pname">${escapeHtml(p.name)}</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+          <span class="chip" style="background:${p.brand_color || '#8a8f98'}; font-size:10px; padding:2px 8px;">${escapeHtml(p.brand_name || '미분류')}</span>
+          <span class="pprice">재고 ${fmt(p.qty)}</span>
+        </div>
+        ${inCart > 0 ? `<div style="font-size:12px; color:var(--accent);">📦 ${inCart}개 선택</div>` : ''}
+      </div>
+    `;
+  }).join('');
+  updateSelectedUI();
+}
+
+// ---------- 장바구니 ----------
+function addToTransferCart(pid) {
+  const product = products.find(p => p.id === pid);
+  if (!product) return;
+  if (product.qty <= 0) {
+    toast('재고가 없습니다.', true, '⚠️');
+    return;
+  }
+
+  const currentQty = transferCart[pid] ? transferCart[pid].qty : 0;
+  if (currentQty + 1 > product.qty) {
+    toast(`재고(${product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
+    return;
+  }
+
+  if (transferCart[pid]) {
+    transferCart[pid].qty += 1;
+  } else {
+    transferCart[pid] = { product, qty: 1 };
+  }
+  renderTransferCart();
+  renderProductGrid();
+}
+
+function changeTransferQty(pid, delta) {
+  const item = transferCart[pid];
+  if (!item) return;
+  const newQty = item.qty + delta;
+  if (newQty <= 0) {
+    delete transferCart[pid];
+    renderTransferCart();
+    renderProductGrid();
+    return;
+  }
+  if (newQty > item.product.qty) {
+    toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
+    renderTransferCart();
+    return;
+  }
+  item.qty = newQty;
+  renderTransferCart();
+  renderProductGrid();
+}
+
+function setTransferQty(pid, value) {
+  const qty = parseInt(value);
+  if (isNaN(qty) || qty < 1) { renderTransferCart(); return; }
+  const item = transferCart[pid];
+  if (!item) return;
+  if (qty > item.product.qty) {
+    toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
+    renderTransferCart();
+    return;
+  }
+  item.qty = qty;
+  renderTransferCart();
+  renderProductGrid();
+}
+
+function removeFromTransferCart(pid) {
+  delete transferCart[pid];
+  renderTransferCart();
+  renderProductGrid();
+}
+
+function renderTransferCart() {
+  const list = document.getElementById('transferCartList');
+  const items = Object.entries(transferCart);
+  if (items.length === 0) {
+    list.innerHTML = '<div class="cart-empty">선택한 제품이 없습니다</div>';
+    document.getElementById('transferTotalQty').textContent = '0개';
+    document.getElementById('batchTransferBtn').disabled = true;
+    return;
+  }
+
+  let totalQty = 0;
+  list.innerHTML = items.map(([pid, item]) => {
+    totalQty += item.qty;
+    return `
+      <div class="cart-item">
+        <div class="ci-name">
+          ${escapeHtml(item.product.name)}
+          <div class="ci-sub">${fmt(item.product.sale_price)}원 × ${item.qty}</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:2px; align-items:flex-end;">
+          <div class="qty-ctrl">
+            <button onclick="changeTransferQty(${pid}, -1)">-</button>
+            <input type="number" class="qty-input" value="${item.qty}" min="1" max="${item.product.qty}" 
+                   onchange="setTransferQty(${pid}, this.value)" onfocus="this.select()">
+            <button onclick="changeTransferQty(${pid}, 1)">+</button>
+          </div>
+        </div>
+        <button onclick="removeFromTransferCart(${pid})" style="color:var(--danger); border:none; background:none; font-size:16px;">✕</button>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('transferTotalQty').textContent = fmt(totalQty) + '개';
+  document.getElementById('batchTransferBtn').disabled = items.length === 0;
+}
+
+function updateSelectedUI() {
+  const count = Object.keys(transferCart).length;
+  document.getElementById('selectedCount').textContent = count + '개 선택';
+}
+
+// ---------- 일괄 이동 실행 ----------
+async function doBatchTransfer() {
+  const items = Object.entries(transferCart);
+  if (items.length === 0) {
+    toast('이동할 제품을 선택해주세요.', true, '⚠️');
+    return;
+  }
+
+  const from_store_id = document.getElementById('fromStore').value;
+  const to_store_id = document.getElementById('toStore').value;
+  const staff = document.getElementById('staff').value || null;
+  const memo = document.getElementById('memo').value || null;
+
+  if (!from_store_id || !to_store_id) {
+    toast('출발 매장과 도착 매장을 선택해주세요.', true, '⚠️');
+    return;
+  }
+  if (from_store_id === to_store_id) {
+    toast('출발 매장과 도착 매장이 같습니다.', true, '⚠️');
+    return;
+  }
+
+  const payload = {
+    from_store_id: parseInt(from_store_id, 10),
+    to_store_id: parseInt(to_store_id, 10),
+    staff: staff,
+    memo: memo,
+    items: items.map(([pid, item]) => ({ product_id: parseInt(pid, 10), quantity: item.qty }))
+  };
+
+  // 진행률 표시 시작
+  const progressWrap = document.getElementById('transferProgressWrap');
+  const progressBar = document.getElementById('transferProgressBar');
+  const progressText = document.getElementById('transferProgressText');
+  const progressPercent = document.getElementById('transferProgressPercent');
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '0%';
+  progressPercent.textContent = '0%';
+  progressText.textContent = '이동 준비 중...';
+
+  try {
+    progressText.textContent = '이동 실행 중...';
+    const result = await api('/api/transfer', { method: 'POST', body: JSON.stringify(payload) });
+    
+    // 진행률 100% 표시
+    progressBar.style.width = '100%';
+    progressPercent.textContent = '100%';
+    progressText.textContent = '이동 완료!';
+    setTimeout(() => { progressWrap.style.display = 'none'; }, 2000);
+
+    let msg = `✅ ${result.success.length}개 이동 완료`;
+    if (result.failed.length > 0) {
+      msg += `, ❌ ${result.failed.length}개 실패`;
+      console.log('실패 목록:', result.failed);
+    }
+    toast(msg, result.failed.length > 0, result.failed.length > 0 ? '⚠️' : '✅');
+
+    // 장바구니 초기화
+    transferCart = {};
+    renderTransferCart();
+    await loadProducts();
+    
+    // 결과 표시
+    const resultDiv = document.getElementById('result');
+    let html = '';
+    if (result.success.length > 0) {
+      html += `<div style="color:var(--accent); font-weight:600;">✅ 이동 완료: ${result.success.length}건</div>`;
+    }
+    if (result.failed.length > 0) {
+      html += `<div style="color:var(--danger); font-weight:600;">❌ 실패: ${result.failed.length}건</div>`;
+      html += `<div style="font-size:12px; max-height:150px; overflow-y:auto; background:var(--hover-bg); padding:6px 10px; border-radius:4px; margin-top:4px;">`;
+      result.failed.forEach(f => {
+        const p = products.find(p => p.id === f.product_id);
+        html += `<div>${p ? escapeHtml(p.name) : '#'+f.product_id}: ${escapeHtml(f.error)}</div>`;
+      });
+      html += `</div>`;
+    }
+    resultDiv.innerHTML = html ? `<div class="card">${html}</div>` : '';
+    resultDiv.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    console.error('이동 오류:', e);
+    progressWrap.style.display = 'none';
+    toast('이동 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ---------- 초기화 ----------
+document.addEventListener('DOMContentLoaded', function() {
+  loadStores();
+});
+</script>
+
+<style>
+.sale-layout { display: flex; gap: 20px; align-items: flex-start; }
+.sale-left { flex: 1; min-width: 0; }
+.sale-right {
+  width: 320px; flex-shrink: 0;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  position: sticky;
+  top: 20px;
+  box-shadow: var(--shadow);
+  max-height: 500px;
+  display: flex;
+  flex-direction: column;
+}
+.sale-right .cart-items-wrap {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+.sale-right .cart-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 8px;
+}
+.cart-items-wrap::-webkit-scrollbar {
+  width: 4px;
+}
+.cart-items-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cart-items-wrap::-webkit-scrollbar-thumb {
+  background: var(--text-light);
+  border-radius: 4px;
+}
+.progress-wrap {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress-wrap .progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+.product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.product-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 12px; cursor: pointer; text-align: left; }
+.product-card:hover { border-color: var(--accent); transform: translateY(-3px); box-shadow: 0 6px 20px rgba(0,0,0,0.08); }
+.product-card.disabled { opacity: 0.4; cursor: not-allowed; }
+.product-card .pname { font-weight: 600; font-size: 13px; margin-bottom: 6px; line-height: 1.4; }
+.product-card .pprice { color: var(--accent); font-weight: 700; font-size: 14px; }
+.product-card .pqty { color: var(--text-light); font-size: 11px; margin-top: 4px; }
+@media (max-width: 768px) {
+  .sale-layout { flex-direction: column; }
+  .sale-right { width: 100%; position: static; max-height: none; }
+}
+</style>
+{% endblock %}

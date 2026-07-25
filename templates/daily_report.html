@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📋 금일 판매 목록</h1>
+<div class="subtitle">모든 매장의 오늘 입출고 내역을 스크롤하여 확인하고 복사하세요. (취소된 내역은 자동 제외됩니다)</div>
+
+<div class="report-scroll" style="max-height:80vh; overflow-y:auto; padding-right:8px;">
+  <div id="reportsContainer"></div>
+</div>
+
+<script>
+async function loadAllReports() {
+  try {
+    const stores = await api('/api/stores');
+    const container = document.getElementById('reportsContainer');
+    if (!stores || stores.length === 0) {
+      container.innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">🏪</span>등록된 매장이 없습니다.</div></div>';
+      return;
+    }
+
+    let html = '';
+    for (const store of stores) {
+      try {
+        const data = await api(`/api/daily_report?store_id=${store.id}`);
+        console.log(`📋 ${store.name} (ID: ${store.id}) 응답:`, data);
+
+        const morningText = data.morning || '내역 없음';
+        const afternoonText = data.afternoon || '내역 없음';
+
+        html += `
+          <div class="card" style="margin-bottom:16px;">
+            <h3 style="color:var(--text);">🏪 ${escapeHtml(store.name)} (${data.date})</h3>
+            <div style="display:flex; gap:20px; flex-wrap:wrap;">
+              <div style="flex:1; min-width:250px;">
+                <strong style="color:var(--text);">🕘 4시 입출고 내역</strong>
+                <textarea class="report-textarea" readonly>${escapeHtml(morningText)}</textarea>
+                <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
+              </div>
+              <div style="flex:1; min-width:250px;">
+                <strong style="color:var(--text);">🕓 마감 입출고 내역</strong>
+                <textarea class="report-textarea" readonly>${escapeHtml(afternoonText)}</textarea>
+                <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
+              </div>
+            </div>
+          </div>
+        `;
+      } catch (e) {
+        console.error(`❌ 매장 ${store.name} 로드 오류:`, e);
+        html += `<div class="card" style="margin-bottom:16px;"><h3 style="color:var(--text);">🏪 ${escapeHtml(store.name)}</h3><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></div>`;
+      }
+    }
+    container.innerHTML = html;
+  } catch (e) {
+    console.error('❌ 전체 로드 오류:', e);
+    document.getElementById('reportsContainer').innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">⚠️</span>매장 목록을 불러오는 중 오류가 발생했습니다.</div></div>';
+  }
+}
+
+// 30초마다 자동 새로고침 (실시간 반영) - 최적화됨
+let autoRefreshTimer = null;
+
+function startAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  autoRefreshTimer = setInterval(loadAllReports, 30000);
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  loadAllReports();
+  startAutoRefresh();
+
+  // 페이지가 보이지 않을 때는 자동 새로고침 중지 (성능 최적화)
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      stopAutoRefresh();
+    } else {
+      startAutoRefresh();
+      loadAllReports(); // 다시 보일 때 즉시 갱신
+    }
+  });
+});
+</script>
+
+<style>
+.report-textarea {
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--textarea-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  width: 100%;
+  height: 200px;
+  resize: vertical;
+  font-family: 'Pretendard', monospace;
+}
+</style>
+{% endblock %}

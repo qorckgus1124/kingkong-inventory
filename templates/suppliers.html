@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🤝 거래처 관리</h1>
+<div class="subtitle">거래처(매입처) 정보를 관리합니다.</div>
+
+<div class="card">
+  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr;">
+    <div class="form-field"><label>거래처명 *</label><input type="text" id="newSupName" placeholder="예: 코카콜라"></div>
+    <div class="form-field"><label>담당자</label><input type="text" id="newSupContact" placeholder="홍길동"></div>
+    <div class="form-field"><label>연락처</label><input type="text" id="newSupPhone" placeholder="02-123-4567"></div>
+    <div class="form-field"><label>링크 (웹사이트/이메일)</label><input type="text" id="newSupLink" placeholder="https://..."></div>
+    <div class="form-field" style="grid-column: span 4;"><label>메모</label><input type="text" id="newSupMemo" placeholder="참고사항"></div>
+    <div class="form-field" style="grid-column: span 4;"><button class="primary" onclick="addSupplier()" style="width:200px;">+ 거래처 추가</button></div>
+  </div>
+</div>
+
+<table>
+  <thead><tr><th>#</th><th>거래처명</th><th>담당자</th><th>연락처</th><th>링크</th><th>메모</th><th style="width:80px"></th></tr></thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<script>
+let suppliers = [];
+
+async function load() {
+  suppliers = await api('/api/suppliers');
+  render();
+}
+
+function render() {
+  const tbody = document.getElementById('tbody');
+  if (suppliers.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">🤝</span>등록된 거래처가 없습니다.<div class="empty-hint">위 입력란에 거래처 정보를 입력하고 추가 버튼을 눌러보세요.</div></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = suppliers.map((s, idx) => `
+    <tr>
+      <td><span class="row-number">${idx + 1}</span></td>
+      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'name', this.textContent)">${escapeHtml(s.name)}</td>
+      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'contact', this.textContent)">${escapeHtml(s.contact || '-')}</td>
+      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'phone', this.textContent)">${escapeHtml(s.phone || '-')}</td>
+      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'link', this.textContent)">${escapeHtml(s.link || '-')}</td>
+      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'memo', this.textContent)">${escapeHtml(s.memo || '-')}</td>
+      <td><button class="danger" onclick="deleteSupplier(${s.id})">삭제</button></td>
+    </tr>
+  `).join('');
+}
+
+async function addSupplier() {
+  const name = document.getElementById('newSupName').value.trim();
+  if (!name) { toast('거래처명을 입력해주세요.', true, '⚠️'); return; }
+  const payload = {
+    name,
+    contact: document.getElementById('newSupContact').value.trim() || null,
+    phone: document.getElementById('newSupPhone').value.trim() || null,
+    link: document.getElementById('newSupLink').value.trim() || null,
+    memo: document.getElementById('newSupMemo').value.trim() || null,
+  };
+  await api('/api/suppliers', { method: 'POST', body: JSON.stringify(payload) });
+  ['newSupName','newSupContact','newSupPhone','newSupLink','newSupMemo'].forEach(id => document.getElementById(id).value = '');
+  toast('거래처를 추가했습니다.', false, '✅');
+  load();
+}
+
+async function updateSupplier(id, field, value) {
+  value = value.trim();
+  if (field !== 'name' && value === '') value = null;
+  if (field === 'name' && !value) { load(); return; }
+  await api(`/api/suppliers/${id}`, { method: 'PUT', body: JSON.stringify({ [field]: value }) });
+  load();
+}
+
+async function deleteSupplier(id) {
+  if (!confirm('이 거래처를 삭제하시겠습니까?')) return;
+  await api(`/api/suppliers/${id}`, { method: 'DELETE' });
+  toast('삭제했습니다.', false, '✅');
+  load();
+}
+
+load();
+</script>
+{% endblock %}

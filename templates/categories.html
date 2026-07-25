@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🏷️ 카테고리 관리</h1>
+<div class="subtitle">제품을 분류할 카테고리를 자유롭게 추가·수정·삭제하세요.</div>
+
+<div class="card">
+  <div class="inline-form" style="display:flex; gap:8px; align-items:center;">
+    <input type="text" id="newName" placeholder="카테고리명 (예: 일회용)">
+    <input type="color" id="newColor" value="#4f8ff7" style="width:44px; padding:2px;">
+    <button class="primary" onclick="addCategory()">+ 추가</button>
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>이름</th><th style="width:100px">색상</th><th style="width:120px"></th></tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<script>
+let categories = [];
+
+async function load() {
+  try {
+    categories = await api('/api/categories');
+    render();
+  } catch (e) {
+    console.error('카테고리 로드 오류:', e);
+    toast('카테고리를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+    render();
+  }
+}
+
+function render() {
+  const tbody = document.getElementById('tbody');
+  if (!categories || categories.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4"><div class="empty"><span class="empty-icon">🏷️</span>등록된 카테고리가 없습니다.<div class="empty-hint">위 입력란에 카테고리를 입력하고 추가 버튼을 눌러보세요.</div></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = categories.map((c, idx) => `
+    <tr>
+      <td><span class="row-number">${idx + 1}</span></td>
+      <td class="editable" contenteditable="true" onblur="rename(${c.id}, this.textContent, '${c.color}')">${escapeHtml(c.name)}</td>
+      <td><input type="color" value="${c.color}" onchange="rename(${c.id}, '${escapeHtml(c.name)}', this.value)"></td>
+      <td><button class="danger" onclick="removeCategory(${c.id})">삭제</button></td>
+    </tr>
+  `).join('');
+}
+
+async function addCategory() {
+  const name = document.getElementById('newName').value.trim();
+  const color = document.getElementById('newColor').value;
+  if (!name) { toast('카테고리명을 입력해주세요.', true, '⚠️'); return; }
+  try {
+    await api('/api/categories', { method: 'POST', body: JSON.stringify({ name, color }) });
+    document.getElementById('newName').value = '';
+    toast('카테고리를 추가했습니다.', false, '✅');
+    await load();
+  } catch (e) {
+    console.error('추가 오류:', e);
+  }
+}
+
+async function rename(id, name, color) {
+  name = name.trim();
+  if (!name) { load(); return; }
+  try {
+    await api(`/api/categories/${id}`, { method: 'PUT', body: JSON.stringify({ name, color }) });
+    await load();
+  } catch (e) {
+    console.error('수정 오류:', e);
+  }
+}
+
+async function removeCategory(id) {
+  if (!confirm('이 카테고리를 삭제하시겠습니까? (해당 제품은 미분류로 변경됩니다)')) return;
+  try {
+    await api(`/api/categories/${id}`, { method: 'DELETE' });
+    toast('삭제했습니다.', false, '✅');
+    await load();
+  } catch (e) {
+    console.error('삭제 오류:', e);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  load();
+});
+</script>
+{% endblock %}

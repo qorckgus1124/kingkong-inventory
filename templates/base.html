@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#4f8ff7">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+<title>재고·판매관리</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/common.js"></script>
+</head>
+<body data-page="{{ active }}">
+<script>
+  (function() {
+    const saved = localStorage.getItem('darkMode');
+    if (saved === 'true') {
+      document.body.classList.add('dark-mode');
+    }
+    if (saved === null && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      document.body.classList.add('dark-mode');
+      localStorage.setItem('darkMode', 'true');
+    }
+  })();
+</script>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">📦 재고·판매관리</div>
+    <div class="store-selector" style="padding: 8px 10px; margin-bottom: 10px;">
+      <select id="globalStoreSelect" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:13px; cursor:pointer;">
+        <option value="">🏪 매장 선택</option>
+      </select>
+    </div>
+    <nav>
+      <a class="nav-item {{ 'active' if active=='dashboard' else '' }}" href="/dashboard" data-shortcut="d">🏠 대시보드</a>
+      <a class="nav-item {{ 'active' if active=='sales' else '' }}" href="/sales" data-shortcut="s">💰 판매 등록</a>
+      <a class="nav-item {{ 'active' if active=='products' else '' }}" href="/" data-shortcut="p">📦 제품 관리</a>
+      <a class="nav-item {{ 'active' if active=='transactions' else '' }}" href="/transactions" data-shortcut="t">🔄 입출고 관리</a>
+      <a class="nav-item {{ 'active' if active=='brands' else '' }}" href="/brands">🏷️ 브랜드 관리</a>
+      <a class="nav-item {{ 'active' if active=='performance' else '' }}" href="/performance">📊 판매 실적</a>
+      <a class="nav-item {{ 'active' if active=='statistics' else '' }}" href="/statistics">📈 매출 통계</a>
+      <a class="nav-item {{ 'active' if active=='daily_report' else '' }}" href="/daily_report">📋 금일 판매 목록</a>
+      <a class="nav-item {{ 'active' if active=='recommend_order' else '' }}" href="/recommend_order">📦 발주 추천</a>
+      <a class="nav-item {{ 'active' if active=='forecast' else '' }}" href="/forecast">📊 출고 예측</a>
+      <a class="nav-item {{ 'active' if active=='transfer' else '' }}" href="/transfer">🔄 재고 이동</a>
+      <a class="nav-item {{ 'active' if active=='categories' else '' }}" href="/categories">🏷️ 카테고리 관리</a>
+      <a class="nav-item {{ 'active' if active=='stores' else '' }}" href="/stores">🏬 매장 관리</a>
+      <a class="nav-item {{ 'active' if active=='suppliers' else '' }}" href="/suppliers">🤝 거래처 관리</a>
+      <a class="nav-item {{ 'active' if active=='settings' else '' }}" href="/settings">⚙️ 설정</a>
+    </nav>
+    <div class="sidebar-footer">
+      <button class="theme-toggle" onclick="toggleTheme()" id="themeToggle">🌙 다크 모드</button>
+      <div style="text-align:center; font-size:11px; color:var(--text-light);">3~6단계 통합</div>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="breadcrumb">
+      <span>🏠</span>
+      <span class="sep">›</span>
+      <span class="current">{{ active|replace('_', ' ')|title }}</span>
+    </div>
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<!-- 플로팅 패널 -->
+<div class="floating-panel" id="floatingPanel">
+  <div class="handover-section" id="handoverSection">
+    <div class="handover-header" onclick="toggleHandover()">
+      <span class="handover-title">📝 인수인계 메모장</span>
+      <span class="handover-toggle" id="handoverToggle">▼</span>
+    </div>
+    <div class="handover-body" id="handoverBody" style="display:none;">
+      <textarea id="handoverMemo" placeholder="인수인계 내용을 입력하세요..." style="width:100%; height:100px; resize:vertical; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text); font-family:inherit; font-size:13px; margin-bottom:6px;"></textarea>
+      <div style="display:flex; gap:6px; justify-content:flex-end;">
+        <button onclick="saveHandoverMemo()" style="padding:4px 12px; font-size:12px;">💾 저장</button>
+        <span id="handoverSaveStatus" style="font-size:11px; color:var(--text-light); align-self:center;"></span>
+      </div>
+    </div>
+  </div>
+  <div class="fp-divider"></div>
+  <div class="floating-panel-header">
+    <span class="fp-title">📊 오늘의 매출</span>
+    <span class="fp-close" onclick="document.getElementById('floatingPanel').style.display='none'">✕</span>
+  </div>
+  <div class="fp-revenue" id="fpRevenue">-</div>
+  <div class="fp-divider"></div>
+  <div id="fpTargetInfo" style="font-size:12px; color:var(--text-light); padding:4px 0;">
+    <div>🎯 목표: <span id="fpTargetAmount">-</span></div>
+    <div>📈 진행: <span id="fpTargetProgress">-</span></div>
+    <div>🔥 남은 금액: <span id="fpRemaining">-</span></div>
+    <div>📅 일평균 필요: <span id="fpDailyNeeded">-</span></div>
+  </div>
+  <div class="fp-divider"></div>
+  <button class="fp-btn" onclick="location.href='/transactions'">➕ 간편 입출고 등록</button>
+</div>
+
+<div id="toast"></div>
+
+<nav class="mobile-bottom-nav">
+  <a href="/dashboard" class="{{ 'active' if active=='dashboard' else '' }}">
+    <span class="nav-icon">🏠</span>
+    <span class="nav-label">홈</span>
+  </a>
+  <a href="/sales" class="{{ 'active' if active=='sales' else '' }}">
+    <span class="nav-icon">💰</span>
+    <span class="nav-label">판매</span>
+  </a>
+  <a href="/" class="{{ 'active' if active=='products' else '' }}">
+    <span class="nav-icon">📦</span>
+    <span class="nav-label">제품</span>
+  </a>
+  <a href="/transactions" class="{{ 'active' if active=='transactions' else '' }}">
+    <span class="nav-icon">🔄</span>
+    <span class="nav-label">입출고</span>
+  </a>
+  <a href="/forecast" class="{{ 'active' if active=='forecast' else '' }}">
+    <span class="nav-icon">📊</span>
+    <span class="nav-label">예측</span>
+  </a>
+  <a href="/settings" class="{{ 'active' if active=='settings' else '' }}">
+    <span class="nav-icon">⚙️</span>
+    <span class="nav-label">설정</span>
+  </a>
+</nav>
+
+<script>
+function toggleTheme() {
+  const body = document.body;
+  const btn = document.getElementById('themeToggle');
+  body.classList.toggle('dark-mode');
+  const isDark = body.classList.contains('dark-mode');
+  localStorage.setItem('darkMode', isDark ? 'true' : 'false');
+  btn.textContent = isDark ? '☀️ 라이트 모드' : '🌙 다크 모드';
+}
+
+// ==============================================================
+// 전역 매장 드롭다운
+// ==============================================================
+let _globalStoreSelectLoaded = false;
+
+async function loadGlobalStoreSelect() {
+  if (_globalStoreSelectLoaded) return;
+  try {
+    const stores = await api('/api/stores');
+    const sel = document.getElementById('globalStoreSelect');
+    if (!sel) return;
+    let options = '<option value="">🏪 매장 선택</option>';
+    stores.forEach(s => {
+      options += `<option value="${s.id}">${escapeHtml(s.name)}</option>`;
+    });
+    sel.innerHTML = options;
+
+    const savedId = localStorage.getItem('global_store_id');
+    if (savedId && stores.some(s => s.id == savedId)) {
+      sel.value = savedId;
+    } else if (stores.length > 0) {
+      sel.value = stores[0].id;
+      localStorage.setItem('global_store_id', stores[0].id);
+    }
+    syncAllStoreDropdowns(sel.value);
+    _globalStoreSelectLoaded = true;
+  } catch (e) {
+    console.error('전역 매장 로드 오류:', e);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const globalSel = document.getElementById('globalStoreSelect');
+  if (globalSel) {
+    globalSel.addEventListener('change', function() {
+      const val = this.value;
+      localStorage.setItem('global_store_id', val);
+      syncAllStoreDropdowns(val);
+      // 각 페이지의 load 함수 호출 (base.html에서 전역 이벤트로 처리)
+      if (typeof load === 'function') load();
+      if (typeof loadDashboard === 'function') loadDashboard();
+      if (typeof loadProducts === 'function') loadProducts();
+      if (typeof loadData === 'function') loadData();
+      if (typeof loadRecommend === 'function') loadRecommend();
+      if (typeof loadForecast === 'function') loadForecast();
+    });
+  }
+
+  const btn = document.getElementById('themeToggle');
+  const isDark = document.body.classList.contains('dark-mode');
+  btn.textContent = isDark ? '☀️ 라이트 모드' : '🌙 다크 모드';
+
+  loadFloatingRevenue();
+  loadHandoverMemo();
+  restoreHandoverState();
+  loadGlobalStoreSelect();
+});
+
+function syncAllStoreDropdowns(storeId) {
+  if (!storeId) return;
+  const targetIds = [
+    'f_store', 'pre_store', 'filterStore', 'storeSelect',
+    'fromStore', 'toStore', 'movementStoreFilter',
+    'uploadStoreSelect', 'recordStoreSelect', 'outboundStoreSelect'
+  ];
+  targetIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.options.length > 0) {
+      const exists = Array.from(el.options).some(opt => opt.value == storeId);
+      if (exists) {
+        el.value = storeId;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  });
+  document.querySelectorAll('select[name="store_id"]').forEach(el => {
+    if (el.options.length > 0) {
+      const exists = Array.from(el.options).some(opt => opt.value == storeId);
+      if (exists) el.value = storeId;
+    }
+  });
+}
+
+// ==============================================================
+// 인수인계 메모장
+// ==============================================================
+function toggleHandover() {
+  const body = document.getElementById('handoverBody');
+  const toggle = document.getElementById('handoverToggle');
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    toggle.textContent = '▲';
+    localStorage.setItem('handoverOpen', 'true');
+  } else {
+    body.style.display = 'none';
+    toggle.textContent = '▼';
+    localStorage.setItem('handoverOpen', 'false');
+  }
+}
+
+function restoreHandoverState() {
+  const isOpen = localStorage.getItem('handoverOpen') === 'true';
+  const body = document.getElementById('handoverBody');
+  const toggle = document.getElementById('handoverToggle');
+  if (isOpen) {
+    body.style.display = 'block';
+    toggle.textContent = '▲';
+  } else {
+    body.style.display = 'none';
+    toggle.textContent = '▼';
+  }
+}
+
+async function loadHandoverMemo() {
+  try {
+    const data = await api('/api/settings');
+    const memo = data.handover_memo || '';
+    document.getElementById('handoverMemo').value = memo;
+  } catch (e) {
+    console.error('메모 로드 오류:', e);
+  }
+}
+
+async function saveHandoverMemo() {
+  const memo = document.getElementById('handoverMemo').value;
+  const status = document.getElementById('handoverSaveStatus');
+  status.textContent = '저장 중...';
+  try {
+    await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ handover_memo: memo })
+    });
+    status.textContent = '✅ 저장 완료';
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  } catch (e) {
+    console.error('메모 저장 오류:', e);
+    status.textContent = '❌ 저장 실패';
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  }
+}
+
+// ==============================================================
+// 플로팅 패널 매출
+// ==============================================================
+async function loadFloatingRevenue() {
+  try {
+    const data = await api('/api/dashboard');
+    const revenue = data.today?.revenue || 0;
+    document.getElementById('fpRevenue').textContent = fmt(revenue) + '원';
+
+    const target = data.monthly_target || {};
+    const targetAmount = target.target || 0;
+    const currentRevenue = target.current_revenue || 0;
+    const remaining = target.remaining_amount || 0;
+    const dailyNeeded = target.daily_avg_needed || 0;
+    const progress = target.progress_percent || 0;
+    const isAchieved = target.is_achieved || false;
+
+    document.getElementById('fpTargetAmount').textContent = fmt(targetAmount) + '원';
+    document.getElementById('fpTargetProgress').textContent = progress.toFixed(1) + '%';
+    document.getElementById('fpRemaining').textContent = isAchieved ? '✅ 달성!' : fmt(remaining) + '원';
+    document.getElementById('fpDailyNeeded').textContent = isAchieved ? '🎉 완료!' : fmt(Math.ceil(dailyNeeded)) + '원/일';
+
+    const remainingEl = document.getElementById('fpRemaining');
+    if (!isAchieved && remaining > 0) {
+      remainingEl.style.color = 'var(--danger)';
+      remainingEl.style.fontWeight = '700';
+    } else if (isAchieved) {
+      remainingEl.style.color = 'var(--accent)';
+      remainingEl.style.fontWeight = '700';
+    }
+
+    const targetInfo = document.getElementById('fpTargetInfo');
+    let progressBar = targetInfo.querySelector('.fp-progress-bar');
+    if (!progressBar) {
+      progressBar = document.createElement('div');
+      progressBar.className = 'fp-progress-bar';
+      progressBar.style.cssText = `
+        width: 100%; height: 4px; background: var(--border); border-radius: 2px;
+        margin-top: 4px; overflow: hidden;
+      `;
+      const fill = document.createElement('div');
+      fill.className = 'fp-progress-fill';
+      fill.style.cssText = `
+        width: 0%; height: 100%;
+        background: ${isAchieved ? 'var(--accent)' : 'var(--danger)'};
+        border-radius: 2px; transition: width 0.5s ease;
+      `;
+      progressBar.appendChild(fill);
+      targetInfo.appendChild(progressBar);
+    }
+    const fill = progressBar.querySelector('.fp-progress-fill');
+    if (fill) {
+      fill.style.width = Math.min(progress, 100) + '%';
+      fill.style.background = isAchieved ? 'var(--accent)' : 'var(--danger)';
+    }
+  } catch (e) {
+    console.error('플로팅 패널 매출 로드 오류:', e);
+    document.getElementById('fpRevenue').textContent = '--원';
+    document.getElementById('fpTargetAmount').textContent = '--';
+    document.getElementById('fpTargetProgress').textContent = '--';
+    document.getElementById('fpRemaining').textContent = '--';
+    document.getElementById('fpDailyNeeded').textContent = '--';
+  }
+}
+
+// 키보드 단축키
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.key === 'Enter') {
+    const form = document.querySelector('form');
+    if (form) {
+      const submitBtn = form.querySelector('button[type="submit"], .primary');
+      if (submitBtn) submitBtn.click();
+    }
+    const saveBtn = document.querySelector('button.primary[onclick*="save"], button.primary[onclick*="add"], button.primary[onclick*="register"], button.primary[onclick*="checkout"]');
+    if (saveBtn) saveBtn.click();
+    e.preventDefault();
+  }
+  if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+    window.location.href = '/sales';
+    e.preventDefault();
+  }
+  if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+    window.location.href = '/';
+    e.preventDefault();
+  }
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal, .modal-overlay, [style*="display:flex"][style*="position:fixed"]').forEach(el => {
+      if (el.style.display !== 'none') {
+        el.style.display = 'none';
+      }
+    });
+  }
+  if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    const searchInput = document.querySelector('input[type="text"][placeholder*="검색"], input[placeholder*="검색"], #searchBox');
+    if (searchInput) {
+      searchInput.focus();
+      e.preventDefault();
+    }
+  }
+});
+</script>
+{% block scripts %}{% endblock %}
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js')
+    .then(function() { console.log('✅ 서비스 워커 등록 완료'); })
+    .catch(function() { console.log('⚠️ 서비스 워커 등록 실패'); });
+}
+</script>
+</body>
+</html>

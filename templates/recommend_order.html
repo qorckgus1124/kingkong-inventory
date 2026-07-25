@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📦 발주 추천</h1>
+<div class="subtitle">최근 판매 데이터를 기반으로 매장별 발주 추천 수량을 확인하세요.</div>
+
+<div class="toolbar">
+  <select id="storeSelect" onchange="loadRecommend()">
+    <option value="">전체 매장</option>
+  </select>
+  <select id="categoryFilter" onchange="loadRecommend()">
+    <option value="">전체 카테고리</option>
+  </select>
+  <select id="brandFilter" onchange="loadRecommend()">
+    <option value="">전체 브랜드</option>
+  </select>
+  <label style="font-size:12px; color:var(--text-light);">기간:
+    <select id="daysSelect" onchange="loadRecommend()">
+      <option value="7">7일</option>
+      <option value="14" selected>14일</option>
+      <option value="30">30일</option>
+      <option value="60">60일</option>
+    </select>
+  </label>
+  <label style="font-size:12px; color:var(--text-light);">목표 재고일수:
+    <input type="number" id="targetDays" value="7" style="width:60px;" onchange="loadRecommend()">
+  </label>
+  <button onclick="loadRecommend()" class="primary">🔄 새로고침</button>
+</div>
+
+<!-- 📌 페이지네이션을 테이블 위에 고정 -->
+<div class="table-toolbar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px; position:sticky; top:0; background:var(--bg); z-index:5; padding:6px 0;">
+  <div style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-light);">
+    <span>총 <span id="totalCount">0</span>건</span>
+    <span>|</span>
+    <label>조회 줄수:
+      <input type="number" id="rowsPerPage" value="20" min="5" max="100" style="width:60px; padding:4px;" onchange="changePage(0)">
+    </label>
+  </div>
+  <div>
+    <button onclick="changePage(-1)" id="prevPageBtn" class="page-btn">◀ 이전</button>
+    <span id="pageInfo" style="font-size:13px; color:var(--text-light); margin:0 8px;">1 / 1</span>
+    <button onclick="changePage(1)" id="nextPageBtn" class="page-btn">다음 ▶</button>
+  </div>
+</div>
+
+<div class="summary-cards" style="margin-bottom:16px;">
+  <div class="summary-card"><div class="label">추천 제품 수</div><div class="value" id="recommendCount">-</div></div>
+  <div class="summary-card"><div class="label">총 추천 발주량</div><div class="value" id="totalRecommend">-</div></div>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>제품명</th>
+        <th>브랜드</th>
+        <th>카테고리</th>
+        <th>원가</th>
+        <th>판매가</th>
+        <th>현재 재고</th>
+        <th>총 판매량<br><span style="font-weight:400; font-size:10px; color:var(--text-light);">(선택 기간)</span></th>
+        <th>일평균 판매</th>
+        <th>예상 필요량</th>
+        <th>부족량</th>
+        <th>추천 발주량</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+console.log('📦 발주 추천 페이지 로드됨');
+
+let currentPage = 1;
+let totalPages = 1;
+let totalItems = 0;
+let rowsPerPage = 20;
+
+// ---------- 필터 드롭다운 로드 ----------
+async function loadFilters() {
+  try {
+    // 카테고리
+    const categories = await api('/api/categories');
+    const catSel = document.getElementById('categoryFilter');
+    catSel.innerHTML = '<option value="">전체 카테고리</option>' +
+      categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  } catch (e) {
+    console.error('카테고리 로드 오류:', e);
+  }
+
+  try {
+    // 브랜드
+    const brands = await api('/api/brands');
+    const brandSel = document.getElementById('brandFilter');
+    brandSel.innerHTML = '<option value="">전체 브랜드</option>' +
+      brands.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
+  } catch (e) {
+    console.error('브랜드 로드 오류:', e);
+  }
+
+  // 매장
+   try {
+    const stores = await api('/api/stores');
+    const storeSel = document.getElementById('storeSelect');
+    storeSel.innerHTML = '<option value="">전체 매장</option>' +
+      stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    
+    // 🔥 전역 매장 ID 적용
+    const globalStoreId = localStorage.getItem('global_store_id');
+    if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
+      storeSel.value = globalStoreId;
+    }
+  } catch (e) {
+    console.error('매장 로드 오류:', e);
+  }
+}
+
+// ---------- 페이지 변경 ----------
+function changePage(delta) {
+  if (delta === 0) {
+    // rowsPerPage 변경
+    rowsPerPage = parseInt(document.getElementById('rowsPerPage').value) || 20;
+    currentPage = 1;
+  } else {
+    const newPage = currentPage + delta;
+    if (newPage < 1 || newPage > totalPages) return;
+    currentPage = newPage;
+  }
+  loadRecommend();
+}
+
+// ---------- 데이터 로드 ----------
+async function loadRecommend() {
+  console.log('🔄 발주 추천 데이터 로드 시작...');
+
+  // 로딩 표시
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
+  document.getElementById('totalCount').textContent = '...';
+
+  const store_id = document.getElementById('storeSelect').value;
+  const days = document.getElementById('daysSelect').value;
+  const target_days = document.getElementById('targetDays').value || 7;
+  const category_id = document.getElementById('categoryFilter').value;
+  const brand_id = document.getElementById('brandFilter').value;
+  rowsPerPage = parseInt(document.getElementById('rowsPerPage').value) || 20;
+  const offset = (currentPage - 1) * rowsPerPage;
+
+  const params = new URLSearchParams({
+    days: days,
+    target_days: target_days,
+    limit: rowsPerPage,
+    offset: offset
+  });
+  if (store_id) params.append('store_id', store_id);
+  if (category_id) params.append('category_id', category_id);
+  if (brand_id) params.append('brand_id', brand_id);
+
+  try {
+    const data = await api('/api/recommend_order?' + params.toString());
+    console.log('✅ 추천 데이터 수신:', data);
+
+    const rows = data.items || [];
+    totalItems = data.total || 0;
+    totalPages = Math.ceil(totalItems / rowsPerPage) || 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const tbody = document.getElementById('tbody');
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">📊</span>추천 데이터가 없습니다.</div></td></tr>';
+      document.getElementById('recommendCount').textContent = '0';
+      document.getElementById('totalRecommend').textContent = '0개';
+    } else {
+      let recommendCount = 0;
+      let totalRecommend = 0;
+      tbody.innerHTML = rows.map((r, idx) => {
+        const recQty = r.recommend_qty || 0;
+        if (recQty > 0) {
+          recommendCount++;
+          totalRecommend += recQty;
+        }
+        return `
+          <tr>
+            <td><span class="row-number">${idx + 1 + offset}</span></td>
+            <td>${escapeHtml(r.product_name)}</td>
+            <td>${r.brand_name ? `<span class="brand-tag" style="background:${r.brand_color || '#8a8f98'};">${escapeHtml(r.brand_name)}</span>` : '-'}</td>
+            <td>${r.category_name ? `<span class="chip" style="background:${r.category_color || '#8a8f98'};">${escapeHtml(r.category_name)}</span>` : '-'}</td>
+            <td>${fmt(r.cost_price)}원</td>
+            <td>${fmt(r.sale_price)}원</td>
+            <td>${fmt(r.current_qty)}</td>
+            <td style="font-weight:600; color:var(--accent);">${fmt(r.total_sold)}</td>
+            <td>${r.avg_daily_sales || 0}</td>
+            <td>${fmt(r.expected_demand)}</td>
+            <td style="font-weight:700; color:${r.shortage > 0 ? 'var(--danger)' : 'var(--text-light)'};">${fmt(r.shortage)}</td>
+            <td style="font-weight:700; color:${recQty > 0 ? 'var(--danger)' : 'var(--text-light)'};">${fmt(recQty)}</td>
+          </tr>
+        `;
+      }).join('');
+      document.getElementById('recommendCount').textContent = recommendCount;
+      document.getElementById('totalRecommend').textContent = fmt(totalRecommend) + '개';
+    }
+
+    // 페이지 정보 업데이트
+    document.getElementById('totalCount').textContent = totalItems;
+    document.getElementById('pageInfo').textContent = `${currentPage} / ${totalPages}`;
+    document.getElementById('prevPageBtn').disabled = currentPage <= 1;
+    document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
+
+  } catch (e) {
+    console.error('❌ 추천 로드 오류:', e);
+    toast('데이터를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
+    document.getElementById('totalCount').textContent = '0';
+    document.getElementById('pageInfo').textContent = '0 / 0';
+    document.getElementById('recommendCount').textContent = '-';
+    document.getElementById('totalRecommend').textContent = '-';
+  }
+}
+
+// ---------- 초기화 ----------
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🚀 발주 추천 초기화');
+  loadFilters().then(() => {
+    loadRecommend();
+  });
+});
+</script>
+
+<style>
+.brand-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+}
+.page-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.page-btn:hover {
+  background: var(--hover-bg);
+}
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.toolbar select, .toolbar input { padding: 4px 8px; font-size: 12px; }
+/* 테이블 툴바 고정 */
+.table-toolbar {
+  background: var(--bg);
+  z-index: 5;
+}
+</style>
+{% endblock %}

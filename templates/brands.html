@@ -1,0 +1,467 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🏷️ 브랜드 관리</h1>
+<div class="subtitle">브랜드를 추가·수정·삭제하고, 승인 상태를 관리하세요.</div>
+
+<div class="card">
+  <div class="form-grid">
+    <div class="form-field">
+      <label>브랜드명 *</label>
+      <input type="text" id="newBrandName" placeholder="예: 네스티">
+    </div>
+    <div class="form-field">
+      <label>카테고리</label>
+      <select id="newBrandCategory">
+        <option value="">선택</option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label>색상</label>
+      <input type="color" id="newBrandColor" value="#4f8ff7">
+    </div>
+    <div class="form-field">
+      <label>상태</label>
+      <select id="newBrandStatus">
+        <option value="pending">⏳ 대기</option>
+        <option value="approved" selected>✅ 승인</option>
+      </select>
+    </div>
+    <div class="form-field" style="grid-column: span 4;">
+      <button class="primary" onclick="addBrand()" style="width:200px;">+ 브랜드 추가</button>
+    </div>
+  </div>
+</div>
+
+<!-- 필터 -->
+<div class="toolbar">
+  <select id="statusFilter" onchange="loadBrands()">
+    <option value="">전체</option>
+    <option value="pending" selected>⏳ 대기</option>
+    <option value="approved">✅ 승인</option>
+  </select>
+  <input type="text" id="searchBrand" placeholder="🔍 브랜드 검색" oninput="loadBrands()">
+  <button onclick="exportBrandsCSV()" class="primary">📥 CSV 내보내기</button>
+  <button onclick="document.getElementById('brandCsvUpload').click()">📤 CSV 업로드</button>
+  <input type="file" id="brandCsvUpload" accept=".csv" style="display:none" onchange="uploadBrandsCSV(event)">
+
+  <!-- 일괄 승인/수정 버튼 -->
+  <button class="success" onclick="batchApproveBrands()" id="batchApproveBtn" disabled>✅ 선택 승인</button>
+  <button class="primary" onclick="batchEditBrands()" id="batchEditBtn" disabled>✏️ 선택 수정</button>
+  <span style="font-size:12px; color:var(--text-light);" id="batchSelectedCount">0개 선택</span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:30px;"><input type="checkbox" id="selectAll" onchange="toggleAllBrands()"></th>
+        <th>#</th>
+        <th>브랜드명</th>
+        <th>카테고리</th>
+        <th>색상</th>
+        <th>상태</th>
+        <th>제품 수</th>
+        <th style="width:200px;">관리</th>
+      </tr>
+    </thead>
+    <tbody id="brandTbody">
+      <tr><td colspan="8"><div class="empty"><span class="empty-icon">🏷️</span>브랜드가 없습니다.</div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 브랜드 수정 모달 -->
+<div id="editBrandModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:450px; width:92%; box-shadow:var(--shadow);">
+    <h3 style="color:var(--text); margin-top:0;">✏️ 브랜드 수정</h3>
+    <input type="hidden" id="editBrandId">
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>브랜드명</label>
+      <input type="text" id="editBrandName" style="width:100%;">
+    </div>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>카테고리</label>
+      <select id="editBrandCategory" style="width:100%;"></select>
+    </div>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>색상</label>
+      <input type="color" id="editBrandColor" style="width:100%;">
+    </div>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>상태</label>
+      <select id="editBrandStatus" style="width:100%;">
+        <option value="pending">⏳ 대기</option>
+        <option value="approved">✅ 승인</option>
+      </select>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+      <button onclick="closeEditBrandModal()" style="padding:8px 16px;">취소</button>
+      <button class="primary" onclick="saveBrandEdit()" style="padding:8px 16px;">💾 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 일괄 수정 모달 -->
+<div id="batchEditBrandModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:450px; width:92%; box-shadow:var(--shadow);">
+    <h3 style="color:var(--text); margin-top:0;">✏️ 브랜드 일괄 수정</h3>
+    <p style="font-size:13px; color:var(--text-light);"><span id="batchEditCount">0</span>개 선택</p>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>카테고리</label>
+      <select id="batchEditCategory" style="width:100%;">
+        <option value="">변경 안 함</option>
+      </select>
+    </div>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>상태</label>
+      <select id="batchEditStatus" style="width:100%;">
+        <option value="">변경 안 함</option>
+        <option value="pending">⏳ 대기</option>
+        <option value="approved">✅ 승인</option>
+      </select>
+    </div>
+    <div class="form-field" style="margin-bottom:12px;">
+      <label>색상</label>
+      <input type="color" id="batchEditColor" value="#8a8f98">
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+      <button onclick="closeBatchEditBrandModal()" style="padding:8px 16px;">취소</button>
+      <button class="primary" onclick="applyBatchEditBrand()" style="padding:8px 16px;">💾 적용</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let brands = [];
+let categories = [];
+let editingBrandId = null;
+let selectedBrandIds = new Set();
+
+// ---------- 카테고리 로드 ----------
+async function loadCategories() {
+  try {
+    categories = await api('/api/categories');
+    const opts = categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    document.getElementById('newBrandCategory').innerHTML = '<option value="">선택</option>' + opts;
+    document.getElementById('editBrandCategory').innerHTML = '<option value="">선택</option>' + opts;
+    document.getElementById('batchEditCategory').innerHTML = '<option value="">변경 안 함</option>' + opts;
+  } catch (e) {
+    console.error('카테고리 로드 오류:', e);
+  }
+}
+
+// ---------- 브랜드 목록 로드 ----------
+async function loadBrands() {
+  const status = document.getElementById('statusFilter').value;
+  const search = document.getElementById('searchBrand').value.trim();
+  
+  let url = '/api/brands';
+  const params = new URLSearchParams();
+  if (status) params.append('status', status);
+  if (search) params.append('search', search);
+  if (params.toString()) url += '?' + params.toString();
+  
+  try {
+    brands = await api(url);
+    selectedBrandIds.clear();
+    document.getElementById('selectAll').checked = false;
+    updateBatchUI();
+    renderBrands();
+  } catch (e) {
+    console.error('브랜드 로드 오류:', e);
+    toast('브랜드를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+function renderBrands() {
+  const tbody = document.getElementById('brandTbody');
+  if (!brands || brands.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><span class="empty-icon">🏷️</span>등록된 브랜드가 없습니다.</div></td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = brands.map((b, idx) => {
+    const statusLabel = b.status === 'approved' ? '✅ 승인' : '⏳ 대기';
+    const statusClass = b.status === 'approved' ? 'chip-approved' : 'chip-pending';
+    const checked = selectedBrandIds.has(b.id) ? 'checked' : '';
+    return `
+      <tr>
+        <td><input type="checkbox" class="row-checkbox" value="${b.id}" ${checked} onchange="toggleBrand(${b.id})"></td>
+        <td><span class="row-number">${idx + 1}</span></td>
+        <td><span class="brand-tag" style="background:${b.color || '#8a8f98'};">${escapeHtml(b.name)}</span></td>
+        <td>${b.category_name ? escapeHtml(b.category_name) : '<span style="color:var(--text-light);">미지정</span>'}</td>
+        <td><span style="display:inline-block; width:24px; height:24px; border-radius:4px; background:${b.color || '#8a8f98'}; border:1px solid var(--border);"></span></td>
+        <td><span class="chip ${statusClass}">${statusLabel}</span></td>
+        <td>${b.product_count || 0}</td>
+        <td>
+          <button onclick="openEditBrandModal(${b.id})" style="padding:2px 10px; font-size:12px;">✏️ 수정</button>
+          <button class="danger" onclick="deleteBrand(${b.id})" style="padding:2px 10px; font-size:12px;">🗑️ 삭제</button>
+          ${b.status === 'pending' ? `<button class="success" onclick="approveBrand(${b.id})" style="padding:2px 10px; font-size:12px;">✅ 승인</button>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+  updateBatchUI();
+}
+
+// ---------- 체크박스 관리 ----------
+function toggleBrand(id) {
+  if (selectedBrandIds.has(id)) {
+    selectedBrandIds.delete(id);
+  } else {
+    selectedBrandIds.add(id);
+  }
+  updateBatchUI();
+  updateSelectAll();
+}
+
+function toggleAllBrands() {
+  const checked = document.getElementById('selectAll').checked;
+  const checkboxes = document.querySelectorAll('.row-checkbox');
+  checkboxes.forEach(cb => {
+    const id = parseInt(cb.value);
+    if (checked) {
+      selectedBrandIds.add(id);
+    } else {
+      selectedBrandIds.delete(id);
+    }
+    cb.checked = checked;
+  });
+  updateBatchUI();
+}
+
+function updateSelectAll() {
+  const allCbs = document.querySelectorAll('.row-checkbox');
+  const checkedCbs = document.querySelectorAll('.row-checkbox:checked');
+  document.getElementById('selectAll').checked = allCbs.length > 0 && allCbs.length === checkedCbs.length;
+}
+
+function updateBatchUI() {
+  const count = selectedBrandIds.size;
+  document.getElementById('batchSelectedCount').textContent = count + '개 선택';
+  document.getElementById('batchApproveBtn').disabled = count === 0;
+  document.getElementById('batchEditBtn').disabled = count === 0;
+}
+
+// ---------- 브랜드 추가 ----------
+async function addBrand() {
+  const name = document.getElementById('newBrandName').value.trim();
+  if (!name) { toast('브랜드명을 입력해주세요.', true, '⚠️'); return; }
+  
+  const payload = {
+    name: name,
+    category_id: document.getElementById('newBrandCategory').value || null,
+    color: document.getElementById('newBrandColor').value,
+    status: document.getElementById('newBrandStatus').value
+  };
+  
+  try {
+    await api('/api/brands', { method: 'POST', body: JSON.stringify(payload) });
+    document.getElementById('newBrandName').value = '';
+    toast('브랜드를 추가했습니다.', false, '✅');
+    loadBrands();
+  } catch (e) {
+    console.error('추가 오류:', e);
+  }
+}
+
+// ---------- 브랜드 수정 모달 ----------
+function openEditBrandModal(id) {
+  const brand = brands.find(b => b.id === id);
+  if (!brand) return;
+  editingBrandId = id;
+  document.getElementById('editBrandId').value = id;
+  document.getElementById('editBrandName').value = brand.name;
+  document.getElementById('editBrandCategory').value = brand.category_id || '';
+  document.getElementById('editBrandColor').value = brand.color || '#8a8f98';
+  document.getElementById('editBrandStatus').value = brand.status || 'pending';
+  document.getElementById('editBrandModal').style.display = 'flex';
+}
+
+function closeEditBrandModal() {
+  document.getElementById('editBrandModal').style.display = 'none';
+  editingBrandId = null;
+}
+
+async function saveBrandEdit() {
+  const id = document.getElementById('editBrandId').value;
+  const name = document.getElementById('editBrandName').value.trim();
+  if (!name) { toast('브랜드명을 입력해주세요.', true, '⚠️'); return; }
+  
+  const payload = {
+    name: name,
+    category_id: document.getElementById('editBrandCategory').value || null,
+    color: document.getElementById('editBrandColor').value,
+    status: document.getElementById('editBrandStatus').value
+  };
+  
+  try {
+    await api(`/api/brands/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    closeEditBrandModal();
+    toast('브랜드가 수정되었습니다.', false, '✅');
+    loadBrands();
+  } catch (e) {
+    console.error('수정 오류:', e);
+  }
+}
+
+// ---------- 개별 브랜드 승인 ----------
+async function approveBrand(id) {
+  const brand = brands.find(b => b.id === id);
+  if (!brand) return;
+  if (brand.status === 'approved') {
+    toast('이미 승인된 브랜드입니다.', false, 'ℹ️');
+    return;
+  }
+  
+  try {
+    await api(`/api/brands/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: 'approved' })
+    });
+    toast(`'${brand.name}' 브랜드가 승인되었습니다.`, false, '✅');
+    loadBrands();
+  } catch (e) {
+    console.error('승인 오류:', e);
+  }
+}
+
+// ---------- 일괄 승인 ----------
+async function batchApproveBrands() {
+  if (selectedBrandIds.size === 0) {
+    toast('승인할 브랜드를 선택해주세요.', true, '⚠️');
+    return;
+  }
+  
+  const pendingIds = Array.from(selectedBrandIds).filter(id => {
+    const brand = brands.find(b => b.id === id);
+    return brand && brand.status === 'pending';
+  });
+  
+  if (pendingIds.length === 0) {
+    toast('선택한 브랜드는 모두 승인 상태입니다.', true, '⚠️');
+    return;
+  }
+  
+  try {
+    const result = await api('/api/brands/batch_approve', {
+      method: 'POST',
+      body: JSON.stringify({ ids: pendingIds })
+    });
+    toast(`${result.updated}개 브랜드가 승인되었습니다.`, false, '✅');
+    selectedBrandIds.clear();
+    loadBrands();
+  } catch (e) {
+    console.error('일괄 승인 오류:', e);
+  }
+}
+
+// ---------- 일괄 수정 ----------
+function batchEditBrands() {
+  if (selectedBrandIds.size === 0) {
+    toast('수정할 브랜드를 선택해주세요.', true, '⚠️');
+    return;
+  }
+  document.getElementById('batchEditCount').textContent = selectedBrandIds.size;
+  document.getElementById('batchEditBrandModal').style.display = 'flex';
+}
+
+function closeBatchEditBrandModal() {
+  document.getElementById('batchEditBrandModal').style.display = 'none';
+}
+
+async function applyBatchEditBrand() {
+  const updates = {};
+  const category_id = document.getElementById('batchEditCategory').value;
+  const status = document.getElementById('batchEditStatus').value;
+  const color = document.getElementById('batchEditColor').value;
+  
+  if (category_id) updates.category_id = parseInt(category_id);
+  if (status) updates.status = status;
+  if (color) updates.color = color;
+  
+  if (Object.keys(updates).length === 0) {
+    toast('수정할 항목을 선택해주세요.', true, '⚠️');
+    return;
+  }
+  
+  const ids = Array.from(selectedBrandIds);
+  try {
+    const result = await api('/api/brands/batch_update', {
+      method: 'POST',
+      body: JSON.stringify({ ids, updates })
+    });
+    toast(`${result.updated}개 브랜드가 수정되었습니다.`, false, '✅');
+    closeBatchEditBrandModal();
+    selectedBrandIds.clear();
+    loadBrands();
+  } catch (e) {
+    console.error('일괄 수정 오류:', e);
+  }
+}
+
+// ---------- 브랜드 삭제 ----------
+async function deleteBrand(id) {
+  const brand = brands.find(b => b.id === id);
+  if (!brand) return;
+  if (!confirm(`'${brand.name}' 브랜드를 삭제하시겠습니까? (해당 브랜드의 제품들은 미분류로 변경됩니다)`)) return;
+  
+  try {
+    await api(`/api/brands/${id}`, { method: 'DELETE' });
+    toast('브랜드를 삭제했습니다.', false, '✅');
+    loadBrands();
+  } catch (e) {
+    console.error('삭제 오류:', e);
+  }
+}
+
+// ---------- CSV 내보내기 ----------
+async function exportBrandsCSV() {
+  window.open('/api/export/brands', '_blank');
+}
+
+// ---------- CSV 업로드 ----------
+async function uploadBrandsCSV(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  try {
+    const res = await fetch('/api/import/brands', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.error) {
+      toast(data.error, true, '⚠️');
+    } else {
+      toast(`업로드 완료: ${data.success}개 추가/수정됨`, false, '✅');
+      loadBrands();
+    }
+  } catch (e) {
+    console.error('업로드 오류:', e);
+    toast('업로드 중 오류가 발생했습니다.', true, '⚠️');
+  }
+  event.target.value = '';
+}
+
+// ---------- 초기화 ----------
+document.addEventListener('DOMContentLoaded', function() {
+  loadCategories();
+  loadBrands();
+});
+</script>
+
+<style>
+.brand-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+}
+.chip-approved { background: #34a853; color: white; }
+.chip-pending { background: #fbbc04; color: #333; }
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+</style>
+{% endblock %}

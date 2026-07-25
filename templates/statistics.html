@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📈 매출 통계</h1>
+<div class="subtitle">일/주/월/년 단위로 매출·이익 추이를 확인하세요.</div>
+
+<div class="tab-row" id="periodTabs" style="display:flex; gap:6px; margin-bottom:16px;">
+  <button data-period="day" onclick="pickPeriod('day')" class="tab-btn active">일별</button>
+  <button data-period="week" onclick="pickPeriod('week')" class="tab-btn">주별</button>
+  <button data-period="month" onclick="pickPeriod('month')" class="tab-btn">월별</button>
+  <button data-period="year" onclick="pickPeriod('year')" class="tab-btn">연도별</button>
+</div>
+
+<div class="toolbar">
+  <button onclick="exportStatistics()">📊 엑셀 다운로드</button>
+</div>
+
+<div class="card">
+  <div class="chart-wrap" id="chart" style="display:flex; align-items:flex-end; gap:6px; height:220px; margin:20px 0 10px; overflow-x:auto; padding-bottom:4px;"></div>
+</div>
+
+<table>
+  <thead><tr><th>#</th><th>기간</th><th>판매량</th><th>순매출</th><th>순이익</th></tr></thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<script>
+let currentPeriod = 'day';
+
+function pickPeriod(p) {
+  currentPeriod = p;
+  // 🔥 'selected' 대신 'active' 클래스 사용 (CSS에 .tab-btn.active 정의됨)
+  document.querySelectorAll('#periodTabs .tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`#periodTabs .tab-btn[data-period="${p}"]`).classList.add('active');
+  load();
+}
+
+async function load() {
+  // 로딩 표시
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="5"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
+  document.getElementById('chart').innerHTML = '<div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div>';
+
+  try {
+    const rows = await api('/api/statistics?period=' + currentPeriod);
+    renderChart(rows);
+    renderTable(rows);
+  } catch (e) {
+    console.error('통계 로드 오류:', e);
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="5"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
+    document.getElementById('chart').innerHTML = '<div class="empty"><span class="empty-icon">⚠️</span>오류가 발생했습니다.</div>';
+  }
+}
+
+function renderChart(rows) {
+  const wrap = document.getElementById('chart');
+  if (!rows || rows.length === 0) {
+    wrap.innerHTML = '<div class="empty"><span class="empty-icon">📊</span>표시할 데이터가 없습니다.</div>';
+    return;
+  }
+  const max = Math.max(...rows.map(r => Math.abs(r.revenue)), 1);
+  wrap.innerHTML = rows.map(r => {
+    const h = Math.max(Math.round(Math.abs(r.revenue) / max * 180), 2);
+    return `
+      <div class="chart-bar-col" style="display:flex; flex-direction:column; align-items:center; min-width:36px; height:100%; justify-content:flex-end;" title="${r.period_key}: ${fmt(r.revenue)}원">
+        <div class="chart-bar ${r.revenue < 0 ? 'negative' : ''}" style="width:22px; background:${r.revenue < 0 ? 'var(--danger)' : 'var(--accent)'}; border-radius:4px 4px 0 0; min-height:2px; height:${h}px;"></div>
+        <div class="chart-label" style="font-size:10px; color:var(--text-light); margin-top:6px; writing-mode:vertical-rl; text-orientation:mixed; max-height:60px;">${r.period_key}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderTable(rows) {
+  const tbody = document.getElementById('tbody');
+  if (!rows || rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5"><div class="empty"><span class="empty-icon">📭</span>표시할 데이터가 없습니다.</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.slice().reverse().map((r, idx) => `
+    <tr>
+      <td><span class="row-number">${idx + 1}</span></td>
+      <td>${r.period_key}</td>
+      <td>${fmt(r.sold_qty)}</td>
+      <td>${fmt(r.revenue)}원</td>
+      <td>${fmt(r.profit)}원</td>
+    </tr>
+  `).join('');
+}
+
+async function exportStatistics() {
+  window.open(`/api/export/statistics?period=${currentPeriod}`, '_blank');
+}
+
+// 초기화: day 선택
+document.addEventListener('DOMContentLoaded', function() {
+  pickPeriod('day');
+});
+</script>
+{% endblock %}

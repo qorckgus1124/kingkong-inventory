@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>⚙️ 설정</h1>
+<div class="subtitle">프로그램의 기본 설정값을 관리합니다.</div>
+
+<!-- ============================================================ -->
+<!-- 🎯 월간 목표 매출 (독립 카드 - 디자인 통일) -->
+<!-- ============================================================ -->
+<div class="card">
+  <h3 style="color:var(--text);">🎯 월간 목표 매출</h3>
+  <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
+    <div style="flex: 1; min-width: 200px;">
+      <label style="display: block; font-size: 12px; color: var(--text-light); margin-bottom: 4px;">목표 금액 (원)</label>
+      <input type="number" id="monthlyTargetRevenue" step="10000" min="0" placeholder="0" 
+             style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--input-bg); color: var(--text);">
+    </div>
+    <div>
+      <button class="primary" onclick="saveSettings()" style="padding: 8px 20px;">💾 저장</button>
+      <span id="targetSaveStatus" style="font-size: 12px; color: var(--text-light); margin-left: 8px;"></span>
+    </div>
+  </div>
+  <div style="font-size: 12px; color: var(--text-light); margin-top: 8px;">
+    💡 목표 금액을 설정하면 대시보드 플로팅 패널에 반영됩니다.
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- ⚙️ 기본 설정 -->
+<!-- ============================================================ -->
+<div class="card">
+  <h3 style="color:var(--text);">⚙️ 기본 설정</h3>
+  <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+    <div class="form-field">
+      <label>카드 수수료율 (%)</label>
+      <input type="number" id="cardFeeRate" step="0.1" min="0">
+    </div>
+    <div class="form-field">
+      <label>목표 재고 일수 (발주 추천용)</label>
+      <input type="number" id="targetStockDays" step="1" min="1">
+    </div>
+    <div class="form-field" style="grid-column: span 2;">
+      <button class="primary" onclick="saveSettings()" style="width:200px;">💾 설정 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 📦 데이터 백업 -->
+<!-- ============================================================ -->
+<div class="card">
+  <h3 style="color:var(--text);">📦 데이터 백업</h3>
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+    <button onclick="createBackup()" style="background:var(--text); color:var(--bg); border-color:var(--text);">지금 백업 생성</button>
+    <span style="font-size:12px; color:var(--text-light);">백업 파일은 backup 폴더에 저장됩니다.</span>
+  </div>
+  <div style="margin-top:12px;">
+    <table>
+      <thead><tr><th>파일명</th><th>크기</th><th>수정일시</th><th style="width:80px;"></th></tr></thead>
+      <tbody id="backupList"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ==============================================================
+// 통합 저장 함수 (모든 설정 저장)
+// ==============================================================
+async function saveSettings() {
+  const statusEl = document.getElementById('targetSaveStatus');
+  if (statusEl) {
+    statusEl.textContent = '저장 중...';
+    statusEl.style.color = 'var(--text-light)';
+  }
+
+  const payload = {
+    card_fee_rate: document.getElementById('cardFeeRate').value || '0',
+    target_stock_days: document.getElementById('targetStockDays').value || '7',
+    monthly_target_revenue: document.getElementById('monthlyTargetRevenue').value || '0',
+  };
+
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
+    toast('설정이 저장되었습니다.', false, '✅');
+
+    if (statusEl) {
+      statusEl.textContent = '✅ 저장 완료!';
+      statusEl.style.color = 'var(--accent)';
+      setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    }
+
+    // 플로팅 패널 갱신
+    if (typeof loadFloatingRevenue === 'function') {
+      loadFloatingRevenue();
+    }
+  } catch (e) {
+    console.error('저장 오류:', e);
+    if (statusEl) {
+      statusEl.textContent = '❌ 저장 실패';
+      statusEl.style.color = 'var(--danger)';
+      setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    }
+    toast('저장 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ==============================================================
+// 설정 로드
+// ==============================================================
+async function loadSettings() {
+  const data = await api('/api/settings');
+  document.getElementById('cardFeeRate').value = data.card_fee_rate || '2.5';
+  document.getElementById('targetStockDays').value = data.target_stock_days || '7';
+  document.getElementById('monthlyTargetRevenue').value = data.monthly_target_revenue || '0';
+}
+
+// ==============================================================
+// 백업 기능
+// ==============================================================
+async function loadBackups() {
+  const backups = await api('/api/backup');
+  const tbody = document.getElementById('backupList');
+  if (backups.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4"><div class="empty"><span class="empty-icon">📦</span>백업 파일이 없습니다.</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = backups.map(b => `
+    <tr>
+      <td>${escapeHtml(b.name)}</td>
+      <td>${fmt(b.size)} bytes</td>
+      <td>${b.modified}</td>
+      <td><button class="danger" onclick="deleteBackup('${b.name}')">삭제</button></td>
+    </tr>
+  `).join('');
+}
+
+async function createBackup() {
+  await api('/api/backup', { method: 'POST' });
+  toast('백업이 생성되었습니다.', false, '✅');
+  loadBackups();
+}
+
+async function deleteBackup(name) {
+  if (!confirm('이 백업 파일을 삭제하시겠습니까?')) return;
+  await api(`/api/backup/${name}`, { method: 'DELETE' });
+  toast('삭제했습니다.', false, '✅');
+  loadBackups();
+}
+
+// ==============================================================
+// 초기화
+// ==============================================================
+loadSettings();
+loadBackups();
+</script>
+{% endblock %}

@@ -1,0 +1,1208 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🏬 매장 관리 + 🔄 재고 이동</h1>
+<div class="subtitle">매장 정보와 달력 스케줄을 관리하고, 매장 간 재고 이동을 실행하세요.</div>
+
+<!-- 탭 -->
+<div class="tab-row">
+  <button class="tab-btn active" data-tab="stores" onclick="switchStoreTab('stores')">🏬 매장 관리</button>
+  <button class="tab-btn" data-tab="transfer" onclick="switchStoreTab('transfer')">🔄 재고 이동</button>
+  <button class="tab-btn" data-tab="movements" onclick="switchStoreTab('movements')">📋 이동 내역</button>
+</div>
+
+<!-- ============================================================ -->
+<!-- 🏬 매장 관리 탭 -->
+<!-- ============================================================ -->
+<div id="tab-stores" class="tab-content">
+  <div class="card">
+    <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+      <div class="form-field"><label>매장명 *</label><input type="text" id="newStoreName" placeholder="예: 홍대점"></div>
+      <div class="form-field"><label>주소</label><input type="text" id="newStoreAddress" placeholder="서울시 마포구..."></div>
+      <div class="form-field"><label>사업자 등록번호</label><input type="text" id="newStoreBizNum" placeholder="123-45-67890"></div>
+      <div class="form-field"><label>담당자 1</label><input type="text" id="newStaff1" placeholder="이름"></div>
+      <div class="form-field"><label>담당자 2</label><input type="text" id="newStaff2" placeholder="이름"></div>
+      <div class="form-field"><label>담당자 3</label><input type="text" id="newStaff3" placeholder="이름"></div>
+      <div class="form-field"><label>연락처</label><input type="text" id="newStorePhone" placeholder="02-123-4567"></div>
+      <div class="form-field" style="grid-column: span 3;">
+        <button class="primary" onclick="addStore()" style="width:200px;">+ 매장 추가</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="storeList"></div>
+
+  <!-- 매장 수정 모달 -->
+  <div id="editStoreModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9998; justify-content:center; align-items:center;">
+    <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:500px; width:92%; max-height:80vh; overflow-y:auto; box-shadow:var(--shadow);">
+      <h3 style="color:var(--text); margin-top:0;">✏️ 매장 수정</h3>
+      <input type="hidden" id="editStoreId">
+      <div class="form-field" style="margin-bottom:12px;"><label>매장명</label><input type="text" id="editStoreName" style="width:100%;"></div>
+      <div class="form-field" style="margin-bottom:12px;"><label>주소</label><input type="text" id="editStoreAddress" style="width:100%;"></div>
+      <div class="form-field" style="margin-bottom:12px;"><label>사업자 등록번호</label><input type="text" id="editStoreBizNum" style="width:100%;"></div>
+      <div class="form-field" style="margin-bottom:12px;"><label>담당자 (쉼표로 구분)</label><input type="text" id="editStoreManager" style="width:100%;" placeholder="김철수, 이영희"></div>
+      <div class="form-field" style="margin-bottom:12px;"><label>연락처</label><input type="text" id="editStorePhone" style="width:100%;"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+        <button onclick="closeEditStoreModal()" style="padding:8px 16px;">취소</button>
+        <button class="primary" onclick="saveStoreEdit()" style="padding:8px 16px;">💾 저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 출근 기록 수정 모달 -->
+  <div id="editAttendanceModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
+    <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:400px; width:92%; box-shadow:var(--shadow);">
+      <h3 style="color:var(--text); margin-top:0;">⏰ 출근 기록 수정</h3>
+      <input type="hidden" id="editAttendanceId">
+      <div class="form-field" style="margin-bottom:12px;"><label>직원명</label><input type="text" id="editAttendanceStaff" style="width:100%;" readonly></div>
+      <div class="form-field" style="margin-bottom:12px;"><label>날짜</label><input type="date" id="editAttendanceDate" style="width:100%;"></div>
+      <div class="form-field" style="margin-bottom:12px;"><label>출근 시간</label><input type="time" id="editAttendanceCheckIn" style="width:100%;" step="60"></div>
+      <div class="form-field" style="margin-bottom:12px;"><label>퇴근 시간</label><input type="time" id="editAttendanceCheckOut" style="width:100%;" step="60"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+        <button onclick="closeEditAttendanceModal()" style="padding:8px 16px;">취소</button>
+        <button class="primary" onclick="saveAttendanceEdit()" style="padding:8px 16px;">💾 저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 시간 선택 모달 -->
+  <div id="timePickerModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9997; justify-content:center; align-items:center;">
+    <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:360px; width:90%; box-shadow:var(--shadow);">
+      <h3 style="margin-top:0; color:var(--text);">⏰ 근무 시간 선택</h3>
+      <p id="timePickerInfo" style="color:var(--text-light); font-size:13px; margin-bottom:12px;"></p>
+      <div style="display:flex; gap:12px; margin-bottom:16px;">
+        <div style="flex:1;"><label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">시작</label><select id="timeStart" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);"></select></div>
+        <div style="flex:1;"><label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">종료</label><select id="timeEnd" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);"></select></div>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button onclick="closeTimePicker()" style="padding:8px 16px;">취소</button>
+        <button class="primary" onclick="confirmTimePicker()" style="padding:8px 16px;">확인</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 🔄 재고 이동 탭 -->
+<!-- ============================================================ -->
+<div id="tab-transfer" class="tab-content" style="display:none;">
+  <div class="card">
+    <div class="form-grid">
+      <div class="form-field">
+        <label>출발 매장 *</label>
+        <select id="fromStore" onchange="onTransferStoreChange()">
+          <option value="">매장 선택</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label>도착 매장 *</label>
+        <select id="toStore">
+          <option value="">매장 선택</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label>담당자</label>
+        <input type="text" id="transferStaff" placeholder="이름">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar" style="margin-bottom:12px;">
+      <input type="text" id="transferSearchBox" placeholder="🔍 제품명 검색" oninput="onTransferSearch()" style="width:220px;">
+      <button onclick="loadAllTransferProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
+      <button onclick="doBatchTransfer()" class="primary" id="batchTransferBtn" disabled>🚚 선택된 제품 이동</button>
+      <span style="font-size:12px; color:var(--text-light);" id="transferSelectedCount">0개 선택</span>
+    </div>
+
+    <!-- 진행률 표시 -->
+    <div id="transferProgressWrap" style="display:none; margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-light);">
+        <span id="transferProgressText">진행 중...</span>
+        <span id="transferProgressPercent">0%</span>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-bar" id="transferProgressBar" style="width:0%;"></div>
+      </div>
+    </div>
+
+    <div class="sale-layout">
+      <div class="sale-left" style="flex:1; min-width:0;">
+        <div class="product-grid" id="transferProductGrid">
+          <div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 '전체 보기'를 클릭하세요.</div>
+        </div>
+      </div>
+      <div class="sale-right" style="width:320px; flex-shrink:0;">
+        <div class="cart-title">🛒 이동 장바구니</div>
+        <div class="cart-items-wrap" id="transferCartWrap" style="max-height:300px; overflow-y:auto;">
+          <div id="transferCartList"><div class="cart-empty">선택한 제품이 없습니다</div></div>
+        </div>
+        <div class="cart-footer" style="border-top:1px solid var(--border); padding-top:12px; margin-top:8px;">
+          <div class="cart-total"><span>총 이동 수량</span><span id="transferTotalQty">0개</span></div>
+          <button class="primary" style="width:100%;" onclick="doBatchTransfer()">🚚 이동 실행</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 📋 이동 내역 탭 -->
+<!-- ============================================================ -->
+<div id="tab-movements" class="tab-content" style="display:none;">
+  <div class="toolbar">
+    <select id="movementStatusFilter" onchange="loadMovements()">
+      <option value="">전체 상태</option>
+      <option value="대기">대기</option>
+      <option value="완료">완료</option>
+      <option value="취소">취소</option>
+    </select>
+    <select id="movementStoreFilter" onchange="loadMovements()">
+      <option value="">전체 매장</option>
+    </select>
+    <button onclick="loadMovements()" class="primary">🔄 새로고침</button>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>출발 매장</th>
+          <th>도착 매장</th>
+          <th>제품명</th>
+          <th>수량</th>
+          <th>담당자</th>
+          <th>메모</th>
+          <th>상태</th>
+          <th>일시</th>
+          <th style="width:80px;">관리</th>
+        </tr>
+      </thead>
+      <tbody id="movementTbody">
+        <tr><td colspan="10"><div class="empty"><span class="empty-icon">📭</span>이동 내역이 없습니다.</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 공통 변수
+// ============================================================
+let stores = [];
+let currentMonth = new Date().getMonth();
+let currentYear = new Date().getFullYear();
+let timePickerData = null;
+let editingAttendanceId = null;
+let editingStoreId = null;
+
+// 재고 이동 관련 변수
+let transferProducts = [];
+let transferCart = {};
+let transferSearchQuery = '';
+let transferSelectedStoreId = '';
+
+// ============================================================
+// 탭 전환
+// ============================================================
+function switchStoreTab(tab) {
+  document.querySelectorAll('#tab-stores, #tab-transfer, #tab-movements').forEach(el => el.style.display = 'none');
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.classList.remove('active'));
+  
+  document.getElementById(`tab-${tab}`).style.display = 'block';
+  document.querySelector(`.tab-btn[data-tab="${tab}"]`).classList.add('active');
+  
+  if (tab === 'transfer') {
+    loadTransferStores();
+    loadTransferProducts();
+  } else if (tab === 'movements') {
+    loadMovements();
+  }
+}
+
+// ============================================================
+// 🏬 매장 관리 (기존 코드)
+// ============================================================
+async function loadStores() {
+  try {
+    stores = await api('/api/stores');
+    renderStoreList();
+    // 매장 관리 탭의 매장 선택 드롭다운도 업데이트
+    populateStoreSelects();
+  } catch (e) {
+    console.error('매장 로드 오류:', e);
+    toast('매장 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+    document.getElementById('storeList').innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">⚠️</span>매장 데이터를 불러올 수 없습니다.</div></div>';
+  }
+}
+
+function renderStoreList() {
+  const container = document.getElementById('storeList');
+  if (stores.length === 0) {
+    container.innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">🏪</span>등록된 매장이 없습니다.<div class="empty-hint">위 입력란에 매장 정보를 입력하고 추가 버튼을 눌러보세요.</div></div></div>';
+    return;
+  }
+  container.innerHTML = stores.map(s => {
+    const staffs = s.staffs || [];
+    const today = new Date().toISOString().slice(0,10);
+    return `
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div>
+          <strong style="font-size:18px; color:var(--text);">${escapeHtml(s.name)}</strong>
+          <span style="color:var(--text-light); margin-left:12px;">${escapeHtml(s.address || '')}</span>
+          <span style="color:var(--text-light); margin-left:8px;">${escapeHtml(s.business_number || '')}</span>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button onclick="openEditStoreModal(${s.id})" style="padding:4px 12px;">✏️ 수정</button>
+          <button class="danger" onclick="deleteStore(${s.id})" style="padding:4px 12px;">삭제</button>
+        </div>
+      </div>
+      <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:16px; font-size:13px; color:var(--text);">
+        <span>📞 ${escapeHtml(s.phone || '-')}</span>
+        <span>👤 담당자: ${staffs.length ? staffs.join(', ') : '-'}</span>
+      </div>
+      <!-- 상시 담당자 태그 -->
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; border-top:1px solid var(--border); padding-top:12px;">
+        <span style="font-size:12px; color:var(--text-light); margin-right:8px;">📌 전체 담당자:</span>
+        ${staffs.map(name => `
+          <span class="staff-tag" draggable="true" ondragstart="dragStaff(event, '${escapeHtml(name)}')" 
+                style="background:var(--hover-bg); padding:2px 8px; border-radius:12px; cursor:grab; display:inline-flex; align-items:center; gap:4px; color:var(--text);">
+            ${escapeHtml(name)}
+            <span style="cursor:pointer; color:var(--danger);" onclick="removeStaffFromStore(${s.id}, '${escapeHtml(name)}')">✕</span>
+          </span>
+        `).join('')}
+        <button onclick="addStaffToStore(${s.id})" style="padding:2px 8px; font-size:12px;">+ 추가</button>
+      </div>
+      <!-- 캘린더 영역 -->
+      <div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <div>
+            <button onclick="changeMonth(${s.id}, -1)">◀</button>
+            <span style="font-weight:600; margin:0 12px; color:var(--text);">${currentYear}년 ${currentMonth+1}월</span>
+            <button onclick="changeMonth(${s.id}, 1)">▶</button>
+          </div>
+          <div>
+            <span style="font-size:12px; color:var(--text-light);">근무자: </span>
+            <span id="staffList_${s.id}" style="font-weight:500; color:var(--text);">(로딩중)</span>
+          </div>
+        </div>
+        <div id="calendar_${s.id}" class="calendar-grid"></div>
+        <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+          <input type="text" id="staffInput_${s.id}" placeholder="근무자 이름 (3명까지)" style="flex:1; max-width:200px;">
+          <button onclick="addStaffToDate(${s.id})">+ 배정</button>
+        </div>
+        <div style="font-size:11px; color:var(--text-light); margin-top:4px;">💡 근무자 이름을 드래그하여 날짜에 놓으세요.</div>
+      </div>
+      <!-- 출근 기록 -->
+      <div style="margin-top:16px; border-top:1px solid var(--border); padding-top:12px;">
+        <h4 style="margin:0 0 8px 0; color:var(--text);">⏰ 출근 기록</h4>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+          <input type="date" id="attDate_${s.id}" value="${today}" style="width:140px;">
+          <select id="attStaff_${s.id}" style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--input-bg); color:var(--text);">
+            <option value="">전체</option>
+            ${staffs.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
+          </select>
+          <button onclick="loadAttendance(${s.id})" class="primary" style="padding:4px 12px;">🔄 조회</button>
+          <button onclick="addAttendanceForm(${s.id})" style="padding:4px 12px;">+ 추가</button>
+        </div>
+        <div id="attendanceList_${s.id}" style="margin-top:8px; font-size:13px; max-height:250px; overflow-y:auto; border:1px solid var(--border); border-radius:6px; background:var(--card-bg);">
+          <div style="padding:12px; color:var(--text-light); text-align:center;">조회 버튼을 눌러 기록을 확인하세요.</div>
+        </div>
+      </div>
+    </div>
+  `}).join('');
+
+  stores.forEach(s => {
+    renderCalendar(s.id);
+    updateStaffTags(s.id);
+  });
+}
+
+// 매장 관리 탭의 매장 선택 드롭다운 채우기 (재고 이동 탭용)
+function populateStoreSelects() {
+  const fromSel = document.getElementById('fromStore');
+  const toSel = document.getElementById('toStore');
+  const movementStoreSel = document.getElementById('movementStoreFilter');
+  const opts = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  fromSel.innerHTML = '<option value="">매장 선택</option>' + opts;
+  toSel.innerHTML = '<option value="">매장 선택</option>' + opts;
+  movementStoreSel.innerHTML = '<option value="">전체 매장</option>' + opts;
+  
+  // 🔥 전역 매장 ID 적용
+  const globalStoreId = localStorage.getItem('global_store_id');
+  if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
+    fromSel.value = globalStoreId;
+    // 도착 매장은 다른 매장으로 설정
+    const otherStore = stores.find(s => s.id != globalStoreId);
+    if (otherStore) {
+      toSel.value = otherStore.id;
+    } else if (stores.length > 1) {
+      toSel.value = stores[1].id;
+    } else {
+      toSel.value = stores[0].id;
+    }
+  } else if (stores.length > 0) {
+    fromSel.value = stores[0].id;
+    if (stores.length > 1) {
+      toSel.value = stores[1].id;
+    } else {
+      toSel.value = stores[0].id;
+    }
+  }
+}
+
+// ---------- 매장 수정 모달 ----------
+function openEditStoreModal(id) {
+  const store = stores.find(s => s.id === id);
+  if (!store) return;
+  editingStoreId = id;
+  document.getElementById('editStoreId').value = id;
+  document.getElementById('editStoreName').value = store.name;
+  document.getElementById('editStoreAddress').value = store.address || '';
+  document.getElementById('editStoreBizNum').value = store.business_number || '';
+  document.getElementById('editStoreManager').value = (store.staffs || []).join(', ');
+  document.getElementById('editStorePhone').value = store.phone || '';
+  document.getElementById('editStoreModal').style.display = 'flex';
+}
+function closeEditStoreModal() {
+  document.getElementById('editStoreModal').style.display = 'none';
+  editingStoreId = null;
+}
+async function saveStoreEdit() {
+  const id = document.getElementById('editStoreId').value;
+  const name = document.getElementById('editStoreName').value.trim();
+  if (!name) { toast('매장명을 입력해주세요.', true, '⚠️'); return; }
+  const staffs = document.getElementById('editStoreManager').value.split(',').map(s => s.trim()).filter(s => s);
+  const payload = {
+    name: name,
+    address: document.getElementById('editStoreAddress').value.trim(),
+    business_number: document.getElementById('editStoreBizNum').value.trim(),
+    manager: staffs.join(', '),
+    phone: document.getElementById('editStorePhone').value.trim(),
+    schedule: stores.find(s => s.id == id)?.schedule || {},
+    staffs: staffs
+  };
+  try {
+    await api(`/api/stores/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    toast('매장 정보가 수정되었습니다.', false, '✅');
+    closeEditStoreModal();
+    await loadStores();
+  } catch (e) { console.error(e); }
+}
+
+// ---------- 출근 기록 기능 ----------
+async function loadAttendance(storeId) {
+  const dateInput = document.getElementById(`attDate_${storeId}`);
+  const staffSelect = document.getElementById(`attStaff_${storeId}`);
+  if (!dateInput || !staffSelect) {
+    console.warn('출근 기록 요소를 찾을 수 없음:', storeId);
+    return;
+  }
+  const date = dateInput.value;
+  if (!date) { toast('날짜를 선택해주세요.', true, '⚠️'); return; }
+  const staffFilter = staffSelect.value;
+
+  try {
+    const rows = await api(`/api/attendance?store_id=${storeId}&date=${date}`);
+    const container = document.getElementById(`attendanceList_${storeId}`);
+    if (!container) return;
+    let filteredRows = rows;
+    if (staffFilter) {
+      filteredRows = rows.filter(r => r.staff_name === staffFilter);
+    }
+    if (filteredRows.length === 0) {
+      container.innerHTML = '<div style="padding:12px; color:var(--text-light); text-align:center;">📭 기록 없음</div>';
+      return;
+    }
+    container.innerHTML = `
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead style="position:sticky; top:0; background:var(--hover-bg); z-index:2;">
+          <tr>
+            <th style="padding:6px 8px; text-align:left; border-bottom:1px solid var(--border);">직원</th>
+            <th style="padding:6px 8px; text-align:left; border-bottom:1px solid var(--border);">출근</th>
+            <th style="padding:6px 8px; text-align:left; border-bottom:1px solid var(--border);">퇴근</th>
+            <th style="padding:6px 8px; text-align:center; border-bottom:1px solid var(--border);">관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filteredRows.map(r => `
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:6px 8px;">${escapeHtml(r.staff_name)}</td>
+              <td style="padding:6px 8px;">${r.check_in || '-'}</td>
+              <td style="padding:6px 8px;">${r.check_out || '-'}</td>
+              <td style="padding:6px 8px; text-align:center; display:flex; gap:4px; justify-content:center;">
+                <button onclick="openEditAttendanceModal(${r.id}, '${escapeHtml(r.staff_name)}', '${r.date}', '${r.check_in || ''}', '${r.check_out || ''}')" style="padding:2px 8px; font-size:11px;">✏️</button>
+                <button onclick="deleteAttendance(${r.id})" class="danger" style="padding:2px 8px; font-size:11px;">🗑️</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    console.error('출근 기록 로드 오류:', e);
+    toast('기록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+function addAttendanceForm(storeId) {
+  const dateInput = document.getElementById(`attDate_${storeId}`);
+  const staffSelect = document.getElementById(`attStaff_${storeId}`);
+  if (!dateInput || !staffSelect) {
+    toast('매장 요소를 찾을 수 없습니다.', true, '⚠️');
+    return;
+  }
+  const date = dateInput.value;
+  if (!date) { toast('날짜를 선택해주세요.', true, '⚠️'); return; }
+  const staffName = staffSelect.value;
+  if (!staffName) { toast('직원을 선택해주세요.', true, '⚠️'); return; }
+
+  const now = new Date().toTimeString().slice(0,5);
+  api('/api/attendance', {
+    method: 'POST',
+    body: JSON.stringify({
+      store_id: storeId,
+      staff_name: staffName,
+      date: date,
+      check_in: now,
+      check_out: null
+    })
+  }).then(() => {
+    toast('출근 기록이 추가되었습니다.', false, '✅');
+    loadAttendance(storeId);
+  }).catch(e => console.error(e));
+}
+
+function openEditAttendanceModal(id, staffName, date, checkIn, checkOut) {
+  editingAttendanceId = id;
+  document.getElementById('editAttendanceId').value = id;
+  document.getElementById('editAttendanceStaff').value = staffName;
+  document.getElementById('editAttendanceDate').value = date;
+  document.getElementById('editAttendanceCheckIn').value = checkIn || '';
+  document.getElementById('editAttendanceCheckOut').value = checkOut || '';
+  document.getElementById('editAttendanceModal').style.display = 'flex';
+}
+function closeEditAttendanceModal() {
+  document.getElementById('editAttendanceModal').style.display = 'none';
+  editingAttendanceId = null;
+}
+async function saveAttendanceEdit() {
+  const id = document.getElementById('editAttendanceId').value;
+  const checkIn = document.getElementById('editAttendanceCheckIn').value || null;
+  const checkOut = document.getElementById('editAttendanceCheckOut').value || null;
+  if (!checkIn && !checkOut) {
+    toast('출근 또는 퇴근 시간을 입력해주세요.', true, '⚠️');
+    return;
+  }
+  try {
+    await api(`/api/attendance/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ check_in: checkIn, check_out: checkOut })
+    });
+    toast('출근 기록이 수정되었습니다.', false, '✅');
+    closeEditAttendanceModal();
+    loadStores();
+  } catch (e) { console.error(e); }
+}
+async function deleteAttendance(id) {
+  if (!confirm('이 출근 기록을 삭제하시겠습니까?')) return;
+  try {
+    await api(`/api/attendance/${id}`, { method: 'DELETE' });
+    toast('삭제되었습니다.', false, '✅');
+    loadStores();
+  } catch (e) { console.error(e); }
+}
+
+// ---------- 캘린더 렌더링 ----------
+function renderCalendar(storeId) {
+  const container = document.getElementById(`calendar_${storeId}`);
+  if (!container) return;
+  const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const today = new Date().toISOString().slice(0,10);
+
+  const weekdays = ['일','월','화','수','목','금','토'];
+  let html = weekdays.map(d => `<div class="calendar-header-day">${d}</div>`).join('');
+
+  for (let i = 0; i < firstDay; i++) {
+    html += `<div class="calendar-empty"></div>`;
+  }
+
+  const store = stores.find(s => s.id === storeId);
+  const schedule = store && store.schedule ? store.schedule : {};
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const entries = schedule[dateStr] || [];
+    const isToday = dateStr === today;
+    const isPast = dateStr < today;
+    const todayClass = isToday ? 'today' : '';
+    const pastClass = isPast ? 'past' : '';
+    html += `
+      <div class="calendar-cell ${todayClass} ${pastClass}" 
+           data-date="${dateStr}"
+           data-store="${storeId}"
+           ondragover="allowDrop(event)"
+           ondrop="dropOnDate(event, ${storeId})">
+        <div class="cell-date">${d}</div>
+        <div class="cell-staff">
+          ${entries.map(entry => {
+            const name = typeof entry === 'string' ? entry : entry.name;
+            const time = typeof entry === 'string' ? '' : entry.time;
+            return `<span>${escapeHtml(name)}${time ? ` (${escapeHtml(time)})` : ''}</span>`;
+          }).join('')}
+        </div>
+        <div class="cell-clear" onclick="clearDate(${storeId}, '${dateStr}')">✕</div>
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+}
+
+function updateStaffTags(storeId) {
+  const store = stores.find(s => s.id === storeId);
+  if (!store) return;
+  const schedule = store.schedule || {};
+  const allEntries = [];
+  for (const date in schedule) {
+    schedule[date].forEach(entry => {
+      if (typeof entry === 'string') {
+        allEntries.push({name: entry, time: ''});
+      } else {
+        allEntries.push(entry);
+      }
+    });
+  }
+  const staffNames = [...new Set(allEntries.map(e => e.name))];
+  const container = document.getElementById(`staffList_${storeId}`);
+  if (container) {
+    container.textContent = staffNames.length ? staffNames.join(', ') : '없음';
+  }
+}
+
+// ---------- 담당자 관리 ----------
+async function addStaffToStore(storeId) {
+  const name = prompt('추가할 담당자 이름을 입력하세요:');
+  if (!name || !name.trim()) return;
+  const store = stores.find(s => s.id === storeId);
+  if (!store) return;
+  const staffs = store.staffs || [];
+  if (staffs.includes(name.trim())) {
+    toast('이미 존재하는 이름입니다.', true, '⚠️');
+    return;
+  }
+  if (staffs.length >= 3) {
+    toast('최대 3명까지 등록 가능합니다.', true, '⚠️');
+    return;
+  }
+  staffs.push(name.trim());
+  await updateStoreStaffs(storeId, staffs);
+  toast(`'${name.trim()}' 님이 추가되었습니다.`, false, '✅');
+  await loadStores();
+}
+
+async function removeStaffFromStore(storeId, name) {
+  if (!confirm(`'${name}' 님을 담당자 목록에서 삭제하시겠습니까?`)) return;
+  const store = stores.find(s => s.id === storeId);
+  if (!store) return;
+  let staffs = store.staffs || [];
+  staffs = staffs.filter(n => n !== name);
+  await updateStoreStaffs(storeId, staffs);
+  const schedule = store.schedule || {};
+  let changed = false;
+  for (const date in schedule) {
+    const filtered = schedule[date].filter(entry => {
+      const entryName = typeof entry === 'string' ? entry : entry.name;
+      return entryName !== name;
+    });
+    if (filtered.length !== schedule[date].length) {
+      schedule[date] = filtered;
+      changed = true;
+    }
+  }
+  if (changed) {
+    await updateSchedule(storeId, schedule);
+  }
+  toast(`'${name}' 님을 삭제했습니다.`, false, '✅');
+  await loadStores();
+}
+
+async function updateStoreStaffs(storeId, staffs) {
+  const store = stores.find(s => s.id === storeId);
+  if (!store) return;
+  const payload = {
+    name: store.name,
+    address: store.address || '',
+    business_number: store.business_number || '',
+    manager: store.manager || '',
+    phone: store.phone || '',
+    schedule: store.schedule || {},
+    staffs: staffs
+  };
+  await api(`/api/stores/${storeId}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+async function updateSchedule(storeId, schedule) {
+  const store = stores.find(s => s.id === storeId);
+  if (!store) return;
+  const payload = {
+    name: store.name,
+    address: store.address || '',
+    business_number: store.business_number || '',
+    manager: store.manager || '',
+    phone: store.phone || '',
+    schedule: schedule,
+    staffs: store.staffs || []
+  };
+  await api(`/api/stores/${storeId}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+function dragStaff(e, name) {
+  e.dataTransfer.setData('text/plain', name);
+}
+
+function allowDrop(e) {
+  e.preventDefault();
+}
+
+async function dropOnDate(e, storeId) {
+  e.preventDefault();
+  const dateStr = e.currentTarget.dataset.date;
+  const name = e.dataTransfer.getData('text/plain');
+  if (!name) return;
+
+  const store = stores.find(s => s.id === storeId);
+  if (!store) return;
+  const staffs = store.staffs || [];
+  if (!staffs.includes(name)) {
+    toast('해당 담당자가 목록에 없습니다.', true, '⚠️');
+    return;
+  }
+  const schedule = store.schedule || {};
+  if (!schedule[dateStr]) schedule[dateStr] = [];
+  if (schedule[dateStr].some(entry => {
+    const entryName = typeof entry === 'string' ? entry : entry.name;
+    return entryName === name;
+  })) {
+    toast('이미 배정된 근무자입니다.', true, '⚠️');
+    return;
+  }
+  showTimePicker(storeId, dateStr, name);
+}
+
+async function clearDate(storeId, dateStr) {
+  if (!confirm(`${dateStr}의 스케줄을 모두 삭제하시겠습니까?`)) return;
+  const store = stores.find(s => s.id === storeId);
+  if (!store) return;
+  const schedule = store.schedule || {};
+  if (schedule[dateStr]) {
+    delete schedule[dateStr];
+    await updateSchedule(storeId, schedule);
+    await loadStores();
+    toast(`${dateStr} 스케줄을 삭제했습니다.`, false, '✅');
+  }
+}
+
+function changeMonth(storeId, delta) {
+  currentMonth += delta;
+  if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+  if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+  loadStores();
+}
+
+// ---------- 매장 CRUD ----------
+async function addStore() {
+  const name = document.getElementById('newStoreName').value.trim();
+  if (!name) { toast('매장명을 입력해주세요.', true, '⚠️'); return; }
+
+  const staffs = [];
+  for (let i = 1; i <= 3; i++) {
+    const val = document.getElementById(`newStaff${i}`).value.trim();
+    if (val) staffs.push(val);
+  }
+  const uniqueStaffs = [...new Set(staffs)];
+  if (staffs.length !== uniqueStaffs.length) {
+    toast('중복된 이름이 있습니다.', true, '⚠️');
+    return;
+  }
+
+  const todayStr = new Date().toISOString().slice(0,10);
+  const schedule = {};
+  if (uniqueStaffs.length > 0) {
+    schedule[todayStr] = uniqueStaffs.map(name => ({name, time: ''}));
+  }
+
+  const payload = {
+    name,
+    address: document.getElementById('newStoreAddress').value.trim(),
+    business_number: document.getElementById('newStoreBizNum').value.trim(),
+    manager: uniqueStaffs.join(', '),
+    phone: document.getElementById('newStorePhone').value.trim(),
+    schedule: schedule,
+    staffs: uniqueStaffs
+  };
+  try {
+    await api('/api/stores', { method: 'POST', body: JSON.stringify(payload) });
+    ['newStoreName','newStoreAddress','newStoreBizNum','newStorePhone','newStaff1','newStaff2','newStaff3'].forEach(id => document.getElementById(id).value = '');
+    toast('매장을 추가했습니다.', false, '✅');
+    await loadStores();
+  } catch (e) {
+    console.error('추가 오류:', e);
+  }
+}
+
+async function deleteStore(id) {
+  if (!confirm('이 매장을 삭제하시겠습니까? (관련 재고 데이터도 함께 삭제됩니다)')) return;
+  try {
+    await api(`/api/stores/${id}`, { method: 'DELETE' });
+    toast('삭제했습니다.', false, '✅');
+    await loadStores();
+  } catch (e) {
+    console.error('삭제 오류:', e);
+  }
+}
+
+// ---------- 시간 선택 모달 ----------
+function showTimePicker(storeId, dateStr, staffName) {
+  timePickerData = { storeId, dateStr, staffName };
+  const modal = document.getElementById('timePickerModal');
+  modal.style.display = 'flex';
+  document.getElementById('timePickerInfo').textContent = `${staffName} - ${dateStr}`;
+
+  const startSelect = document.getElementById('timeStart');
+  const endSelect = document.getElementById('timeEnd');
+  startSelect.innerHTML = '';
+  endSelect.innerHTML = '';
+  const times = [];
+  for (let h = 8; h <= 22; h++) {
+    for (let m = 0; m < 60; m += 30) {
+      const hourStr = String(h).padStart(2, '0');
+      const minStr = String(m).padStart(2, '0');
+      times.push(`${hourStr}:${minStr}`);
+    }
+  }
+  times.push('22:30');
+
+  times.forEach(t => {
+    startSelect.innerHTML += `<option value="${t}">${t}</option>`;
+    endSelect.innerHTML += `<option value="${t}">${t}</option>`;
+  });
+  startSelect.value = '09:00';
+  endSelect.value = '18:00';
+}
+
+function closeTimePicker() {
+  document.getElementById('timePickerModal').style.display = 'none';
+  timePickerData = null;
+}
+
+async function confirmTimePicker() {
+  if (!timePickerData) return;
+  const { storeId, dateStr, staffName } = timePickerData;
+  const startTime = document.getElementById('timeStart').value;
+  const endTime = document.getElementById('timeEnd').value;
+
+  if (startTime >= endTime) {
+    toast('종료 시간이 시작 시간보다 늦어야 합니다.', true, '⚠️');
+    return;
+  }
+
+  const store = stores.find(s => s.id === storeId);
+  if (!store) return;
+  const schedule = store.schedule || {};
+  if (!schedule[dateStr]) schedule[dateStr] = [];
+  const entry = { name: staffName, time: `${startTime}~${endTime}` };
+  schedule[dateStr].push(entry);
+  await updateSchedule(storeId, schedule);
+  closeTimePicker();
+  toast(`'${staffName}' 님을 ${dateStr} (${startTime}~${endTime})에 배정했습니다.`, false, '✅');
+  await loadStores();
+}
+
+// ============================================================
+// 🔄 재고 이동 기능
+// ============================================================
+const TRANSFER_CART_KEY = 'transfer_cart';
+
+function loadTransferStores() {
+  // 이미 stores가 로드되어 있으므로 populateStoreSelects에서 처리됨
+  populateStoreSelects();
+}
+
+function onTransferStoreChange() {
+  const fromStore = document.getElementById('fromStore').value;
+  transferSelectedStoreId = fromStore;
+  // 매장 변경 시 장바구니 초기화
+  transferCart = {};
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
+  renderTransferCart();
+  loadTransferProducts();
+}
+
+function onTransferSearch() {
+  transferSearchQuery = document.getElementById('transferSearchBox').value.trim();
+  renderTransferGrid();
+}
+
+function loadAllTransferProducts() {
+  document.getElementById('transferSearchBox').value = '';
+  transferSearchQuery = '';
+  loadTransferProducts();
+}
+
+async function loadTransferProducts() {
+  const store_id = document.getElementById('fromStore').value;
+  if (!store_id) {
+    document.getElementById('transferProductGrid').innerHTML = '<div class="empty">출발 매장을 선택해주세요.</div>';
+    return;
+  }
+
+  const q = document.getElementById('transferSearchBox').value.trim();
+  const params = new URLSearchParams({ 
+    store_id, 
+    sort: 'qty', 
+    order: 'desc'
+  });
+  if (q) params.append('q', q);
+
+  try {
+    transferProducts = await api('/api/products?' + params.toString());
+    renderTransferGrid();
+  } catch (e) {
+    console.error('제품 로드 오류:', e);
+    toast('제품 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+function renderTransferGrid() {
+  const grid = document.getElementById('transferProductGrid');
+  const q = transferSearchQuery.toLowerCase();
+  let list = transferProducts;
+
+  if (!list || list.length === 0) {
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">📦</span>표시할 제품이 없습니다.</div>';
+    return;
+  }
+
+  if (q) {
+    list = list.filter(p => p.name.toLowerCase().includes(q));
+  }
+
+  if (list.length === 0) {
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div>';
+    return;
+  }
+
+  grid.innerHTML = list.map(p => {
+    const disabled = p.qty <= 0 ? 'disabled' : '';
+    const inCart = transferCart[p.id] ? transferCart[p.id].qty : 0;
+    return `
+      <div class="product-card ${p.qty <= 0 ? 'disabled' : ''}" onclick="${p.qty > 0 ? `addToTransferCart(${p.id})` : ''}">
+        <div class="pname">${escapeHtml(p.name)}</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+          <span class="chip" style="background:${p.brand_color || '#8a8f98'}; font-size:10px; padding:2px 8px;">${escapeHtml(p.brand_name || '미분류')}</span>
+          <span class="pprice">재고 ${fmt(p.qty)}</span>
+        </div>
+        ${inCart > 0 ? `<div style="font-size:12px; color:var(--accent);">📦 ${inCart}개 선택</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function addToTransferCart(pid) {
+  const product = transferProducts.find(p => p.id === pid);
+  if (!product) return;
+  if (product.qty <= 0) {
+    toast('재고가 없습니다.', true, '⚠️');
+    return;
+  }
+
+  const currentQty = transferCart[pid] ? transferCart[pid].qty : 0;
+  if (currentQty + 1 > product.qty) {
+    toast(`재고(${product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
+    return;
+  }
+
+  if (transferCart[pid]) {
+    transferCart[pid].qty += 1;
+  } else {
+    transferCart[pid] = { product, qty: 1 };
+  }
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
+  renderTransferCart();
+  renderTransferGrid();
+}
+
+function changeTransferQty(pid, delta) {
+  const item = transferCart[pid];
+  if (!item) return;
+  const newQty = item.qty + delta;
+  if (newQty <= 0) {
+    delete transferCart[pid];
+    saveCartToStorage(TRANSFER_CART_KEY, transferCart);
+    renderTransferCart();
+    renderTransferGrid();
+    return;
+  }
+  if (newQty > item.product.qty) {
+    toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
+    renderTransferCart();
+    return;
+  }
+  item.qty = newQty;
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
+  renderTransferCart();
+  renderTransferGrid();
+}
+
+function setTransferQty(pid, value) {
+  const qty = parseInt(value);
+  if (isNaN(qty) || qty < 1) { renderTransferCart(); return; }
+  const item = transferCart[pid];
+  if (!item) return;
+  if (qty > item.product.qty) {
+    toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
+    renderTransferCart();
+    return;
+  }
+  item.qty = qty;
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
+  renderTransferCart();
+  renderTransferGrid();
+}
+
+function removeFromTransferCart(pid) {
+  delete transferCart[pid];
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
+  renderTransferCart();
+  renderTransferGrid();
+}
+
+function renderTransferCart() {
+  const list = document.getElementById('transferCartList');
+  const items = Object.entries(transferCart);
+  if (items.length === 0) {
+    list.innerHTML = '<div class="cart-empty">선택한 제품이 없습니다</div>';
+    document.getElementById('transferTotalQty').textContent = '0개';
+    document.getElementById('batchTransferBtn').disabled = true;
+    return;
+  }
+
+  let totalQty = 0;
+  list.innerHTML = items.map(([pid, item]) => {
+    totalQty += item.qty;
+    return `
+      <div class="cart-item">
+        <div class="ci-name">
+          ${escapeHtml(item.product.name)}
+          <div class="ci-sub">${fmt(item.product.sale_price)}원 × ${item.qty}</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:2px; align-items:flex-end;">
+          <div class="qty-ctrl">
+            <button onclick="changeTransferQty(${pid}, -1)">-</button>
+            <input type="number" class="qty-input" value="${item.qty}" min="1" max="${item.product.qty}" 
+                   onchange="setTransferQty(${pid}, this.value)" onfocus="this.select()">
+            <button onclick="changeTransferQty(${pid}, 1)">+</button>
+          </div>
+        </div>
+        <button onclick="removeFromTransferCart(${pid})" style="color:var(--danger); border:none; background:none; font-size:16px;">✕</button>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('transferTotalQty').textContent = fmt(totalQty) + '개';
+  document.getElementById('batchTransferBtn').disabled = items.length === 0;
+}
+
+// ---------- 일괄 이동 실행 ----------
+async function doBatchTransfer() {
+  const from_store_id = document.getElementById('fromStore').value;
+  const to_store_id = document.getElementById('toStore').value;
+  const staff = document.getElementById('transferStaff').value || null;
+
+  if (!from_store_id || !to_store_id) {
+    toast('출발 매장과 도착 매장을 선택해주세요.', true, '⚠️');
+    return;
+  }
+  if (from_store_id === to_store_id) {
+    toast('출발 매장과 도착 매장이 같습니다.', true, '⚠️');
+    return;
+  }
+
+  const items = Object.entries(transferCart);
+  if (items.length === 0) {
+    toast('이동할 제품을 선택해주세요.', true, '⚠️');
+    return;
+  }
+
+  // 진행률 표시 시작
+  const progressWrap = document.getElementById('transferProgressWrap');
+  const progressBar = document.getElementById('transferProgressBar');
+  const progressText = document.getElementById('transferProgressText');
+  const progressPercent = document.getElementById('transferProgressPercent');
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '0%';
+  progressPercent.textContent = '0%';
+  progressText.textContent = '이동 준비 중...';
+
+  const payload = {
+    from_store_id: parseInt(from_store_id, 10),
+    to_store_id: parseInt(to_store_id, 10),
+    staff: staff,
+    memo: null, // 서버에서 자동 생성
+    items: items.map(([pid, item]) => ({ product_id: parseInt(pid, 10), quantity: item.qty }))
+  };
+
+  try {
+    progressText.textContent = '이동 실행 중...';
+    const result = await api('/api/transfer', { method: 'POST', body: JSON.stringify(payload) });
+    
+    // 진행률 100% 표시
+    progressBar.style.width = '100%';
+    progressPercent.textContent = '100%';
+    progressText.textContent = '이동 완료!';
+    setTimeout(() => { progressWrap.style.display = 'none'; }, 2000);
+
+    let msg = `✅ ${result.success.length}개 이동 완료`;
+    if (result.failed.length > 0) {
+      msg += `, ❌ ${result.failed.length}개 실패`;
+      console.log('실패 목록:', result.failed);
+    }
+    toast(msg, result.failed.length > 0, result.failed.length > 0 ? '⚠️' : '✅');
+
+    // 장바구니 초기화
+    transferCart = {};
+    saveCartToStorage(TRANSFER_CART_KEY, transferCart);
+    renderTransferCart();
+    await loadTransferProducts();
+    await loadMovements(); // 이동 내역 갱신
+  } catch (e) {
+    console.error('이동 오류:', e);
+    progressWrap.style.display = 'none';
+  }
+}
+
+// ============================================================
+// 📋 이동 내역 조회
+// ============================================================
+async function loadMovements() {
+  const status = document.getElementById('movementStatusFilter').value;
+  const store_id = document.getElementById('movementStoreFilter').value;
+  const params = new URLSearchParams();
+  if (status) params.append('status', status);
+  if (store_id) params.append('store_id', store_id);
+
+  try {
+    const rows = await api('/api/movements?' + params.toString());
+    const tbody = document.getElementById('movementTbody');
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="10"><div class="empty"><span class="empty-icon">📭</span>이동 내역이 없습니다.</div></td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map((m, idx) => {
+      const statusClass = m.status === '완료' ? 'chip-approved' : m.status === '취소' ? 'chip-pending' : '';
+      return `
+        <tr>
+          <td><span class="row-number">${idx + 1}</span></td>
+          <td>${escapeHtml(m.from_store_name)}</td>
+          <td>${escapeHtml(m.to_store_name)}</td>
+          <td>${escapeHtml(m.product_name)}</td>
+          <td>${fmt(m.quantity)}</td>
+          <td>${escapeHtml(m.staff || '-')}</td>
+          <td>${escapeHtml(m.memo || '-')}</td>
+          <td><span class="chip ${statusClass}">${m.status}</span></td>
+          <td>${m.created_at}</td>
+          <td>
+            ${m.status === '완료' ? `<button class="danger" onclick="cancelMovement(${m.id})" style="padding:2px 8px; font-size:11px;">취소</button>` : '-'}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    console.error('이동 내역 로드 오류:', e);
+    toast('이동 내역을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+async function cancelMovement(movementId) {
+  if (!confirm('이 이동을 취소하시겠습니까? (재고가 원래대로 복구됩니다)')) return;
+  try {
+    const result = await api(`/api/transfer/${movementId}/cancel`, { method: 'POST' });
+    toast('이동이 취소되었습니다.', false, '✅');
+    loadMovements();
+    loadTransferProducts();
+  } catch (e) {
+    console.error('이동 취소 오류:', e);
+  }
+}
+
+// ============================================================
+// 초기화
+// ============================================================
+document.addEventListener('DOMContentLoaded', function() {
+  loadStores();
+  // 기본적으로 매장 관리 탭 활성화
+  switchStoreTab('stores');
+});
+</script>
+
+<style>
+.calendar-cell { transition: background 0.1s; }
+.calendar-cell:hover { background: var(--hover-bg) !important; }
+.staff-tag { cursor: grab; }
+.staff-tag:active { cursor: grabbing; }
+
+/* 재고 이동 탭 스타일 */
+#transferProductGrid .product-card {
+  cursor: pointer;
+}
+#transferProductGrid .product-card.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+#transferCartWrap {
+  max-height: 300px;
+  overflow-y: auto;
+}
+#transferCartWrap::-webkit-scrollbar {
+  width: 4px;
+}
+#transferCartWrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+#transferCartWrap::-webkit-scrollbar-thumb {
+  background: var(--text-light);
+  border-radius: 4px;
+}
+#transferCartWrap::-webkit-scrollbar-thumb:hover {
+  background: var(--text);
+}
+.tab-btn {
+  transition: all 0.2s;
+  font-weight: 600;
+  border: none;
+  background: none;
+  padding: 6px 16px;
+  cursor: pointer;
+  color: var(--text-light) !important;
+  border-bottom: 3px solid transparent !important;
+  font-size: 14px;
+}
+.tab-btn:hover {
+  color: var(--text) !important;
+}
+.tab-btn.active {
+  color: var(--text) !important;
+  border-bottom: 3px solid var(--accent) !important;
+  font-weight: 700 !important;
+}
+.tab-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 8px;
+}
+</style>
+{% endblock %}
