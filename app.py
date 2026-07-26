@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 from flask import Flask, g, jsonify, render_template, request, send_file, send_from_directory
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -27,33 +28,60 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-producti
 
 
 # ---------------------------------------------------------------------------
-# DB 연결 (PostgreSQL)
+# DB 연결 (PostgreSQL) - 커넥션 풀 사용
 # ---------------------------------------------------------------------------
+# 매 요청마다 새 TCP/SSL 연결을 맺으면 원격 DB(Aiven) 왕복 지연이 요청마다 추가되어
+# 체감 속도가 크게 느려진다. gunicorn 워커(프로세스) 하나당 커넥션 풀을 하나 만들어두고,
+# 요청이 올 때마다 풀에서 연결을 빌려 쓰고 반환하는 방식으로 바꾼다.
+
+_DB_POOL = None
+
+
+def _get_database_url():
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        # 로컬 개발용 기본값 (PostgreSQL 설치 필요)
+        database_url = "postgres://postgres:1234@localhost:5432/inventory_db"
+        print("⚠️ DATABASE_URL 환경 변수가 없어 기본값을 사용합니다.")
+    return database_url
+
+
+def _init_pool():
+    global _DB_POOL
+    if _DB_POOL is None:
+        result = urlparse(_get_database_url())
+        # minconn=1: 워커 시작 시 연결 1개 미리 생성
+        # maxconn=5: 워커 하나당 최대 5개까지 동시 연결 (WEB_CONCURRENCY와 곱해 Aiven 무료 플랜 최대 커넥션 수를 넘지 않도록 조절)
+        _DB_POOL = psycopg2.pool.ThreadedConnectionPool(
+            minconn=1,
+            maxconn=int(os.environ.get("DB_POOL_MAXCONN", "5")),
+            dbname=result.path[1:],
+            user=result.username,
+            password=result.password,
+            host=result.hostname,
+            port=result.port,
+            sslmode='require',  # Render에서는 'require'로 자동 설정됨
+            connect_timeout=10,
+        )
+    return _DB_POOL
+
 
 def get_db():
     if "db" not in g:
+        pool = _init_pool()
+        conn = pool.getconn()
         try:
-            database_url = os.environ.get("DATABASE_URL")
-            if not database_url:
-                # 로컬 개발용 기본값 (PostgreSQL 설치 필요)
-                database_url = "postgres://postgres:1234@localhost:5432/inventory_db"
-                print("⚠️ DATABASE_URL 환경 변수가 없어 기본값을 사용합니다.")
-
-            result = urlparse(database_url)
-            conn = psycopg2.connect(
-                dbname=result.path[1:],
-                user=result.username,
-                password=result.password,
-                host=result.hostname,
-                port=result.port,
-                sslmode='require'  # Render에서는 'require'로 자동 설정됨
-            )
-            conn.autocommit = False
-            g.db = conn
-            g.cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        except Exception as e:
-            print(f"❌ PostgreSQL 연결 오류: {e}")
-            raise RuntimeError("데이터베이스 연결에 실패했습니다.") from e
+            # 풀에 오래 유지된 연결이 원격에서 끊겼을 수 있으므로 가벼운 헬스체크 후,
+            # 죽어있으면 버리고 새 연결을 받아온다.
+            with conn.cursor() as probe:
+                probe.execute("SELECT 1")
+        except Exception:
+            pool.putconn(conn, close=True)
+            conn = pool.getconn()
+        conn.autocommit = False
+        g.db = conn
+        g.cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        g._db_pool_ref = pool
     return g.db
 
 
@@ -61,10 +89,21 @@ def get_db():
 def close_db(exception=None):
     db = g.pop("db", None)
     cursor = g.pop("cursor", None)
+    pool = g.pop("_db_pool_ref", None)
     if cursor is not None:
-        cursor.close()
-    if db is not None:
-        db.close()
+        try:
+            cursor.close()
+        except Exception:
+            pass
+    if db is not None and pool is not None:
+        try:
+            if exception is not None:
+                db.rollback()
+        except Exception:
+            pass
+        # 커넥션을 닫지 않고 풀에 반환해 재사용한다.
+        # 오류가 있었던 연결은 close=True로 버려서 다음 요청에 새 연결을 만들도록 한다.
+        pool.putconn(db, close=(exception is not None))
 
 
 # ---------------------------------------------------------------------------
