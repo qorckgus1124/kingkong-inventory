@@ -319,6 +319,13 @@ def init_db():
                 cancelled_at TIMESTAMP
             );
         """)
+        # stock_movements가 stock_transactions보다 나중에 생성되므로,
+        # 이동 거래(이동출고/이동입고) 레코드가 어느 이동 건에 속하는지 연결하는 컬럼을
+        # 별도 ALTER로 추가한다 (취소된 이동 건의 거래 내역을 조회에서 제외하기 위함).
+        cur.execute("""
+            ALTER TABLE stock_transactions
+            ADD COLUMN IF NOT EXISTS movement_id INTEGER REFERENCES stock_movements(id) ON DELETE SET NULL;
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS daily_revenue_override (
                 id SERIAL PRIMARY KEY,
@@ -1727,6 +1734,11 @@ def api_transfer():
             )
             movement_id = cur.fetchone()["id"]
 
+            cur.execute(
+                "UPDATE stock_transactions SET movement_id = %s WHERE id IN (%s, %s)",
+                (movement_id, out_trans_id, in_trans_id)
+            )
+
             _apply_stock_delta(conn, from_store_id, product_id, "이동출고", quantity)
             _apply_stock_delta(conn, to_store_id, product_id, "이동입고", quantity)
 
@@ -1930,6 +1942,18 @@ def api_daily_report():
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
               AND EXTRACT(HOUR FROM t.date_time) BETWEEN 0 AND 15
+              AND NOT (
+                    t.type IN ('판매취소', '입고취소')
+                 OR (t.type = '판매출고' AND EXISTS (
+                        SELECT 1 FROM stock_transactions cx
+                        WHERE cx.ref_transaction_id = t.id AND cx.type = '판매취소'))
+                 OR (t.type = '입고' AND EXISTS (
+                        SELECT 1 FROM stock_transactions cx
+                        WHERE cx.ref_transaction_id = t.id AND cx.type = '입고취소'))
+                 OR (t.type IN ('이동출고', '이동입고') AND EXISTS (
+                        SELECT 1 FROM stock_movements sm
+                        WHERE sm.id = t.movement_id AND sm.status = '취소'))
+              )
             ORDER BY t.date_time
         """, (today, store_id))
         morning_rows = cur.fetchall()
@@ -1949,6 +1973,18 @@ def api_daily_report():
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
               AND EXTRACT(HOUR FROM t.date_time) >= 16
+              AND NOT (
+                    t.type IN ('판매취소', '입고취소')
+                 OR (t.type = '판매출고' AND EXISTS (
+                        SELECT 1 FROM stock_transactions cx
+                        WHERE cx.ref_transaction_id = t.id AND cx.type = '판매취소'))
+                 OR (t.type = '입고' AND EXISTS (
+                        SELECT 1 FROM stock_transactions cx
+                        WHERE cx.ref_transaction_id = t.id AND cx.type = '입고취소'))
+                 OR (t.type IN ('이동출고', '이동입고') AND EXISTS (
+                        SELECT 1 FROM stock_movements sm
+                        WHERE sm.id = t.movement_id AND sm.status = '취소'))
+              )
             ORDER BY t.date_time
         """, (today, store_id))
         afternoon_rows = cur.fetchall()
