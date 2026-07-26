@@ -1435,7 +1435,7 @@ def api_transactions_get():
             SELECT t.*, p.name as product_name, b.name as brand_name, b.color as brand_color,
                    s.name as store_name, sup.name as supplier_name,
                    (SELECT COUNT(*) FROM stock_transactions c
-                    WHERE c.ref_transaction_id = t.id AND c.type = '판매취소') as cancel_count
+                    WHERE c.ref_transaction_id = t.id AND c.type IN ('판매취소', '입고취소')) as cancel_count
             FROM stock_transactions t
             JOIN products p ON p.id = t.product_id
             LEFT JOIN brands b ON b.id = p.brand_id
@@ -1451,8 +1451,8 @@ def api_transactions_get():
         result = []
         for r in rows:
             d = dict(r)
-            d["cancelled"] = d["type"] == "판매출고" and d["cancel_count"] > 0
-            if d["type"] in ["판매취소", "입고취소"]:
+            d["cancelled"] = d["type"] in ("판매출고", "입고") and d["cancel_count"] > 0
+            if d["type"] in ["판매취소", "입고취소"] or d["cancelled"]:
                 d["is_cancelled"] = True
             else:
                 d["is_cancelled"] = False
@@ -1626,13 +1626,26 @@ def api_transactions_cancel_batch():
 
         ids = [int(i) for i in ids]
         placeholders = ','.join(['%s'] * len(ids))
-        cur.execute(f"SELECT id, type FROM stock_transactions WHERE id IN ({placeholders})", ids)
+        cur.execute(f"SELECT * FROM stock_transactions WHERE id IN ({placeholders})", ids)
         rows = cur.fetchall()
-        valid_ids = [r["id"] for r in rows if r["type"] == "판매출고"]
+        valid_rows = [r for r in rows if r["type"] == "판매출고"]
 
-        if not valid_ids:
+        if not valid_rows:
             return jsonify({"cancelled": 0, "failed": len(ids), "errors": ["선택한 항목 중 판매출고가 없습니다."]}), 400
 
+        # 판매출고를 완전히 삭제하기 전에, 이미 취소 처리된 적이 없는 건이라면
+        # 매장 재고를 판매 전 상태로 복구한다. (예전에는 그냥 지워버리기만 해서
+        # 삭제 후에도 재고가 판매된 채로 줄어든 상태로 남아있었다.)
+        for row in valid_rows:
+            cur.execute(
+                "SELECT COUNT(*) as c FROM stock_transactions WHERE ref_transaction_id=%s AND type='판매취소'",
+                (row["id"],)
+            )
+            already_cancelled = cur.fetchone()["c"] > 0
+            if not already_cancelled:
+                _apply_stock_delta(conn, row["store_id"], row["product_id"], "판매취소", row["quantity"])
+
+        valid_ids = [r["id"] for r in valid_rows]
         placeholders2 = ','.join(['%s'] * len(valid_ids))
         cur.execute(f"DELETE FROM stock_transactions WHERE id IN ({placeholders2})", valid_ids)
         conn.commit()
@@ -1643,6 +1656,7 @@ def api_transactions_cancel_batch():
             "errors": []
         })
     except Exception as e:
+        conn.rollback()
         print(f"❌ 일괄 삭제 오류: {e}")
         return jsonify({"error": str(e)}), 500
 
@@ -2611,9 +2625,14 @@ def api_performance():
         LEFT JOIN brands b ON b.id = p.brand_id
         LEFT JOIN categories c ON c.id = p.category_id
         WHERE t.type IN ('판매출고', '판매취소', '선결예약')
-          AND ((t.memo NOT LIKE '%이동%' AND t.memo NOT LIKE '%교환%') OR t.memo IS NULL)
+          AND ((t.memo NOT LIKE %s AND t.memo NOT LIKE %s) OR t.memo IS NULL)
         """
-        params = []
+        # 주의: memo LIKE 패턴은 반드시 파라미터(%s)로 넘겨야 한다.
+        # SQL 문자열 안에 '%이동%'처럼 % 를 직접 박아 넣으면, psycopg2가 뒤에서
+        # 전달하는 다른 파라미터(start_date/end_date)와 substitution을 하다가
+        # 예외가 나고, 이 함수는 그 예외를 그대로 삼켜 빈 배열을 돌려주기 때문에
+        # 화면에는 그냥 "실적 없음"으로만 보인다.
+        params = ["%이동%", "%교환%"]
         if start_date:
             sql += " AND date(t.date_time) >= date(%s)"
             params.append(start_date)
@@ -4075,10 +4094,12 @@ def api_bestsellers():
                 AND t.type IN ('판매출고')
                 AND date(t.date_time) >= date(%s)
                 AND date(t.date_time) <= date(%s)
-                AND (t.memo NOT LIKE '%이동%' AND t.memo NOT LIKE '%교환%' OR t.memo IS NULL)
+                AND ((t.memo NOT LIKE %s AND t.memo NOT LIKE %s) OR t.memo IS NULL)
             WHERE p.is_active = 1
         """
-        params = [start_date, end_date]
+        # memo LIKE 패턴은 파라미터로 넘긴다 (SQL 문자열에 '%'를 직접 넣으면
+        # psycopg2 파라미터 치환 과정에서 예외가 나서 베스트셀러가 항상 빈 목록으로 나온다)
+        params = [start_date, end_date, "%이동%", "%교환%"]
         if store_id:
             sql += " AND t.store_id = %s"
             params.append(store_id)
