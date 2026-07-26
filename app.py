@@ -1973,83 +1973,68 @@ def api_daily_report():
                 brand_key = brand if brand else '기타'
                 grouped[cat][typ][brand_key].append((display_name, qty, extra_info))
 
+            # 카테고리 표기 순서: 기기 -> 액상 -> 일회용
+            CATEGORY_ORDER = ["기기", "액상", "일회용"]
+
+            def build_section(types_filter):
+                """카테고리별 블록(줄 리스트)들을 만들어 리스트로 반환.
+                구분선(-----)은 여기서 넣지 않고, 호출부에서 블록 '사이'에만 넣는다."""
+                blocks = []
+                for cat in CATEGORY_ORDER:
+                    if cat not in grouped:
+                        continue
+                    cat_types = [t for t in grouped[cat].keys() if t in types_filter]
+                    if not cat_types:
+                        continue
+
+                    block = [f"{{{cat}}}"]
+                    brand_order = []
+                    for typ in sorted(cat_types):
+                        for brand in grouped[cat][typ].keys():
+                            if brand not in brand_order:
+                                brand_order.append(brand)
+
+                    for idx, brand in enumerate(brand_order):
+                        block.append(f"({brand})")
+                        all_items = []
+                        for typ in sorted(cat_types):
+                            if brand in grouped[cat][typ]:
+                                all_items.extend(grouped[cat][typ][brand])
+                        for product, qty, extra in sorted(all_items, key=lambda x: x[0]):
+                            if extra:
+                                block.append(f"{product} {qty}{extra}")
+                            else:
+                                block.append(f"{product} {qty}")
+                        if idx != len(brand_order) - 1:
+                            block.append("")
+                    blocks.append(block)
+                return blocks
+
             lines = []
             lines.append(f"{date_display} {store_name} 입출고 목록")
             lines.append(f"{time_label} 입출고 내역")
             lines.append("-" * 26)
 
             lines.append("[출고]")
-            has_out = False
-
-            for cat in ["일회용", "기기", "액상"]:
-                if cat not in grouped:
-                    continue
-                out_types = [t for t in grouped[cat].keys() if t in ['판매출고', '이동출고']]
-                if not out_types:
-                    continue
-                has_out = True
-                lines.append(f"{{{cat}}}")
-
-                brand_order = []
-                for typ in sorted(out_types):
-                    for brand in grouped[cat][typ].keys():
-                        if brand not in brand_order:
-                            brand_order.append(brand)
-
-                for idx, brand in enumerate(brand_order):
-                    lines.append(f"({brand})")
-                    all_items = []
-                    for typ in sorted(out_types):
-                        if brand in grouped[cat][typ]:
-                            all_items.extend(grouped[cat][typ][brand])
-                    for product, qty, extra in sorted(all_items, key=lambda x: x[0]):
-                        if extra:
-                            lines.append(f"{product} {qty}{extra}")
-                        else:
-                            lines.append(f"{product} {qty}")
-                    if idx != len(brand_order) - 1:
-                        lines.append("")
-                lines.append("-" * 26)
-
-            if not has_out:
+            out_blocks = build_section(['판매출고', '이동출고'])
+            if out_blocks:
+                for i, block in enumerate(out_blocks):
+                    if i > 0:
+                        lines.append("-" * 26)
+                    lines.extend(block)
+            else:
                 lines.append("(출고 내역 없음)")
 
             lines.append("=" * 15)
 
             lines.append("[입고]")
-            has_in = False
-
-            for cat in ["일회용", "기기", "액상"]:
-                if cat not in grouped:
-                    continue
-                in_types = [t for t in grouped[cat].keys() if t in ['입고', '이동입고']]
-                if not in_types:
-                    continue
-                has_in = True
-                lines.append(f"{{{cat}}}")
-
-                brand_order = []
-                for typ in sorted(in_types):
-                    for brand in grouped[cat][typ].keys():
-                        if brand not in brand_order:
-                            brand_order.append(brand)
-
-                for idx, brand in enumerate(brand_order):
-                    lines.append(f"({brand})")
-                    all_items = []
-                    for typ in sorted(in_types):
-                        if brand in grouped[cat][typ]:
-                            all_items.extend(grouped[cat][typ][brand])
-                    for product, qty, extra in sorted(all_items, key=lambda x: x[0]):
-                        if extra:
-                            lines.append(f"{product} {qty}{extra}")
-                        else:
-                            lines.append(f"{product} {qty}")
-                    if idx != len(brand_order) - 1:
-                        lines.append("")
-                lines.append("-" * 26)
-
-            if not has_in:
+            in_blocks = build_section(['입고', '이동입고'])
+            if in_blocks:
+                for i, block in enumerate(in_blocks):
+                    if i > 0:
+                        lines.append("-" * 26)
+                    lines.extend(block)
+            else:
                 lines.append("(입고 내역 없음)")
 
             return "\n".join(lines)
@@ -2534,7 +2519,7 @@ def api_performance():
         if end_date:
             sql += " AND date(t.date_time) <= date(%s)"
             params.append(end_date)
-        sql += " GROUP BY p.id HAVING sold_qty != 0"
+        sql += " GROUP BY p.id, p.name, b.name, b.color, c.name, c.color HAVING SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END) != 0"
 
         sort_col = "profit" if sort == "profit" else "sold_qty"
         order_sql = "DESC" if order.lower() == "desc" else "ASC"
