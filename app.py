@@ -103,7 +103,12 @@ def get_db():
         except Exception:
             pool.putconn(conn, close=True)
             conn = pool.getconn()
-        conn.autocommit = False
+        # 참고: 새로 만들어진 연결은 원래 autocommit이 기본값 False라서
+        # 여기서 다시 설정할 필요가 없다. 오히려 방금 위 헬스체크(SELECT 1)로
+        # 트랜잭션이 열린 상태에서 이 값을 다시 대입하면
+        # "set_session cannot be used inside a transaction" 에러가 난다.
+        # (예전에는 Aiven 연결이 자주 끊겨서 매번 새 연결을 받아왔고,
+        #  그 새 연결엔 헬스체크를 안 태워서 우연히 안 터졌을 뿐이다.)
         g.db = conn
         g.cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         g._db_pool_ref = pool
