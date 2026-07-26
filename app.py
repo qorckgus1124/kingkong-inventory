@@ -46,7 +46,7 @@ def get_db():
                 password=result.password,
                 host=result.hostname,
                 port=result.port,
-                sslmode='disable'  # Render에서는 'require'로 자동 설정됨
+                sslmode='require'  # Render에서는 'require'로 자동 설정됨
             )
             conn.autocommit = False
             g.db = conn
