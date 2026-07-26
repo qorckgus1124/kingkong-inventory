@@ -4,17 +4,22 @@ services:
     runtime: python
     plan: free
     buildCommand: "./build.sh"
-    startCommand: "gunicorn app:app"
+    # gunicorn 워커 수(WEB_CONCURRENCY) x DB_POOL_MAXCONN 합이 DB 무료 플랜의
+    # 최대 동시 연결 수를 넘지 않도록 --timeout도 넉넉히 준다.
+    startCommand: "gunicorn app:app --workers ${WEB_CONCURRENCY:-2} --timeout 60"
     envVars:
+      # DATABASE_URL은 여기서 자동으로 채우지 않는다.
+      # Render 대시보드 > Environment 탭에서 직접 값을 넣어야 한다.
+      # (지금은 Neon 커넥션 문자열을 사용 - Neon 콘솔의 Connect 버튼에서 확인 가능)
       - key: DATABASE_URL
-        fromDatabase:
-          name: my-inventory-db
-          property: connectionString
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: WEB_CONCURRENCY
+        value: 2
+      - key: DB_POOL_MAXCONN
         value: 4
 
-databases:
-  - name: my-inventory-db
-    plan: free
+# 참고: 예전에는 이 밑에 Render 자체 free Postgres(databases: 블록)가 있었지만
+# 실제로는 쓰지 않는 리소스였고 30일 후 자동 삭제되어 혼란만 줬기 때문에 제거함.
+# 지금은 Neon(무료 Postgres)을 DATABASE_URL로 직접 연결해서 쓴다.
