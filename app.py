@@ -46,30 +46,55 @@ def _get_database_url():
     return database_url
 
 
+def _create_pool():
+    result = urlparse(_get_database_url())
+    # minconn=1: 워커 시작 시 연결 1개 미리 생성
+    # maxconn: 워커 하나당 최대 동시 연결 수 (Neon pooler(-pooler)를 쓰면 실제 Postgres 커넥션이
+    # 아니라 PgBouncer 커넥션이라 여유 있게 잡아도 안전하다. DB_POOL_MAXCONN 환경변수로 조절 가능)
+    return psycopg2.pool.ThreadedConnectionPool(
+        minconn=1,
+        maxconn=int(os.environ.get("DB_POOL_MAXCONN", "10")),
+        dbname=result.path[1:],
+        user=result.username,
+        password=result.password,
+        host=result.hostname,
+        port=result.port,
+        sslmode='require',  # Render에서는 'require'로 자동 설정됨
+        connect_timeout=10,
+    )
+
+
 def _init_pool():
     global _DB_POOL
     if _DB_POOL is None:
-        result = urlparse(_get_database_url())
-        # minconn=1: 워커 시작 시 연결 1개 미리 생성
-        # maxconn=5: 워커 하나당 최대 5개까지 동시 연결 (WEB_CONCURRENCY와 곱해 Aiven 무료 플랜 최대 커넥션 수를 넘지 않도록 조절)
-        _DB_POOL = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=int(os.environ.get("DB_POOL_MAXCONN", "5")),
-            dbname=result.path[1:],
-            user=result.username,
-            password=result.password,
-            host=result.hostname,
-            port=result.port,
-            sslmode='require',  # Render에서는 'require'로 자동 설정됨
-            connect_timeout=10,
-        )
+        _DB_POOL = _create_pool()
+    return _DB_POOL
+
+
+def _reset_pool():
+    # 풀이 고갈되었거나(pool exhausted) 손상된 상태로 보일 때, 기존 풀을 버리고
+    # 완전히 새 풀을 만들어 서비스 재시작 없이도 스스로 복구되도록 한다.
+    global _DB_POOL
+    old_pool = _DB_POOL
+    _DB_POOL = _create_pool()
+    if old_pool is not None:
+        try:
+            old_pool.closeall()
+        except Exception:
+            pass
     return _DB_POOL
 
 
 def get_db():
     if "db" not in g:
         pool = _init_pool()
-        conn = pool.getconn()
+        try:
+            conn = pool.getconn()
+        except psycopg2.pool.PoolError:
+            # 풀이 고갈된 상태(예: DB가 잠깐 잠들었다 깨어나는 순간에 요청이 몰린 경우)라면
+            # 서버를 재시작하지 않아도 스스로 새 풀을 만들어 복구를 시도한다.
+            pool = _reset_pool()
+            conn = pool.getconn()
         try:
             # 풀에 오래 유지된 연결이 원격에서 끊겼을 수 있으므로 가벼운 헬스체크 후,
             # 죽어있으면 버리고 새 연결을 받아온다.
@@ -103,7 +128,15 @@ def close_db(exception=None):
             pass
         # 커넥션을 닫지 않고 풀에 반환해 재사용한다.
         # 오류가 있었던 연결은 close=True로 버려서 다음 요청에 새 연결을 만들도록 한다.
-        pool.putconn(db, close=(exception is not None))
+        try:
+            pool.putconn(db, close=(exception is not None))
+        except Exception:
+            # 이 연결이 속했던 풀이 그 사이 재생성(reset)되어 이미 닫혔을 수 있다.
+            # 그런 경우 연결을 그냥 직접 닫아서 자원만 정리한다.
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
