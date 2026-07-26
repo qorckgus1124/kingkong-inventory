@@ -1782,6 +1782,71 @@ def api_transfer_cancel(movement_id):
         conn.rollback()
         return jsonify({"error": f"취소 중 오류: {str(e)}"}), 500
 
+@app.route("/api/movements/cancel_batch", methods=["POST"])
+def api_movements_cancel_batch():
+    conn = get_db()
+    cur = g.cursor
+    data = request.get_json(force=True)
+    ids = data.get("ids", [])
+    if not ids:
+        return jsonify({"error": "취소할 항목을 선택해주세요."}), 400
+
+    try:
+        ids = [int(i) for i in ids]
+    except (TypeError, ValueError):
+        return jsonify({"error": "잘못된 항목입니다."}), 400
+
+    cancelled = 0
+    failed = 0
+    errors = []
+
+    for movement_id in ids:
+        try:
+            cur.execute("SELECT * FROM stock_movements WHERE id = %s", (movement_id,))
+            movement = cur.fetchone()
+            if not movement:
+                failed += 1
+                errors.append(f"#{movement_id}: 이동 기록을 찾을 수 없습니다.")
+                continue
+            if movement["status"] != "완료":
+                failed += 1
+                errors.append(f"#{movement_id}: 완료된 이동만 취소할 수 있습니다.")
+                continue
+
+            err1 = _apply_stock_delta(conn, movement["from_store_id"], movement["product_id"], "입고", movement["quantity"])
+            if err1:
+                conn.rollback()
+                failed += 1
+                errors.append(f"#{movement_id}: {err1}")
+                continue
+            err2 = _apply_stock_delta(conn, movement["to_store_id"], movement["product_id"], "판매출고", movement["quantity"])
+            if err2:
+                conn.rollback()
+                failed += 1
+                errors.append(f"#{movement_id}: {err2}")
+                continue
+
+            cur.execute(
+                """INSERT INTO stock_transactions
+                (product_id, store_id, type, quantity, staff, memo)
+                VALUES (%s, %s, '이동취소', %s, %s, %s)""",
+                (movement["product_id"], movement["from_store_id"], movement["quantity"],
+                 movement["staff"], f"이동 취소 (ID: {movement_id})")
+            )
+            cur.execute(
+                "UPDATE stock_movements SET status = '취소', cancelled_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (movement_id,)
+            )
+            conn.commit()
+            cancelled += 1
+        except Exception as e:
+            conn.rollback()
+            failed += 1
+            errors.append(f"#{movement_id}: {str(e)}")
+
+    return jsonify({"ok": True, "cancelled": cancelled, "failed": failed, "errors": errors})
+
+
 @app.route("/api/movements")
 def api_movements():
     conn = get_db()
@@ -3102,7 +3167,9 @@ def api_export_performance():
     if end_date:
         sql += " AND date(t.date_time) <= date(%s)"
         params.append(end_date)
-    sql += " GROUP BY p.id HAVING sold_qty != 0"
+    sql += """ GROUP BY p.id, p.name, c.name
+        HAVING SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity
+                        WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END) != 0"""
     cur.execute(sql, params)
     rows = cur.fetchall()
     output = io.StringIO()
@@ -3974,15 +4041,18 @@ def api_bestsellers():
                 AND date(t.date_time) <= date(%s)
                 AND (t.memo NOT LIKE '%이동%' AND t.memo NOT LIKE '%교환%' OR t.memo IS NULL)
             WHERE p.is_active = 1
-            GROUP BY p.id
-            HAVING sold_qty > 0
-            ORDER BY sold_qty DESC
-            LIMIT 10
         """
         params = [start_date, end_date]
         if store_id:
             sql += " AND t.store_id = %s"
             params.append(store_id)
+
+        sql += """
+            GROUP BY p.id
+            HAVING COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) > 0
+            ORDER BY sold_qty DESC
+            LIMIT 10
+        """
 
         cur.execute(sql, params)
         rows = cur.fetchall()

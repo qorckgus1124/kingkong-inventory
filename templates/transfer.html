@@ -68,6 +68,155 @@
 
 <div id="result" style="margin-top:12px;"></div>
 
+<div class="card" style="margin-top:16px;">
+  <div class="toolbar" style="margin-bottom:12px; display:flex; align-items:center; justify-content:space-between;">
+    <h3 style="margin:0; color:var(--text);">📜 최근 이동 내역</h3>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <select id="movementFilter" onchange="loadMovements()" style="font-size:12px;">
+        <option value="">전체</option>
+        <option value="완료">완료만</option>
+        <option value="취소">취소만</option>
+      </select>
+      <button onclick="loadMovements()" style="padding:4px 12px; font-size:12px;">🔄 새로고침</button>
+      <button onclick="batchCancelMovements()" id="movementBatchCancelBtn" disabled
+              style="padding:4px 12px; font-size:12px; color:var(--danger);">🗑️ 선택 취소 (<span id="movementSelectedCount">0</span>)</button>
+    </div>
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="data-table" style="width:100%; font-size:13px;">
+      <thead>
+        <tr>
+          <th style="width:32px; padding:6px 8px;"><input type="checkbox" id="movementSelectAll" onchange="toggleAllMovementCheckboxes()"></th>
+          <th style="text-align:left; padding:6px 8px;">일시</th>
+          <th style="text-align:left; padding:6px 8px;">제품</th>
+          <th style="text-align:left; padding:6px 8px;">출발 → 도착</th>
+          <th style="text-align:right; padding:6px 8px;">수량</th>
+          <th style="text-align:left; padding:6px 8px;">담당자</th>
+          <th style="text-align:center; padding:6px 8px;">상태</th>
+          <th style="text-align:center; padding:6px 8px;">관리</th>
+        </tr>
+      </thead>
+      <tbody id="movementsTbody">
+        <tr><td colspan="8" style="text-align:center; padding:20px; color:var(--text-light);">불러오는 중...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let movementSelectedIds = new Set();
+
+function formatMovementDate(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadMovements() {
+  const tbody = document.getElementById('movementsTbody');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--text-light);">불러오는 중...</td></tr>';
+  movementSelectedIds.clear();
+  updateMovementBatchUI();
+  try {
+    const status = document.getElementById('movementFilter').value;
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    const rows = await api('/api/movements?' + params.toString());
+    if (!rows || rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:20px; color:var(--text-light);">이동 내역이 없습니다.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(m => {
+      const isDone = m.status === '완료';
+      const statusColor = isDone ? 'var(--accent)' : 'var(--text-light)';
+      return `
+        <tr>
+          <td style="padding:6px 8px; text-align:center;">
+            ${isDone ? `<input type="checkbox" class="movement-checkbox" value="${m.id}" onchange="toggleMovementCheckbox(${m.id})">` : ''}
+          </td>
+          <td style="padding:6px 8px;">${formatMovementDate(m.created_at)}</td>
+          <td style="padding:6px 8px;">${escapeHtml(m.product_name || '')}</td>
+          <td style="padding:6px 8px;">${escapeHtml(m.from_store_name || '')} → ${escapeHtml(m.to_store_name || '')}</td>
+          <td style="padding:6px 8px; text-align:right;">${fmt(m.quantity)}</td>
+          <td style="padding:6px 8px;">${escapeHtml(m.staff || '')}</td>
+          <td style="padding:6px 8px; text-align:center;"><span style="color:${statusColor}; font-weight:600;">${escapeHtml(m.status)}</span></td>
+          <td style="padding:6px 8px; text-align:center;">
+            ${isDone ? `<button onclick="cancelMovement(${m.id})" style="color:var(--danger); font-size:12px; padding:2px 10px;">취소</button>` : '-'}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    console.error('이동 내역 로드 오류:', e);
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:20px; color:var(--danger);">불러오는 중 오류가 발생했습니다.</td></tr>';
+  }
+}
+
+function toggleMovementCheckbox(id) {
+  const cb = document.querySelector(`.movement-checkbox[value="${id}"]`);
+  if (cb && cb.checked) movementSelectedIds.add(id);
+  else movementSelectedIds.delete(id);
+  updateMovementBatchUI();
+}
+
+function toggleAllMovementCheckboxes() {
+  const checkAll = document.getElementById('movementSelectAll').checked;
+  document.querySelectorAll('.movement-checkbox').forEach(cb => {
+    cb.checked = checkAll;
+    const id = parseInt(cb.value, 10);
+    if (checkAll) movementSelectedIds.add(id);
+    else movementSelectedIds.delete(id);
+  });
+  updateMovementBatchUI();
+}
+
+function updateMovementBatchUI() {
+  document.getElementById('movementSelectedCount').textContent = movementSelectedIds.size;
+  document.getElementById('movementBatchCancelBtn').disabled = movementSelectedIds.size === 0;
+  const allCbs = document.querySelectorAll('.movement-checkbox');
+  const checkedCbs = document.querySelectorAll('.movement-checkbox:checked');
+  const selectAll = document.getElementById('movementSelectAll');
+  if (selectAll) selectAll.checked = allCbs.length > 0 && allCbs.length === checkedCbs.length;
+}
+
+async function cancelMovement(movementId) {
+  if (!confirm('이 이동을 취소하시겠습니까? 재고가 이동 전 상태로 복구됩니다.')) return;
+  try {
+    await api(`/api/transfer/${movementId}/cancel`, { method: 'POST' });
+    toast('이동이 취소되었습니다.', false, '✅');
+    await loadMovements();
+    await loadProducts();
+  } catch (e) {
+    console.error('이동 취소 오류:', e);
+    toast('취소 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+async function batchCancelMovements() {
+  if (movementSelectedIds.size === 0) return;
+  if (!confirm(`선택한 ${movementSelectedIds.size}건의 이동을 일괄 취소하시겠습니까? 재고가 이동 전 상태로 복구됩니다.`)) return;
+  try {
+    const ids = Array.from(movementSelectedIds);
+    const result = await api('/api/movements/cancel_batch', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    });
+    if (result && result.failed) {
+      toast(`${result.cancelled}건 취소 완료, ${result.failed}건 실패`, result.cancelled === 0, '⚠️');
+    } else {
+      toast(`${result.cancelled}건이 취소되었습니다.`, false, '✅');
+    }
+    await loadMovements();
+    await loadProducts();
+  } catch (e) {
+    console.error('일괄 취소 오류:', e);
+    toast('일괄 취소 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+</script>
+
 <script>
 let stores = [];
 let products = [];
@@ -371,6 +520,7 @@ async function doBatchTransfer() {
     transferCart = {};
     renderTransferCart();
     await loadProducts();
+    await loadMovements();
     
     // 결과 표시
     const resultDiv = document.getElementById('result');
@@ -399,6 +549,7 @@ async function doBatchTransfer() {
 // ---------- 초기화 ----------
 document.addEventListener('DOMContentLoaded', function() {
   loadStores();
+  loadMovements();
 });
 </script>
 
@@ -453,6 +604,10 @@ document.addEventListener('DOMContentLoaded', function() {
   transition: width 0.5s ease;
 }
 .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.data-table { border-collapse: collapse; }
+.data-table th { border-bottom: 2px solid var(--border); color: var(--text-light); font-weight: 600; }
+.data-table td { border-bottom: 1px solid var(--border); color: var(--text); }
+.data-table tbody tr:hover { background: var(--hover-bg); }
 .product-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 12px; cursor: pointer; text-align: left; }
 .product-card:hover { border-color: var(--accent); transform: translateY(-3px); box-shadow: 0 6px 20px rgba(0,0,0,0.08); }
 .product-card.disabled { opacity: 0.4; cursor: not-allowed; }
