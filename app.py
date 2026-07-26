@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-사내 재고·판매관리 프로그램 (PostgreSQL + Render 호환)
+사내 재고·판매관리 프로그램 (PostgreSQL + Render 호환) - 전체 버전
 """
 import os
 import json
@@ -25,6 +25,7 @@ BRAND_CSV_PATH = os.path.join(BASE_DIR, "카테고리 상품별 브랜드 정리
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 
+
 # ---------------------------------------------------------------------------
 # DB 연결 (PostgreSQL)
 # ---------------------------------------------------------------------------
@@ -34,7 +35,9 @@ def get_db():
         try:
             database_url = os.environ.get("DATABASE_URL")
             if not database_url:
-                raise RuntimeError("DATABASE_URL 환경 변수가 설정되지 않았습니다.")
+                # 로컬 개발용 기본값 (PostgreSQL 설치 필요)
+                database_url = "postgres://postgres:1234@localhost:5432/inventory_db"
+                print("⚠️ DATABASE_URL 환경 변수가 없어 기본값을 사용합니다.")
 
             result = urlparse(database_url)
             conn = psycopg2.connect(
@@ -43,7 +46,7 @@ def get_db():
                 password=result.password,
                 host=result.hostname,
                 port=result.port,
-                sslmode='require'
+                sslmode='disable'  # Render에서는 'require'로 자동 설정됨
             )
             conn.autocommit = False
             g.db = conn
@@ -53,6 +56,7 @@ def get_db():
             raise RuntimeError("데이터베이스 연결에 실패했습니다.") from e
     return g.db
 
+
 @app.teardown_appcontext
 def close_db(exception=None):
     db = g.pop("db", None)
@@ -61,6 +65,7 @@ def close_db(exception=None):
         cursor.close()
     if db is not None:
         db.close()
+
 
 # ---------------------------------------------------------------------------
 # DB 초기화 (PostgreSQL 스키마)
@@ -285,10 +290,13 @@ def init_db():
         create_indexes()
         load_brand_mapping_from_csv()
 
+        print("✅ 데이터베이스 초기화 완료 (테이블 생성, 기본 데이터 삽입)")
+
     except Exception as e:
         print(f"❌ DB 초기화 오류: {e}")
         import traceback
         traceback.print_exc()
+
 
 # ---------------------------------------------------------------------------
 # 인덱스 생성 (PostgreSQL)
@@ -308,6 +316,7 @@ def create_indexes():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_movements_status ON stock_movements(status);")
     conn.commit()
+
 
 # ---------------------------------------------------------------------------
 # 브랜드 매핑 데이터 로드 (CSV)
@@ -341,8 +350,15 @@ def load_brand_mapping_from_csv():
     except Exception as e:
         print(f"❌ 브랜드 CSV 로드 오류: {e}")
 
+
+# ===== Render(gunicorn)에서도 DB 초기화가 실행되도록 =====
+with app.app_context():
+    init_db()
+# ========================================================
+
+
 # ---------------------------------------------------------------------------
-# 헬퍼 함수 (PostgreSQL 호환)
+# 헬퍼 함수 (PostgreSQL)
 # ---------------------------------------------------------------------------
 
 def get_brand_list_from_db():
@@ -414,11 +430,6 @@ def auto_assign_brand_and_category(product_name, user_brand_id=None, user_catego
             category_id = auto_cat_id
     return brand_id, category_id
 
-def get_next_product_id(db):
-    cur = g.cursor
-    cur.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM products")
-    return cur.fetchone()["coalesce"]
-
 def product_row_to_dict(db, row, store_id=None):
     if row is None:
         return None
@@ -476,6 +487,7 @@ def _apply_stock_delta(db, store_id, product_id, ttype, quantity):
         delta = -quantity if is_decrease else quantity
         cur.execute("UPDATE store_stock SET qty = qty + %s WHERE store_id=%s AND product_id=%s", (delta, store_id, product_id))
     return None
+
 
 # ---------------------------------------------------------------------------
 # 라우트 (페이지)
@@ -545,6 +557,7 @@ def forecast_page():
 def product_image(filename):
     return send_from_directory(IMAGE_DIR, filename)
 
+
 # ---------------------------------------------------------------------------
 # API - 카테고리
 # ---------------------------------------------------------------------------
@@ -602,6 +615,7 @@ def api_category_detail(cid):
     except Exception as e:
         print(f"❌ 카테고리 수정 오류: {e}")
         return jsonify({"error": "수정 중 오류가 발생했습니다."}), 500
+
 
 # ---------------------------------------------------------------------------
 # API - 브랜드
@@ -777,6 +791,7 @@ def api_brands_batch_update():
         print(f"❌ 일괄 수정 오류: {e}")
         return jsonify({"error": "처리 중 오류가 발생했습니다."}), 500
 
+
 # ---------------------------------------------------------------------------
 # API - 매장
 # ---------------------------------------------------------------------------
@@ -817,7 +832,6 @@ def api_stores():
     if not name:
         return jsonify({"error": "매장명을 입력해주세요."}), 400
 
-    # ID 자동 할당 (SERIAL 사용)
     schedule = data.get("schedule") or {}
     schedule_str = json.dumps(schedule)
     staffs = data.get("staffs") or []
@@ -902,6 +916,7 @@ def api_store_detail(sid):
         print(f"❌ 매장 수정 오류: {e}")
         return jsonify({"error": "수정 중 오류가 발생했습니다."}), 500
 
+
 # ---------------------------------------------------------------------------
 # API - 거래처
 # ---------------------------------------------------------------------------
@@ -961,8 +976,9 @@ def api_supplier_detail(sid):
         print(f"❌ 거래처 수정 오류: {e}")
         return jsonify({"error": "수정 중 오류가 발생했습니다."}), 500
 
+
 # ---------------------------------------------------------------------------
-# API - 제품 (Products)
+# API - 제품
 # ---------------------------------------------------------------------------
 
 @app.route("/api/products", methods=["GET", "POST"])
@@ -994,10 +1010,10 @@ def api_products():
                 params.append(f"%{q}%")
                 params.append(f"%{q}%")
             if category_id:
-                sql += " AND p.category_id=%s"
+                sql += " AND p.category_id = %s"
                 params.append(category_id)
             if brand_id:
-                sql += " AND p.brand_id=%s"
+                sql += " AND p.brand_id = %s"
                 params.append(brand_id)
 
             if sort == "qty":
@@ -1069,7 +1085,6 @@ def api_products():
     initial_qty = int(data.get("initial_qty") or 0)
     store_id = data.get("store_id")
 
-    # ID 자동 할당 (SERIAL)
     try:
         cur.execute(
             """INSERT INTO products (name, brand_id, category_id, cost_price, card_cost_price, sale_price, memo)
@@ -1288,8 +1303,9 @@ def api_batch_update_price():
     conn.commit()
     return jsonify({"ok": True, "updated": updated})
 
+
 # ---------------------------------------------------------------------------
-# API - 입출고 (Transactions)
+# API - 입출고
 # ---------------------------------------------------------------------------
 
 @app.route("/api/transactions", methods=["GET"])
@@ -1546,8 +1562,9 @@ def api_transactions_cancel_batch():
         print(f"❌ 일괄 삭제 오류: {e}")
         return jsonify({"error": str(e)}), 500
 
+
 # ---------------------------------------------------------------------------
-# API - 재고 이동 (Transfer)
+# API - 재고 이동
 # ---------------------------------------------------------------------------
 
 @app.route("/api/transfer", methods=["POST"])
@@ -1721,8 +1738,9 @@ def api_movements():
         print(f"❌ 이동 내역 조회 오류: {e}")
         return jsonify([])
 
+
 # ---------------------------------------------------------------------------
-# API - 금일 판매 목록 (Daily Report)
+# API - 금일 판매 목록
 # ---------------------------------------------------------------------------
 
 @app.route("/api/daily_report")
@@ -1769,7 +1787,7 @@ def api_daily_report():
             WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고')
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
-              AND time(t.date_time) BETWEEN '00:00:00' AND '15:59:59'
+              AND EXTRACT(HOUR FROM t.date_time) BETWEEN 0 AND 15
             ORDER BY t.date_time
         """, (today, store_id))
         morning_rows = cur.fetchall()
@@ -1788,7 +1806,7 @@ def api_daily_report():
             WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고')
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
-              AND time(t.date_time) >= '16:00:00'
+              AND EXTRACT(HOUR FROM t.date_time) >= 16
             ORDER BY t.date_time
         """, (today, store_id))
         afternoon_rows = cur.fetchall()
@@ -1974,8 +1992,9 @@ def api_daily_report():
         traceback.print_exc()
         return jsonify({"error": "데이터를 불러오는 중 오류가 발생했습니다."}), 500
 
+
 # ---------------------------------------------------------------------------
-# API - 발주 추천 (Recommend Order)
+# API - 발주 추천
 # ---------------------------------------------------------------------------
 
 @app.route("/api/recommend_order")
@@ -2018,11 +2037,12 @@ def api_recommend_order():
             GROUP BY p.id
         """
 
-        sale_params = [f"{-days} days"]
-        sale_where = "type IN ('판매출고', '판매취소') AND date(date_time) >= date('now', %s)"
+        sale_params = [days]
+        sale_where = "type IN ('판매출고', '판매취소') AND date(date_time) >= CURRENT_DATE - INTERVAL '%s days'"
         if store_id and store_id != '':
             sale_where += " AND store_id = %s"
             sale_params.append(int(store_id))
+        sale_where = sale_where.replace('%s', '%s')  # 첫 번째 파라미터를 days로 사용
 
         sale_sql = f"""
             SELECT
@@ -2117,8 +2137,9 @@ def api_recommend_order():
             "error": str(e)
         }), 500
 
+
 # ---------------------------------------------------------------------------
-# API - 출고 예측 (Forecast)
+# API - 출고 예측
 # ---------------------------------------------------------------------------
 
 @app.route("/api/forecast")
@@ -2150,11 +2171,13 @@ def api_forecast():
             GROUP BY p.id
         """
 
-        sale_params = [f"{-days} days"]
-        sale_where = "type IN ('판매출고', '판매취소') AND date(date_time) >= date('now', %s)"
+        sale_params = [days]
+        sale_where = "type IN ('판매출고', '판매취소') AND date(date_time) >= CURRENT_DATE - INTERVAL '%s days'"
         if store_id and store_id != '':
             sale_where += " AND store_id = %s"
             sale_params.append(int(store_id))
+        sale_where = sale_where.replace('%s', '%s')
+
         sale_sql = f"""
             SELECT
                 product_id,
@@ -2248,8 +2271,9 @@ def api_forecast():
             "error": str(e)
         }), 500
 
+
 # ---------------------------------------------------------------------------
-# API - 근무자 출근 기록 (Attendance)
+# API - 근무자 출근 기록
 # ---------------------------------------------------------------------------
 
 @app.route("/api/attendance", methods=["GET", "POST"])
@@ -2328,8 +2352,9 @@ def api_attendance_detail(aid):
         print(f"❌ 출근 기록 수정 오류: {e}")
         return jsonify({"error": "수정 중 오류가 발생했습니다."}), 500
 
+
 # ---------------------------------------------------------------------------
-# API - 빠른 판매 등록 (Sales)
+# API - 판매 등록 (Sales)
 # ---------------------------------------------------------------------------
 
 @app.route("/api/sales", methods=["POST"])
@@ -2389,8 +2414,9 @@ def api_sales():
     conn.commit()
     return jsonify({"ok": True, "transaction_ids": created_ids})
 
+
 # ---------------------------------------------------------------------------
-# API - 판매 실적 (Performance)
+# API - 판매 실적
 # ---------------------------------------------------------------------------
 
 @app.route("/api/performance")
@@ -2444,8 +2470,9 @@ def api_performance():
         print(f"❌ 판매 실적 오류: {e}")
         return jsonify([])
 
+
 # ---------------------------------------------------------------------------
-# API - 매출 통계 (Statistics)
+# API - 매출 통계
 # ---------------------------------------------------------------------------
 
 @app.route("/api/statistics")
@@ -2500,11 +2527,12 @@ def api_statistics():
         print(f"❌ 매출 통계 오류: {e}")
         return jsonify([])
 
+
 # ---------------------------------------------------------------------------
-# API - 대시보드 (Dashboard)
+# API - 대시보드
 # ---------------------------------------------------------------------------
 
-def get_settings_cache(db):
+def get_settings_cache():
     if not hasattr(g, '_settings_cache'):
         cur = g.cursor
         cur.execute("SELECT key, value FROM settings")
@@ -2532,7 +2560,7 @@ def api_dashboard():
             except:
                 store_id = None
 
-        settings = get_settings_cache(conn)
+        settings = get_settings_cache()
         monthly_target = int(settings.get('monthly_target_revenue', 0)) if settings else 0
 
         import calendar
@@ -2596,7 +2624,6 @@ def api_dashboard():
             today_sales = cur.fetchone()
             default_response["today"] = dict(today_sales) if today_sales else default_response["today"]
 
-            # 오버라이드 적용
             if store_id:
                 cur.execute("SELECT override_amount FROM daily_revenue_override WHERE store_id = %s AND target_date = %s", (store_id, today.strftime("%Y-%m-%d")))
                 override = cur.fetchone()
@@ -2628,7 +2655,6 @@ def api_dashboard():
             month_revenue = month_sales["revenue"] if month_sales else 0
             default_response["month"] = dict(month_sales) if month_sales else default_response["month"]
 
-            # 오버라이드 적용
             if store_id:
                 cur.execute("SELECT target_date, override_amount FROM daily_revenue_override WHERE store_id = %s AND target_date >= %s AND target_date <= %s", (store_id, month_start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")))
                 overrides = cur.fetchall()
@@ -2655,7 +2681,7 @@ def api_dashboard():
         except Exception as e:
             print(f"❌ 이번달 매출 조회 오류: {e}")
 
-        # ---------- 재고부족 상품 ----------
+        # ---------- 재고부족 ----------
         try:
             warning_q = """
                 SELECT p.id, p.name, ss.qty, ss.min_qty, c.name as category_name, c.color as category_color
@@ -2695,7 +2721,7 @@ def api_dashboard():
         except Exception as e:
             print(f"❌ 최근 거래 조회 오류: {e}")
 
-        # ---------- 카테고리별 매출 비중 ----------
+        # ---------- 카테고리 매출 비중 ----------
         try:
             cat_q = """
                 SELECT
@@ -2724,7 +2750,7 @@ def api_dashboard():
         except Exception as e:
             print(f"❌ 카테고리 매출 조회 오류: {e}")
 
-        # ---------- 전체 재고 가치 ----------
+        # ---------- 재고 가치 ----------
         try:
             stock_q = """
                 SELECT
@@ -2745,7 +2771,7 @@ def api_dashboard():
         except Exception as e:
             print(f"❌ 재고 가치 조회 오류: {e}")
 
-        # ---------- 카테고리별 출고 수량 비교 ----------
+        # ---------- 카테고리 비교 ----------
         try:
             def get_category_quantity(start_date, end_date):
                 cat_q = """
@@ -2809,8 +2835,9 @@ def api_dashboard():
             "monthly_target": {"target": 0, "total_days": 0, "days_elapsed": 0, "remaining_days": 0, "current_revenue": 0, "daily_avg_needed": 0, "remaining_amount": 0, "progress_percent": 0}
         })
 
+
 # ---------------------------------------------------------------------------
-# API - 카테고리별 집계 (Category Stats)
+# API - 카테고리 집계
 # ---------------------------------------------------------------------------
 
 @app.route("/api/category_stats")
@@ -2845,8 +2872,9 @@ def api_category_stats():
         print(f"❌ 카테고리 집계 오류: {e}")
         return jsonify([])
 
+
 # ---------------------------------------------------------------------------
-# API - 재고 실사 (Stocktake)
+# API - 재고 실사
 # ---------------------------------------------------------------------------
 
 @app.route("/api/stocktake", methods=["GET", "POST"])
@@ -2900,8 +2928,9 @@ def api_stocktake():
         print(f"❌ 재고 실사 저장 오류: {e}")
         return jsonify({"error": "저장 중 오류가 발생했습니다."}), 500
 
+
 # ---------------------------------------------------------------------------
-# API - 백업 (Backup)
+# API - 백업
 # ---------------------------------------------------------------------------
 
 @app.route("/api/backup", methods=["GET", "POST"])
@@ -2914,8 +2943,8 @@ def api_backup():
                     stat = os.stat(os.path.join(BACKUP_DIR, f))
                     backups.append({"name": f, "size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")})
         return jsonify(backups)
-    # POST: SQLite 백업은 더 이상 사용하지 않음 (PostgreSQL은 Aiven이 자동 백업)
     return jsonify({"ok": True, "message": "PostgreSQL은 Aiven이 자동 백업합니다."})
+
 
 # ---------------------------------------------------------------------------
 # API - 엑셀 다운로드 (Export)
@@ -3074,6 +3103,7 @@ def api_export_statistics():
         writer.writerow([r['period_key'], r['sold_qty'], r['revenue'], r['profit']])
     output.seek(0)
     return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='매출통계.csv')
+
 
 # ---------------------------------------------------------------------------
 # API - 엑셀 업로드 (Import Products)
@@ -3244,8 +3274,9 @@ def api_import_template():
     output.seek(0)
     return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='제품_업로드_템플릿.csv')
 
+
 # ---------------------------------------------------------------------------
-# API - 출고 내역 일괄 업로드 (Import Transactions)
+# API - 출고 내역 일괄 업로드
 # ---------------------------------------------------------------------------
 
 @app.route("/api/import/transactions", methods=["POST"])
@@ -3462,8 +3493,9 @@ def api_import_transactions_template():
         download_name=filename
     )
 
+
 # ---------------------------------------------------------------------------
-# API - CSV 브랜드 업로드 (Import Brands)
+# API - CSV 브랜드 업로드
 # ---------------------------------------------------------------------------
 
 @app.route("/api/import/brands", methods=["POST"])
@@ -3512,7 +3544,7 @@ def api_import_brands():
                     )
                 else:
                     cur.execute(
-                        "INSERT INTO brands (name, category_id, color, status) VALUES (%s, %s, %s, %s)",
+                        "INSERT INTO brands (name, category_id, color, status) VALUES (%s, %s, %s, %s) RETURNING id",
                         (name, category_id, color, status)
                     )
                 results["success"] += 1
@@ -3551,8 +3583,9 @@ def api_export_brands():
         download_name='브랜드_목록.csv'
     )
 
+
 # ---------------------------------------------------------------------------
-# API - 설정 (Settings)
+# API - 설정
 # ---------------------------------------------------------------------------
 
 @app.route("/api/settings", methods=["GET", "POST"])
@@ -3576,8 +3609,9 @@ def api_settings():
     conn.commit()
     return jsonify({"ok": True})
 
+
 # ---------------------------------------------------------------------------
-# API - 선결제 주문 (Pre-orders)
+# API - 선결제 주문
 # ---------------------------------------------------------------------------
 
 @app.route("/api/pre_orders", methods=["GET", "POST"])
@@ -3593,7 +3627,7 @@ def api_pre_orders():
 
         try:
             sql = """
-                SELECT po.*, GROUP_CONCAT(poi.product_id || ':' || poi.quantity || ':' || poi.unit_price || ':' || poi.discount_amount, ',') as items_raw
+                SELECT po.*, string_agg(poi.product_id || ':' || poi.quantity || ':' || poi.unit_price || ':' || poi.discount_amount, ',') as items_raw
                 FROM pre_orders po
                 LEFT JOIN pre_order_items poi ON poi.pre_order_id = po.id
                 WHERE po.store_id = %s
@@ -3764,8 +3798,9 @@ def api_pre_order_delete(order_id):
     except Exception as e:
         return jsonify({"error": "삭제 중 오류가 발생했습니다."}), 500
 
+
 # ---------------------------------------------------------------------------
-# API - 재고 확인 (Stock)
+# API - 재고 확인
 # ---------------------------------------------------------------------------
 
 @app.route("/api/stock")
@@ -3784,8 +3819,9 @@ def api_stock():
         print(f"⚠️ 재고 확인 오류: {e}")
         return jsonify({"qty": 0})
 
+
 # ---------------------------------------------------------------------------
-# API - 카테고리 트렌드 (Category Trend)
+# API - 카테고리 트렌드
 # ---------------------------------------------------------------------------
 
 @app.route("/api/category_trend")
@@ -3841,6 +3877,7 @@ def api_category_trend():
         print(f"❌ 카테고리 트렌드 오류: {e}")
         return jsonify([])
 
+
 # ---------- 베스트셀러 TOP 10 ----------
 @app.route("/api/bestsellers")
 def api_bestsellers():
@@ -3891,6 +3928,7 @@ def api_bestsellers():
     except Exception as e:
         print(f"❌ 베스트셀러 오류: {e}")
         return jsonify([])
+
 
 # ---------------------------------------------------------------------------
 # 실행
