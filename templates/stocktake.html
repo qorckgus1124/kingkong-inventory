@@ -21,6 +21,20 @@
       </div>
     </div>
   </div>
+  <div class="form-grid" style="grid-template-columns: 1fr 1fr; margin-top:10px;">
+    <div class="form-field">
+      <label>🔍 제품 검색 (제품명/브랜드)</label>
+      <input type="text" id="searchInput" placeholder="제품명 또는 브랜드로 검색" oninput="render()">
+    </div>
+    <div class="form-field">
+      <label>📥 실사표 업로드하여 일괄 적용</label>
+      <div style="display:flex; gap:8px;">
+        <input type="file" id="uploadInput" accept=".csv" style="flex:1;">
+        <button onclick="uploadCsv()">일괄 적용</button>
+      </div>
+    </div>
+  </div>
+  <div class="subtitle" style="margin-top:6px;">업로드하는 CSV는 "⬇️ 실사표 내보내기"로 받은 파일과 같은 형식(카테고리, 브랜드, 제품명, 갯수)이어야 합니다. 제품명이 일치하는 항목의 "실사 수량"만 자동으로 채워지며, 실제 저장은 아래 💾 저장 버튼을 눌러야 반영됩니다.</div>
 </div>
 
 <div class="table-wrap">
@@ -47,6 +61,7 @@ async function load() {
   const storeId = document.getElementById('storeSelect').value;
   if (!storeId) return;
   items = await api(`/api/stocktake?store_id=${storeId}`);
+  document.getElementById('searchInput').value = '';
   updateStats();
   render();
 }
@@ -62,23 +77,38 @@ function updateStats() {
   netEl.style.color = netDiff === 0 ? '' : (netDiff > 0 ? '#4f8ff7' : '#c44536');
 }
 
+function getFilteredItems() {
+  const term = (document.getElementById('searchInput')?.value || '').trim().toLowerCase();
+  if (!term) return items;
+  return items.filter(it =>
+    (it.product_name || '').toLowerCase().includes(term) ||
+    (it.brand_name || '').toLowerCase().includes(term) ||
+    (it.category_name || '').toLowerCase().includes(term)
+  );
+}
+
 function render() {
   const tbody = document.getElementById('tbody');
+  const list = getFilteredItems();
   if (!items || items.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">📦</span>실사할 재고가 없습니다.</div></td></tr>';
     return;
   }
-  tbody.innerHTML = items.map((it, idx) => `
-    <tr id="row_${idx}">
+  if (list.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map((it) => `
+    <tr id="row_${it.product_id}">
       <td>${it.category_name ? `<span class="chip" style="background:#8a8f98;">${escapeHtml(it.category_name)}</span>` : '<span style="color:var(--text-light);">-</span>'}</td>
       <td>${escapeHtml(it.brand_name || '-')}</td>
       <td>${escapeHtml(it.product_name)}</td>
       <td>${fmt(it.system_qty)}</td>
-      <td><input type="number" value="${it.actual_qty}" style="width:90px;" oninput="updateActual(${idx}, this.value)"></td>
-      <td id="diff_${idx}" style="font-weight:600;">${diffLabel(it.actual_qty - it.system_qty)}</td>
+      <td><input type="number" value="${it.actual_qty}" style="width:90px;" oninput="updateActual(${it.product_id}, this.value)"></td>
+      <td id="diff_${it.product_id}" style="font-weight:600;">${diffLabel(it.actual_qty - it.system_qty)}</td>
     </tr>
   `).join('');
-  items.forEach((it, idx) => applyRowTint(idx, it.actual_qty - it.system_qty));
+  list.forEach((it) => applyRowTint(it.product_id, it.actual_qty - it.system_qty));
 }
 
 function diffLabel(diff) {
@@ -87,17 +117,20 @@ function diffLabel(diff) {
   return `<span style="color:${color};">${diff > 0 ? '+' : ''}${diff}</span>`;
 }
 
-function applyRowTint(idx, diff) {
-  const row = document.getElementById(`row_${idx}`);
+function applyRowTint(productId, diff) {
+  const row = document.getElementById(`row_${productId}`);
   if (!row) return;
   row.style.background = diff === 0 ? '' : (diff > 0 ? 'rgba(79,143,247,0.08)' : 'rgba(196,69,54,0.08)');
 }
 
-function updateActual(idx, value) {
-  items[idx].actual_qty = parseInt(value || '0', 10);
-  const diff = items[idx].actual_qty - items[idx].system_qty;
-  document.getElementById(`diff_${idx}`).innerHTML = diffLabel(diff);
-  applyRowTint(idx, diff);
+function updateActual(productId, value) {
+  const item = items.find(it => it.product_id === productId);
+  if (!item) return;
+  item.actual_qty = parseInt(value || '0', 10);
+  const diff = item.actual_qty - item.system_qty;
+  const diffEl = document.getElementById(`diff_${productId}`);
+  if (diffEl) diffEl.innerHTML = diffLabel(diff);
+  applyRowTint(productId, diff);
   updateStats();
 }
 
@@ -121,6 +154,86 @@ function exportCsv() {
   const storeId = document.getElementById('storeSelect').value;
   if (!storeId) { toast('매장을 선택해주세요.', true, '⚠️'); return; }
   window.location.href = `/api/stocktake/export?store_id=${storeId}`;
+}
+
+// ---------- CSV 파싱 (쉼표/따옴표 처리) ----------
+function parseCsvText(text) {
+  // BOM 제거
+  text = text.replace(/^\uFEFF/, '');
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else { inQuotes = false; }
+      } else {
+        field += c;
+      }
+    } else {
+      if (c === '"') { inQuotes = true; }
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else if (c === '\r') { /* skip, \n이 뒤따름 */ }
+      else { field += c; }
+    }
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.length > 0 && !(r.length === 1 && r[0] === ''));
+}
+
+async function uploadCsv() {
+  const fileInput = document.getElementById('uploadInput');
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) { toast('업로드할 실사표 CSV 파일을 선택해주세요.', true, '⚠️'); return; }
+  if (!items || items.length === 0) { toast('먼저 매장을 선택해주세요.', true, '⚠️'); return; }
+  try {
+    const text = await file.text();
+    const rows = parseCsvText(text);
+    if (rows.length === 0) { toast('파일 내용을 읽을 수 없습니다.', true, '⚠️'); return; }
+
+    // 헤더 확인: 카테고리, 브랜드, 제품명, 갯수
+    let header = rows[0].map(h => h.trim());
+    let nameIdx = header.indexOf('제품명');
+    let qtyIdx = header.indexOf('갯수');
+    let dataRows = rows.slice(1);
+    if (nameIdx === -1 || qtyIdx === -1) {
+      // 헤더가 없는 파일일 경우, 기본 내보내기 형식(카테고리,브랜드,제품명,갯수)으로 간주
+      nameIdx = 2;
+      qtyIdx = 3;
+      dataRows = rows;
+    }
+
+    const qtyByName = {};
+    for (const r of dataRows) {
+      const name = (r[nameIdx] || '').trim();
+      const qty = parseInt((r[qtyIdx] || '0').trim(), 10);
+      if (!name || isNaN(qty)) continue;
+      qtyByName[name] = qty;
+    }
+
+    let matched = 0;
+    let unmatched = 0;
+    for (const it of items) {
+      if (Object.prototype.hasOwnProperty.call(qtyByName, it.product_name)) {
+        it.actual_qty = qtyByName[it.product_name];
+        matched++;
+      } else {
+        unmatched++;
+      }
+    }
+
+    updateStats();
+    render();
+    toast(`업로드 적용 완료: ${matched}개 반영, ${Object.keys(qtyByName).length - matched >= 0 ? unmatched + '개 항목은 파일에 없어 그대로 둠' : ''}`, false, '📥');
+    fileInput.value = '';
+  } catch (e) {
+    console.error('실사표 업로드 오류:', e);
+    toast('파일을 읽는 중 오류가 발생했습니다.', true, '⚠️');
+  }
 }
 
 (async () => {
