@@ -672,8 +672,8 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
 /* ---------- 인수인계 메모장 (독립 플로팅 위젯) ---------- */
 .memo-widget {
   position: fixed;
-  bottom: 30px;
-  left: 30px;
+  top: 30px;
+  right: 30px;
   z-index: 998;
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -694,7 +694,7 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
   overflow: auto;
   height: 220px;
 }
-.memo-widget.memo-widget-large { width: 420px; height: 380px; }
+.memo-widget.memo-widget-large { height: 480px; }
 .memo-widget-header {
   display: flex;
   justify-content: space-between;

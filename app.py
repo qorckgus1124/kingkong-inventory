@@ -27,6 +27,22 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 
 
+# Flask 3.0 기본 JSON 인코더는 datetime을 "Tue, 28 Jul 2026 09:15:00 GMT" 같은
+# HTTP 날짜 형식으로 직렬화한다. 프론트엔드에서는 "2026-07-28" 형식을 기대하므로
+# ISO 8601 형식("2026-07-28T09:15:00")으로 직렬화하도록 바꾼다.
+from flask.json.provider import DefaultJSONProvider
+import datetime as _dt
+
+class _ISODateJSONProvider(DefaultJSONProvider):
+    @staticmethod
+    def default(o):
+        if isinstance(o, (_dt.datetime, _dt.date)):
+            return o.isoformat()
+        return DefaultJSONProvider.default(o)
+
+app.json = _ISODateJSONProvider(app)
+
+
 # ---------------------------------------------------------------------------
 # DB 연결 (PostgreSQL) - 커넥션 풀 사용
 # ---------------------------------------------------------------------------
@@ -3393,7 +3409,7 @@ def api_export_products(store_id):
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             LEFT JOIN store_stock ss ON ss.product_id = p.id
-            GROUP BY p.id
+            GROUP BY p.id, p.name, b.name, c.name, p.cost_price, p.card_cost_price, p.sale_price, p.is_active
             ORDER BY p.id
         """)
     else:
@@ -4352,11 +4368,11 @@ def api_bestsellers():
             params.append(store_id)
 
         sql += """
-    GROUP BY p.id, b.name, b.color
-    HAVING COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) > 0
-    ORDER BY sold_qty DESC
-    LIMIT 10
-"""
+            GROUP BY p.id, b.name, b.color
+            HAVING COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) > 0
+            ORDER BY sold_qty DESC
+            LIMIT 10
+        """
 
         cur.execute(sql, params)
         rows = cur.fetchall()
