@@ -67,20 +67,25 @@
 
 <!-- 플로팅 패널 -->
 <div class="floating-panel" id="floatingPanel">
-  <div class="floating-panel-header">
+  <div class="floating-panel-header" onclick="toggleFloatingPanel()">
     <span class="fp-title">📊 오늘의 매출</span>
-    <span class="fp-close" onclick="document.getElementById('floatingPanel').style.display='none'">✕</span>
+    <span style="display:flex; align-items:center; gap:8px;">
+      <span class="handover-toggle" id="floatingPanelToggle">▲</span>
+      <span class="fp-close" onclick="event.stopPropagation(); document.getElementById('floatingPanel').style.display='none'">✕</span>
+    </span>
   </div>
-  <div class="fp-revenue" id="fpRevenue">-</div>
-  <div class="fp-divider"></div>
-  <div id="fpTargetInfo" style="font-size:12px; color:var(--text-light); padding:4px 0;">
-    <div>🎯 목표: <span id="fpTargetAmount">-</span></div>
-    <div>📈 진행: <span id="fpTargetProgress">-</span></div>
-    <div>🔥 남은 금액: <span id="fpRemaining">-</span></div>
-    <div>📅 일평균 필요: <span id="fpDailyNeeded">-</span></div>
+  <div class="fp-body" id="floatingPanelBody">
+    <div class="fp-revenue" id="fpRevenue">-</div>
+    <div class="fp-divider"></div>
+    <div id="fpTargetInfo" style="font-size:12px; color:var(--text-light); padding:4px 0;">
+      <div>🎯 목표: <span id="fpTargetAmount">-</span></div>
+      <div>📈 진행: <span id="fpTargetProgress">-</span></div>
+      <div>🔥 남은 금액: <span id="fpRemaining">-</span></div>
+      <div>📅 일평균 필요: <span id="fpDailyNeeded">-</span></div>
+    </div>
+    <div class="fp-divider"></div>
+    <button class="fp-btn" onclick="location.href='/transactions'">➕ 간편 입출고 등록</button>
   </div>
-  <div class="fp-divider"></div>
-  <button class="fp-btn" onclick="location.href='/transactions'">➕ 간편 입출고 등록</button>
 </div>
 
 <!-- 인수인계 메모장: 별도 플로팅 위젯 (크기 조절 가능) -->
@@ -195,12 +200,13 @@ document.addEventListener('DOMContentLoaded', function() {
   btn.textContent = isDark ? '☀️ 라이트 모드' : '🌙 다크 모드';
 
   loadFloatingRevenue();
+  restoreFloatingPanelState();
   loadHandoverMemo();
-  restoreMemoWidgetState();
-  initMemoResizeObserver();
   if (localStorage.getItem('memoWidgetLarge') === 'true') {
     document.getElementById('memoWidget').classList.add('memo-widget-large');
   }
+  restoreMemoWidgetState();
+  initMemoResizeObserver();
   loadGlobalStoreSelect();
 });
 
@@ -246,6 +252,9 @@ function toggleMemoWidget() {
     body.style.display = 'none';
     toggle.textContent = '▼';
     widget.classList.remove('memo-widget-open');
+    // 접힌 상태에서는 이전에 드래그/토글로 고정된 인라인 높이를 지워서
+    // 헤더만 남기고 완전히 접히도록 한다 (memo-widget-large가 켜져 있어도 함께 접힘).
+    widget.style.height = '';
     localStorage.setItem('memoWidgetOpen', 'false');
   }
 }
@@ -284,6 +293,9 @@ function toggleMemoSize() {
   const widget = document.getElementById('memoWidget');
   const isBig = widget.classList.toggle('memo-widget-large');
   localStorage.setItem('memoWidgetLarge', isBig ? 'true' : 'false');
+  // 이전에 드래그로 고정된 인라인 height가 남아있으면 large/normal 전환이
+  // 반영되지 않으므로, 여기서 지워서 CSS 클래스 높이가 즉시 적용되게 한다.
+  widget.style.height = '';
 }
 
 let _memoResizeObserver = null;
@@ -291,6 +303,8 @@ function initMemoResizeObserver() {
   const widget = document.getElementById('memoWidget');
   if (!widget || typeof ResizeObserver === 'undefined') return;
   _memoResizeObserver = new ResizeObserver(entries => {
+    const body = document.getElementById('memoWidgetBody');
+    if (!body || body.style.display === 'none') return; // 접힌 상태의 크기는 저장하지 않음
     for (const entry of entries) {
       const { width, height } = entry.contentRect;
       if (width > 0 && height > 0) {
@@ -337,6 +351,23 @@ async function saveHandoverMemo() {
 // ==============================================================
 // 플로팅 패널 매출
 // ==============================================================
+function toggleFloatingPanel() {
+  const body = document.getElementById('floatingPanelBody');
+  const toggle = document.getElementById('floatingPanelToggle');
+  const folded = body.style.display !== 'none';
+  body.style.display = folded ? 'none' : '';
+  toggle.textContent = folded ? '▼' : '▲';
+  localStorage.setItem('floatingPanelFolded', folded ? 'true' : 'false');
+}
+
+function restoreFloatingPanelState() {
+  const isFolded = localStorage.getItem('floatingPanelFolded') === 'true';
+  if (isFolded) {
+    document.getElementById('floatingPanelBody').style.display = 'none';
+    document.getElementById('floatingPanelToggle').textContent = '▼';
+  }
+}
+
 async function loadFloatingRevenue() {
   try {
     const data = await api('/api/dashboard');

@@ -886,7 +886,7 @@ function renderTransferGrid() {
   }
 
   if (q) {
-    list = list.filter(p => p.name.toLowerCase().includes(q));
+    list = list.filter(p => (((p.brand_name || '') + ' ' + (p.name || '')).toLowerCase()).includes(q));
   }
 
   if (list.length === 0) {

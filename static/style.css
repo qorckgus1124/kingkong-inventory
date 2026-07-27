@@ -641,13 +641,20 @@ body.dark-mode .cat-tab.active { background: var(--accent); color: #fff; border-
   min-width: 200px;
   max-width: 240px;
   backdrop-filter: blur(4px);
+  transform: translateZ(0);
+  will-change: transform;
+  contain: layout style;
 }
 .floating-panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
 }
+.floating-panel-header:hover { background-color: var(--hover-bg); }
 .floating-panel .fp-title { font-weight: 600; font-size: 13px; color: var(--text); }
 .floating-panel .fp-close { cursor: pointer; color: var(--text-light); font-size: 16px; line-height: 1; padding: 0 4px; }
 .floating-panel .fp-close:hover { color: var(--text); }
@@ -687,14 +694,17 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
   max-width: 90vw;
   max-height: 80vh;
   display: flex;
+  transform: translateZ(0);
+  will-change: transform;
   flex-direction: column;
 }
 .memo-widget.memo-widget-open {
   resize: both;
   overflow: auto;
   height: 220px;
+  transition: height 0.2s ease;
 }
-.memo-widget.memo-widget-large { height: 480px; }
+.memo-widget.memo-widget-open.memo-widget-large { height: 480px; }
 .memo-widget-header {
   display: flex;
   justify-content: space-between;
@@ -890,7 +900,7 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
     max-width: none;
   }
   .memo-widget.memo-widget-open { resize: none; height: 160px; }
-  .memo-widget.memo-widget-large { height: 320px; }
+  .memo-widget.memo-widget-open.memo-widget-large { height: 320px; }
 
   .empty { padding: 40px 16px; font-size: 14px; }
   .empty .empty-icon { font-size: 40px; }

@@ -1106,7 +1106,8 @@ def api_products():
             if not show_inactive:
                 sql += " AND p.is_active=1"
             if q:
-                sql += " AND (p.name LIKE %s OR b.name LIKE %s)"
+                sql += " AND (p.name ILIKE %s OR b.name ILIKE %s OR (COALESCE(b.name, '') || ' ' || p.name) ILIKE %s)"
+                params.append(f"%{q}%")
                 params.append(f"%{q}%")
                 params.append(f"%{q}%")
             if category_id:
@@ -1233,9 +1234,9 @@ def api_products_search():
             SELECT p.*, b.name as brand_name, b.color as brand_color
             FROM products p
             LEFT JOIN brands b ON b.id = p.brand_id
-            WHERE p.is_active = 1 AND (p.name LIKE %s OR b.name LIKE %s)
+            WHERE p.is_active = 1 AND (p.name ILIKE %s OR b.name ILIKE %s OR (COALESCE(b.name, '') || ' ' || p.name) ILIKE %s)
             ORDER BY p.name LIMIT 15
-        """, (f"%{q}%", f"%{q}%"))
+        """, (f"%{q}%", f"%{q}%", f"%{q}%"))
         rows = cur.fetchall()
         result = []
         for r in rows:
@@ -2637,7 +2638,9 @@ def api_forecast():
             main_where.append("p.brand_id = %s")
             main_params.append(int(brand_id))
         if search_q:
-            main_where.append("p.name LIKE %s")
+            main_where.append("(p.name ILIKE %s OR b.name ILIKE %s OR (COALESCE(b.name, '') || ' ' || p.name) ILIKE %s)")
+            main_params.append(f"%{search_q}%")
+            main_params.append(f"%{search_q}%")
             main_params.append(f"%{search_q}%")
 
         main_sql = f"""
@@ -2661,7 +2664,7 @@ def api_forecast():
         """
 
         params = main_params + stock_params + sale_params + [limit, offset]
-        count_sql = f"SELECT COUNT(*) as total FROM products p WHERE {" AND ".join(main_where)}"
+        count_sql = f"SELECT COUNT(*) as total FROM products p LEFT JOIN brands b ON b.id = p.brand_id WHERE {" AND ".join(main_where)}"
         cur.execute(count_sql, main_params)
         total_row = cur.fetchone()
         total = total_row["total"] if total_row else 0
