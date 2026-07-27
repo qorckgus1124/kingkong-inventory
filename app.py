@@ -27,6 +27,17 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 
 
+def normalize_search(text):
+    """검색어/대상 문자열의 공백을 모두 제거해 정규화한다.
+    예) "드 알" -> "드알" / "파드 알로에그레이프" -> "파드알로에그레이프"
+    이렇게 하면 검색어의 각 글자가 서로 붙어서(연속으로) 등장하는 제품만
+    찾게 되어, 단어 경계를 넘나드는 부분 일치(예: "파드" + "알로에")는 잡아내고
+    이름 안에서 멀리 떨어진 글자들이 우연히 둘 다 포함된 경우(예: "레드" ...
+    "알로에")는 걸러낸다.
+    """
+    return re.sub(r"\s+", "", text or "")
+
+
 # Flask 3.0 기본 JSON 인코더는 datetime을 "Tue, 28 Jul 2026 09:15:00 GMT" 같은
 # HTTP 날짜 형식으로 직렬화한다. 프론트엔드에서는 "2026-07-28" 형식을 기대하므로
 # ISO 8601 형식("2026-07-28T09:15:00")으로 직렬화하도록 바꾼다.
@@ -740,8 +751,8 @@ def api_brands():
                 conditions.append("b.status = %s")
                 params.append(status_filter)
             if search:
-                conditions.append("b.name LIKE %s")
-                params.append(f"%{search}%")
+                conditions.append("REPLACE(b.name, ' ', '') ILIKE %s")
+                params.append(f"%{normalize_search(search)}%")
             if conditions:
                 sql += " WHERE " + " AND ".join(conditions)
             sql += " ORDER BY b.name"
@@ -1106,10 +1117,15 @@ def api_products():
             if not show_inactive:
                 sql += " AND p.is_active=1"
             if q:
-                sql += " AND (p.name ILIKE %s OR b.name ILIKE %s OR (COALESCE(b.name, '') || ' ' || p.name) ILIKE %s)"
-                params.append(f"%{q}%")
-                params.append(f"%{q}%")
-                params.append(f"%{q}%")
+                q_norm = normalize_search(q)
+                sql += """ AND (
+                    REPLACE(p.name, ' ', '') ILIKE %s
+                    OR REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s
+                    OR REPLACE(COALESCE(b.name, '') || p.name, ' ', '') ILIKE %s
+                )"""
+                params.append(f"%{q_norm}%")
+                params.append(f"%{q_norm}%")
+                params.append(f"%{q_norm}%")
             if category_id:
                 sql += " AND p.category_id = %s"
                 params.append(category_id)
@@ -1229,14 +1245,19 @@ def api_products_search():
     store_id = request.args.get("store_id")
     if not q:
         return jsonify([])
+    q_norm = normalize_search(q)
     try:
         cur.execute("""
             SELECT p.*, b.name as brand_name, b.color as brand_color
             FROM products p
             LEFT JOIN brands b ON b.id = p.brand_id
-            WHERE p.is_active = 1 AND (p.name ILIKE %s OR b.name ILIKE %s OR (COALESCE(b.name, '') || ' ' || p.name) ILIKE %s)
+            WHERE p.is_active = 1 AND (
+                REPLACE(p.name, ' ', '') ILIKE %s
+                OR REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s
+                OR REPLACE(COALESCE(b.name, '') || p.name, ' ', '') ILIKE %s
+            )
             ORDER BY p.name LIMIT 15
-        """, (f"%{q}%", f"%{q}%", f"%{q}%"))
+        """, (f"%{q_norm}%", f"%{q_norm}%", f"%{q_norm}%"))
         rows = cur.fetchall()
         result = []
         for r in rows:
@@ -2638,10 +2659,15 @@ def api_forecast():
             main_where.append("p.brand_id = %s")
             main_params.append(int(brand_id))
         if search_q:
-            main_where.append("(p.name ILIKE %s OR b.name ILIKE %s OR (COALESCE(b.name, '') || ' ' || p.name) ILIKE %s)")
-            main_params.append(f"%{search_q}%")
-            main_params.append(f"%{search_q}%")
-            main_params.append(f"%{search_q}%")
+            search_q_norm = normalize_search(search_q)
+            main_where.append("""(
+                REPLACE(p.name, ' ', '') ILIKE %s
+                OR REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s
+                OR REPLACE(COALESCE(b.name, '') || p.name, ' ', '') ILIKE %s
+            )""")
+            main_params.append(f"%{search_q_norm}%")
+            main_params.append(f"%{search_q_norm}%")
+            main_params.append(f"%{search_q_norm}%")
 
         main_sql = f"""
             SELECT

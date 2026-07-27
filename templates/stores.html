@@ -877,7 +877,7 @@ async function loadTransferProducts() {
 
 function renderTransferGrid() {
   const grid = document.getElementById('transferProductGrid');
-  const q = transferSearchQuery.toLowerCase();
+  const q = transferSearchQuery;
   let list = transferProducts;
 
   if (!list || list.length === 0) {
@@ -886,7 +886,7 @@ function renderTransferGrid() {
   }
 
   if (q) {
-    list = list.filter(p => (((p.brand_name || '') + ' ' + (p.name || '')).toLowerCase()).includes(q));
+    list = list.filter(p => matchesSearch((p.brand_name || '') + (p.name || ''), q));
   }
 
   if (list.length === 0) {

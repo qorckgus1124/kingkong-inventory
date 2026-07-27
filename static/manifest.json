@@ -1,7 +1,7 @@
 {
-  "name": "재고·판매관리",
-  "short_name": "재고관리",
-  "description": "사내 재고 및 판매 관리 프로그램",
+  "name": "킹콩재고 관리",
+  "short_name": "킹콩재고",
+  "description": "킹콩 전자담배 재고관리 사이트",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FBFBFA",
