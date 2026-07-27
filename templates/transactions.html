@@ -471,7 +471,27 @@ function updateSelectedUI() {
   document.getElementById('batchStatusBtn').disabled = count === 0;
 }
 
-// ---------- 삭제 ----------
+// ---------- 삭제 (행 하나 바로 삭제, 체크박스 선택 불필요) ----------
+async function deleteSingleTransaction(id) {
+  if (!confirm('이 판매 내역을 영구 삭제하시겠습니까? (재고는 복구되고, 기록은 완전히 사라져 복구할 수 없습니다)')) return;
+  try {
+    const result = await api('/api/transactions/cancel_batch', {
+      method: 'POST',
+      body: JSON.stringify({ ids: [id] })
+    });
+    if (result.cancelled > 0) {
+      toast('✅ 삭제되었습니다.', false, '✅');
+      load();
+    } else {
+      toast('삭제할 수 없는 항목입니다.', true, '⚠️');
+    }
+  } catch (e) {
+    console.error('삭제 오류:', e);
+    toast('삭제 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ---------- 삭제 (체크박스로 여러 개 선택 후 일괄 삭제) ----------
 async function deleteSelected() {
   if (selectedIds.size === 0) {
     toast('삭제할 항목을 선택해주세요.', true, '⚠️');
@@ -585,12 +605,15 @@ async function load() {
         const editableTypes = ['입고', '판매출고', '반품', '폐기', '조정', '실사조정', '이동출고', '이동입고', '선결예약'];
         const isEditable = !isCancelled && editableTypes.includes(t.type);
         const editBtn = isEditable ? `<button onclick="openEditModal(${t.id})" style="margin-right:4px;">✏️ 수정</button>` : '';
+        const deleteBtn = (!isCancelled && t.type === '판매출고')
+          ? `<button class="danger" title="바로 삭제 (재고 복구 후 영구삭제)" onclick="deleteSingleTransaction(${t.id})">🗑️ 삭제</button>`
+          : '';
         if (isCancelled) {
           actionCell = editBtn + '<span style="font-size:11px; color:var(--text-light);">취소됨</span>';
         } else if (cancellable) {
-          actionCell = editBtn + `<button class="danger" onclick="undoTransaction(${t.id})">취소</button>`;
+          actionCell = editBtn + `<button class="danger" onclick="undoTransaction(${t.id})">취소</button>` + deleteBtn;
         } else {
-          actionCell = editBtn + (editBtn ? '' : '<span style="font-size:11px; color:var(--text-light);">-</span>');
+          actionCell = editBtn + deleteBtn + (editBtn || deleteBtn ? '' : '<span style="font-size:11px; color:var(--text-light);">-</span>');
         }
         return `
           <tr>

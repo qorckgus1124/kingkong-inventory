@@ -2049,9 +2049,12 @@ def api_daily_sales_summary():
 
         sections = []
 
-        # ---- 플릭(일회용) : 니코틴 %로 그룹화 ----
-        flik_rows = _brand_sales_rows(cur, store_id, date_str, ["플릭"])
+        # ---- 플릭(일회용, DB상 브랜드명은 "플릭 슬림") : 니코틴 %로 그룹화 ----
+        flik_rows = _brand_sales_rows(cur, store_id, date_str, ["플릭 슬림"])
         flik_buckets = _bucket_by_percent(flik_rows)
+        # 플릭은 0%/1% 두 종류만 존재 → 오늘 판매가 없어도 0개로 항상 표시
+        for _pct in ["0%", "1%"]:
+            flik_buckets.setdefault(_pct, 0)
         sections.append({
             "key": "flik",
             "title": f"[{date_label} {store_name} 플릭]",
@@ -4336,11 +4339,11 @@ def api_bestsellers():
             params.append(store_id)
 
         sql += """
-    GROUP BY p.id, b.name, b.color
-    HAVING COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) > 0
-    ORDER BY sold_qty DESC
-    LIMIT 10
-"""
+            GROUP BY p.id
+            HAVING COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) > 0
+            ORDER BY sold_qty DESC
+            LIMIT 10
+        """
 
         cur.execute(sql, params)
         rows = cur.fetchall()
