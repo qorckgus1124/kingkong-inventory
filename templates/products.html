@@ -76,7 +76,7 @@
 
 <!-- 제품 목록 툴바 -->
 <div class="toolbar">
-  <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" oninput="debouncedLoad()">
+  <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="debouncedLoad()">
   <button onclick="loadAll()" class="primary">📋 전체 보기</button>
   <select id="filterCategory" onchange="load()"><option value="">전체 카테고리</option></select>
   <select id="filterBrand" onchange="load()"><option value="">전체 브랜드</option></select>

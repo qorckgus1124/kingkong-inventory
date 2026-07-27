@@ -669,21 +669,65 @@ body.dark-mode .cat-tab.active { background: var(--accent); color: #fff; border-
 .floating-panel .fp-btn:hover { background: #3a7bd5; transform: scale(1.02); }
 body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
 
-/* ---------- 인수인계 메모장 ---------- */
-.handover-section { margin: 4px 0; }
-.handover-header {
+/* ---------- 인수인계 메모장 (독립 플로팅 위젯) ---------- */
+.memo-widget {
+  position: fixed;
+  bottom: 30px;
+  left: 30px;
+  z-index: 998;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  backdrop-filter: blur(4px);
+  width: 260px;
+  min-width: 220px;
+  min-height: 44px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.memo-widget.memo-widget-open {
+  resize: both;
+  overflow: auto;
+  height: 220px;
+}
+.memo-widget.memo-widget-large { width: 420px; height: 380px; }
+.memo-widget-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 0;
   cursor: pointer;
   user-select: none;
   border-radius: 4px;
+  flex-shrink: 0;
 }
-.handover-header:hover { background-color: var(--hover-bg); }
-.handover-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.handover-toggle { font-size: 14px; color: var(--text-light); }
-.handover-body { margin-top: 4px; animation: fadeSlide 0.25s ease; }
+.memo-widget-header:hover { background-color: var(--hover-bg); }
+.memo-size-toggle { font-size: 13px; color: var(--text-light); cursor: pointer; padding: 0 2px; }
+.memo-size-toggle:hover { color: var(--text); }
+.memo-widget-body {
+  margin-top: 6px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  animation: fadeSlide 0.25s ease;
+}
+.memo-widget-body textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 60px;
+  resize: none;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+}
 @keyframes fadeSlide {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
@@ -837,6 +881,16 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
 
   .floating-panel { display: none !important; }
   .mobile-bottom-nav { display: flex; }
+
+  .memo-widget {
+    left: 10px;
+    right: 10px;
+    bottom: 70px; /* 하단 네비게이션과 겹치지 않도록 */
+    width: auto;
+    max-width: none;
+  }
+  .memo-widget.memo-widget-open { resize: none; height: 160px; }
+  .memo-widget.memo-widget-large { height: 320px; }
 
   .empty { padding: 40px 16px; font-size: 14px; }
   .empty .empty-icon { font-size: 40px; }

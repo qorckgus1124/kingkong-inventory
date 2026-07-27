@@ -185,6 +185,73 @@
 </div>
 
 <!-- ============================================================ -->
+<!-- 8-1. 입출고 수정 모달 -->
+<!-- ============================================================ -->
+<div class="modal-overlay" id="editTransModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:20px; width:min(420px, 92vw); max-height:90vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 style="margin:0; color:var(--text);">✏️ 입출고 내역 수정</h3>
+      <span style="cursor:pointer; font-size:18px; color:var(--text-light);" onclick="closeEditModal()">✕</span>
+    </div>
+    <input type="hidden" id="editTransId">
+    <div style="font-size:13px; color:var(--text-light); margin-bottom:10px;" id="editTransProductName"></div>
+    <div class="form-field" style="margin-bottom:10px;">
+      <label>매장</label>
+      <select id="editTransStore" style="width:100%;"></select>
+    </div>
+    <div class="form-field" style="margin-bottom:10px;">
+      <label>유형</label>
+      <select id="editTransType" style="width:100%;">
+        <option value="입고">입고</option>
+        <option value="판매출고">판매출고</option>
+        <option value="반품">반품</option>
+        <option value="폐기">폐기</option>
+        <option value="조정">조정</option>
+        <option value="실사조정">실사조정</option>
+        <option value="이동출고">이동출고</option>
+        <option value="이동입고">이동입고</option>
+        <option value="선결예약">선결예약</option>
+      </select>
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>수량</label>
+        <input type="number" id="editTransQty" min="1" style="width:100%;">
+      </div>
+      <div class="form-field" style="flex:1;">
+        <label>판매가(단가)</label>
+        <input type="number" id="editTransPrice" min="0" style="width:100%;">
+      </div>
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>날짜</label>
+        <input type="date" id="editTransDate" style="width:100%;">
+      </div>
+      <div class="form-field" style="flex:1;">
+        <label>시간</label>
+        <input type="time" id="editTransTime" style="width:100%;">
+      </div>
+    </div>
+    <div class="form-field" style="margin-bottom:10px;">
+      <label>담당자</label>
+      <input type="text" id="editTransStaff" style="width:100%;">
+    </div>
+    <div class="form-field" style="margin-bottom:14px;">
+      <label>메모</label>
+      <input type="text" id="editTransMemo" style="width:100%;">
+    </div>
+    <div style="font-size:11px; color:var(--text-light); margin-bottom:14px;">
+      💡 재고 수량은 저장 시 기존 내역의 영향을 되돌리고 수정된 값으로 다시 반영됩니다.
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="closeEditModal()">취소</button>
+      <button class="primary" onclick="saveEditTransaction()">💾 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
 <!-- 9. JavaScript -->
 <!-- ============================================================ -->
 <script>
@@ -196,6 +263,7 @@ let currentPage = 1;
 let totalPages = 1;
 let totalItems = 0;
 let selectedIds = new Set();
+let currentRows = [];
 
 const TYPE_CLASS = {
   '입고': 'type-in', '입고취소': 'type-in', '이동입고': 'type-in',
@@ -494,6 +562,7 @@ async function load() {
     }
 
     const rows = data.items || [];
+    currentRows = rows;
     totalItems = data.total || 0;
     totalPages = Math.ceil(totalItems / limit) || 1;
     if (currentPage > totalPages) currentPage = totalPages;
@@ -513,17 +582,20 @@ async function load() {
         const cancellable = ['입고', '판매출고', '반품', '폐기'].includes(t.type);
         const isCancelled = t.is_cancelled || false;
         let actionCell = '';
+        const editableTypes = ['입고', '판매출고', '반품', '폐기', '조정', '실사조정', '이동출고', '이동입고', '선결예약'];
+        const isEditable = !isCancelled && editableTypes.includes(t.type);
+        const editBtn = isEditable ? `<button onclick="openEditModal(${t.id})" style="margin-right:4px;">✏️ 수정</button>` : '';
         if (isCancelled) {
-          actionCell = '<span style="font-size:11px; color:var(--text-light);">취소됨</span>';
+          actionCell = editBtn + '<span style="font-size:11px; color:var(--text-light);">취소됨</span>';
         } else if (cancellable) {
-          actionCell = `<button class="danger" onclick="undoTransaction(${t.id})">취소</button>`;
+          actionCell = editBtn + `<button class="danger" onclick="undoTransaction(${t.id})">취소</button>`;
         } else {
-          actionCell = '<span style="font-size:11px; color:var(--text-light);">-</span>';
+          actionCell = editBtn + (editBtn ? '' : '<span style="font-size:11px; color:var(--text-light);">-</span>');
         }
         return `
           <tr>
             <td><input type="checkbox" class="row-checkbox" value="${t.id}" onchange="toggleCheckbox(${t.id})"></td>
-            <td>${t.date_time}</td>
+            <td>${fmtDateTime(t.date_time)}</td>
             <td>${escapeHtml(t.product_name)}</td>
             <td>${t.brand_name ? `<span class="brand-tag" style="background:${t.brand_color || '#8a8f98'};">${escapeHtml(t.brand_name)}</span>` : '-'}</td>
             <td>${escapeHtml(t.store_name)}</td>
@@ -549,6 +621,69 @@ async function load() {
     document.getElementById('totalCount').textContent = '0';
     document.getElementById('pageInfo').textContent = '0 / 0';
     document.getElementById('pageInfoBottom').textContent = '0 / 0';
+  }
+}
+
+// ================================================================
+// ✏️ 입출고 내역 수정
+// ================================================================
+function openEditModal(id) {
+  const t = currentRows.find(r => r.id === id);
+  if (!t) { toast('내역을 찾을 수 없습니다.', true, '⚠️'); return; }
+
+  document.getElementById('editTransId').value = t.id;
+  document.getElementById('editTransProductName').textContent = `${t.product_name} (${t.store_name})`;
+
+  const storeSel = document.getElementById('editTransStore');
+  storeSel.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  storeSel.value = t.store_id;
+
+  document.getElementById('editTransType').value = t.type;
+  document.getElementById('editTransQty').value = t.quantity;
+  document.getElementById('editTransPrice').value = t.unit_price ?? '';
+  document.getElementById('editTransStaff').value = t.staff || '';
+  document.getElementById('editTransMemo').value = t.memo || '';
+
+  const m = String(t.date_time || '').match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
+  document.getElementById('editTransDate').value = m ? m[1] : (String(t.date_time || '').slice(0, 10));
+  document.getElementById('editTransTime').value = m ? m[2] : '00:00';
+
+  document.getElementById('editTransModal').style.display = 'flex';
+}
+
+function closeEditModal() {
+  document.getElementById('editTransModal').style.display = 'none';
+}
+
+async function saveEditTransaction() {
+  const id = document.getElementById('editTransId').value;
+  const dateVal = document.getElementById('editTransDate').value;
+  const timeVal = document.getElementById('editTransTime').value || '00:00';
+  const quantity = parseInt(document.getElementById('editTransQty').value, 10);
+
+  if (!dateVal || !quantity || quantity <= 0) {
+    toast('날짜와 수량(1 이상)을 확인해주세요.', true, '⚠️');
+    return;
+  }
+
+  const payload = {
+    store_id: document.getElementById('editTransStore').value,
+    type: document.getElementById('editTransType').value,
+    quantity: quantity,
+    unit_price: document.getElementById('editTransPrice').value || null,
+    staff: document.getElementById('editTransStaff').value || '',
+    memo: document.getElementById('editTransMemo').value || null,
+    date_time: `${dateVal} ${timeVal}:00`
+  };
+
+  try {
+    await api(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    toast('입출고 내역이 수정되었습니다.', false, '✅');
+    closeEditModal();
+    load();
+  } catch (e) {
+    console.error('수정 오류:', e);
+    toast(e.message || '수정 중 오류가 발생했습니다.', true, '⚠️');
   }
 }
 

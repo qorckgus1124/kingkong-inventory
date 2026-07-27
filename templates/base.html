@@ -40,7 +40,7 @@
       <a class="nav-item {{ 'active' if active=='brands' else '' }}" href="/brands">🏷️ 브랜드 관리</a>
       <a class="nav-item {{ 'active' if active=='performance' else '' }}" href="/performance">📊 판매 실적</a>
       <a class="nav-item {{ 'active' if active=='statistics' else '' }}" href="/statistics">📈 매출 통계</a>
-      <a class="nav-item {{ 'active' if active=='daily_report' else '' }}" href="/daily_report">📋 금일 판매 목록</a>
+      <a class="nav-item {{ 'active' if active=='daily_report' else '' }}" href="/daily_report">📋 금일 보고 목록</a>
       <a class="nav-item {{ 'active' if active=='recommend_order' else '' }}" href="/recommend_order">📦 발주 추천</a>
       <a class="nav-item {{ 'active' if active=='forecast' else '' }}" href="/forecast">📊 출고 예측</a>
       <a class="nav-item {{ 'active' if active=='transfer' else '' }}" href="/transfer">🔄 재고 이동</a>
@@ -67,20 +67,6 @@
 
 <!-- 플로팅 패널 -->
 <div class="floating-panel" id="floatingPanel">
-  <div class="handover-section" id="handoverSection">
-    <div class="handover-header" onclick="toggleHandover()">
-      <span class="handover-title">📝 인수인계 메모장</span>
-      <span class="handover-toggle" id="handoverToggle">▼</span>
-    </div>
-    <div class="handover-body" id="handoverBody" style="display:none;">
-      <textarea id="handoverMemo" placeholder="인수인계 내용을 입력하세요..." style="width:100%; height:100px; resize:vertical; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text); font-family:inherit; font-size:13px; margin-bottom:6px;"></textarea>
-      <div style="display:flex; gap:6px; justify-content:flex-end;">
-        <button onclick="saveHandoverMemo()" style="padding:4px 12px; font-size:12px;">💾 저장</button>
-        <span id="handoverSaveStatus" style="font-size:11px; color:var(--text-light); align-self:center;"></span>
-      </div>
-    </div>
-  </div>
-  <div class="fp-divider"></div>
   <div class="floating-panel-header">
     <span class="fp-title">📊 오늘의 매출</span>
     <span class="fp-close" onclick="document.getElementById('floatingPanel').style.display='none'">✕</span>
@@ -95,6 +81,24 @@
   </div>
   <div class="fp-divider"></div>
   <button class="fp-btn" onclick="location.href='/transactions'">➕ 간편 입출고 등록</button>
+</div>
+
+<!-- 인수인계 메모장: 별도 플로팅 위젯 (크기 조절 가능) -->
+<div class="memo-widget" id="memoWidget">
+  <div class="memo-widget-header" onclick="toggleMemoWidget()">
+    <span class="fp-title">📝 인수인계 메모장</span>
+    <span style="display:flex; align-items:center; gap:8px;">
+      <span class="memo-size-toggle" id="memoSizeToggle" onclick="event.stopPropagation(); toggleMemoSize();" title="크게/작게">⤢</span>
+      <span class="handover-toggle" id="memoWidgetToggle">▼</span>
+    </span>
+  </div>
+  <div class="memo-widget-body" id="memoWidgetBody" style="display:none;">
+    <textarea id="handoverMemo" placeholder="인수인계 내용을 입력하세요..."></textarea>
+    <div style="display:flex; gap:6px; justify-content:flex-end; margin-top:6px;">
+      <button onclick="saveHandoverMemo()" style="padding:4px 12px; font-size:12px;">💾 저장</button>
+      <span id="handoverSaveStatus" style="font-size:11px; color:var(--text-light); align-self:center;"></span>
+    </div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -181,6 +185,8 @@ document.addEventListener('DOMContentLoaded', function() {
       if (typeof loadData === 'function') loadData();
       if (typeof loadRecommend === 'function') loadRecommend();
       if (typeof loadForecast === 'function') loadForecast();
+      if (typeof loadBestsellers === 'function' && typeof _bestsellerPeriod !== 'undefined') loadBestsellers(_bestsellerPeriod);
+      if (typeof loadDailySalesSummary === 'function') loadDailySalesSummary();
     });
   }
 
@@ -190,7 +196,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
   loadFloatingRevenue();
   loadHandoverMemo();
-  restoreHandoverState();
+  restoreMemoWidgetState();
+  initMemoResizeObserver();
+  if (localStorage.getItem('memoWidgetLarge') === 'true') {
+    document.getElementById('memoWidget').classList.add('memo-widget-large');
+  }
   loadGlobalStoreSelect();
 });
 
@@ -220,33 +230,75 @@ function syncAllStoreDropdowns(storeId) {
 }
 
 // ==============================================================
-// 인수인계 메모장
+// 인수인계 메모장 (별도 플로팅 위젯)
 // ==============================================================
-function toggleHandover() {
-  const body = document.getElementById('handoverBody');
-  const toggle = document.getElementById('handoverToggle');
+function toggleMemoWidget() {
+  const body = document.getElementById('memoWidgetBody');
+  const toggle = document.getElementById('memoWidgetToggle');
+  const widget = document.getElementById('memoWidget');
   if (body.style.display === 'none') {
     body.style.display = 'block';
     toggle.textContent = '▲';
-    localStorage.setItem('handoverOpen', 'true');
+    widget.classList.add('memo-widget-open');
+    localStorage.setItem('memoWidgetOpen', 'true');
+    restoreMemoWidgetSize();
   } else {
     body.style.display = 'none';
     toggle.textContent = '▼';
-    localStorage.setItem('handoverOpen', 'false');
+    widget.classList.remove('memo-widget-open');
+    localStorage.setItem('memoWidgetOpen', 'false');
   }
 }
 
-function restoreHandoverState() {
-  const isOpen = localStorage.getItem('handoverOpen') === 'true';
-  const body = document.getElementById('handoverBody');
-  const toggle = document.getElementById('handoverToggle');
+function restoreMemoWidgetState() {
+  const isOpen = localStorage.getItem('memoWidgetOpen') === 'true';
+  const body = document.getElementById('memoWidgetBody');
+  const toggle = document.getElementById('memoWidgetToggle');
+  const widget = document.getElementById('memoWidget');
   if (isOpen) {
     body.style.display = 'block';
     toggle.textContent = '▲';
+    widget.classList.add('memo-widget-open');
+    restoreMemoWidgetSize();
   } else {
     body.style.display = 'none';
     toggle.textContent = '▼';
   }
+}
+
+// 데스크톱: 저장된 가로/세로 크기를 복원한다 (마우스로 드래그해서 조절한 크기)
+function restoreMemoWidgetSize() {
+  const widget = document.getElementById('memoWidget');
+  const saved = localStorage.getItem('memoWidgetSize');
+  if (saved) {
+    try {
+      const { w, h } = JSON.parse(saved);
+      if (w) widget.style.width = w + 'px';
+      if (h) widget.style.height = h + 'px';
+    } catch (e) { /* ignore */ }
+  }
+}
+
+// 모바일 등 드래그 리사이즈가 어려운 환경을 위한 크게/작게 토글 버튼
+function toggleMemoSize() {
+  const widget = document.getElementById('memoWidget');
+  const isBig = widget.classList.toggle('memo-widget-large');
+  localStorage.setItem('memoWidgetLarge', isBig ? 'true' : 'false');
+}
+
+let _memoResizeObserver = null;
+function initMemoResizeObserver() {
+  const widget = document.getElementById('memoWidget');
+  if (!widget || typeof ResizeObserver === 'undefined') return;
+  _memoResizeObserver = new ResizeObserver(entries => {
+    for (const entry of entries) {
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) {
+        localStorage.setItem('memoWidgetSize', JSON.stringify({ w: Math.round(width), h: Math.round(height) }));
+      }
+    }
+  });
+  _memoResizeObserver.observe(widget);
 }
 
 async function loadHandoverMemo() {
@@ -254,6 +306,9 @@ async function loadHandoverMemo() {
     const data = await api('/api/settings');
     const memo = data.handover_memo || '';
     document.getElementById('handoverMemo').value = memo;
+    // 대시보드 하단 카드에도 동일한 내용을 표시한다.
+    const dashCard = document.getElementById('dashboardMemoContent');
+    if (dashCard) dashCard.textContent = memo || '작성된 인수인계 메모가 없습니다.';
   } catch (e) {
     console.error('메모 로드 오류:', e);
   }
@@ -270,6 +325,8 @@ async function saveHandoverMemo() {
     });
     status.textContent = '✅ 저장 완료';
     setTimeout(() => { status.textContent = ''; }, 2000);
+    const dashCard = document.getElementById('dashboardMemoContent');
+    if (dashCard) dashCard.textContent = memo || '작성된 인수인계 메모가 없습니다.';
   } catch (e) {
     console.error('메모 저장 오류:', e);
     status.textContent = '❌ 저장 실패';

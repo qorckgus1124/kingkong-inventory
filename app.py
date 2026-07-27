@@ -1526,6 +1526,79 @@ def api_transactions_post():
         print(f"❌ 입출고 등록 오류: {e}")
         return jsonify({"error": "등록 중 오류가 발생했습니다."}), 500
 
+_DECREASE_TYPES = {"판매출고", "반품", "폐기", "이동출고", "조정", "입고취소"}
+
+
+def _reverse_stock_raw(store_id, product_id, ttype, quantity):
+    """주어진 거래가 재고에 준 영향을 그대로 되돌린다 (검증 없이 원상복구용)."""
+    cur = g.cursor
+    sign = -1 if ttype in _DECREASE_TYPES else 1
+    # 원래 거래가 재고를 sign*quantity 만큼 바꿨으므로, 되돌리려면 반대로 적용한다.
+    cur.execute("UPDATE store_stock SET qty = qty - (%s) WHERE store_id=%s AND product_id=%s", (sign * quantity, store_id, product_id))
+
+
+@app.route("/api/transactions/<int:tid>", methods=["PUT"])
+def api_transaction_update(tid):
+    conn = get_db()
+    cur = g.cursor
+    cur.execute("SELECT * FROM stock_transactions WHERE id=%s", (tid,))
+    original = cur.fetchone()
+    if not original:
+        return jsonify({"error": "거래를 찾을 수 없습니다."}), 404
+
+    # 이미 취소되었거나, 다른 거래를 취소/되돌리기 한 기록 자체는 수정할 수 없다.
+    if original["type"] in ("판매취소", "입고취소"):
+        return jsonify({"error": "취소 기록은 수정할 수 없습니다."}), 400
+    cur.execute(
+        "SELECT id FROM stock_transactions WHERE ref_transaction_id=%s AND type IN ('입고취소', '판매취소')",
+        (tid,)
+    )
+    if cur.fetchone():
+        return jsonify({"error": "이미 취소된 거래는 수정할 수 없습니다. 먼저 취소를 해제해주세요."}), 400
+
+    data = request.get_json(force=True)
+    new_quantity = data.get("quantity", original["quantity"])
+    new_type = data.get("type", original["type"])
+    new_store_id = data.get("store_id", original["store_id"])
+    new_unit_price = data.get("unit_price", original["unit_price"])
+    new_unit_cost = data.get("unit_cost", original["unit_cost"])
+    new_staff = data.get("staff", original["staff"])
+    new_memo = data.get("memo", original["memo"])
+    new_date_time = data.get("date_time") or original["date_time"]
+
+    if new_type not in ["입고", "판매출고", "반품", "폐기", "조정", "실사조정", "이동출고", "이동입고", "선결예약"]:
+        return jsonify({"error": "이 유형은 수정할 수 없습니다."}), 400
+    try:
+        new_quantity = int(new_quantity)
+        assert new_quantity > 0
+    except (TypeError, ValueError, AssertionError):
+        return jsonify({"error": "수량은 1 이상의 숫자여야 합니다."}), 400
+
+    try:
+        # 1) 기존 거래가 재고에 미친 영향을 되돌린다.
+        _reverse_stock_raw(original["store_id"], original["product_id"], original["type"], original["quantity"])
+        # 2) 수정된 값으로 재고를 다시 반영한다. 재고 부족 등으로 실패하면 원래 상태로 롤백한다.
+        err = _apply_stock_delta(conn, new_store_id, original["product_id"], new_type, new_quantity)
+        if err:
+            conn.rollback()
+            return jsonify({"error": err}), 400
+
+        cur.execute(
+            """UPDATE stock_transactions
+               SET type=%s, store_id=%s, quantity=%s, unit_cost=%s, unit_price=%s,
+                   staff=%s, memo=%s, date_time=%s
+               WHERE id=%s""",
+            (new_type, new_store_id, new_quantity, new_unit_cost, new_unit_price,
+             new_staff, new_memo, new_date_time, tid)
+        )
+        conn.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ 거래 수정 오류: {e}")
+        return jsonify({"error": "수정 중 오류가 발생했습니다."}), 500
+
+
 @app.route("/api/transactions/<int:tid>/cancel", methods=["POST"])
 def api_transaction_cancel(tid):
     conn = get_db()
@@ -1908,6 +1981,145 @@ def api_movements():
 
 
 # ---------------------------------------------------------------------------
+# API - 금일 보고 목록 (매장별 브랜드 그룹 판매 집계)
+# ---------------------------------------------------------------------------
+
+def _brand_sales_rows(cur, store_id, date_str, brand_names):
+    """지정한 브랜드(들)의 특정 매장/날짜 순 판매 수량(제품명별)을 반환한다."""
+    if not brand_names:
+        return []
+    placeholders = ",".join(["%s"] * len(brand_names))
+    sql = f"""
+        SELECT p.name as product_name,
+               COALESCE(SUM(CASE WHEN t.type = '판매출고' THEN t.quantity ELSE 0 END), 0)
+               - COALESCE(SUM(CASE WHEN t.type = '판매취소' THEN t.quantity ELSE 0 END), 0) as qty
+        FROM stock_transactions t
+        JOIN products p ON p.id = t.product_id
+        JOIN brands b ON b.id = p.brand_id
+        WHERE b.name IN ({placeholders})
+          AND t.store_id = %s
+          AND date(t.date_time) = %s
+          AND t.type IN ('판매출고', '판매취소')
+        GROUP BY p.id, p.name
+    """
+    cur.execute(sql, list(brand_names) + [store_id, date_str])
+    return [(r["product_name"], r["qty"]) for r in cur.fetchall()]
+
+
+def _bucket_by_percent(rows):
+    """제품명 맨 앞의 'N%' 표기로 그룹화 (예: '2% 딸기키위' -> '2%')."""
+    buckets = {}
+    for name, qty in rows:
+        m = re.match(r"^\s*(\d+)\s*%", name or "")
+        if not m:
+            continue
+        label = f"{m.group(1)}%"
+        buckets[label] = buckets.get(label, 0) + (qty or 0)
+    return buckets
+
+
+def _bucket_by_prefix(rows, prefix_labels):
+    """제품명 맨 앞 접두어로 그룹화. prefix_labels: [(레이블, [접두어,...]), ...] 순서대로 매칭."""
+    buckets = {label: 0 for label, _ in prefix_labels}
+    for name, qty in rows:
+        n = (name or "").strip()
+        for label, prefixes in prefix_labels:
+            if any(n.startswith(p) for p in prefixes):
+                buckets[label] += (qty or 0)
+                break
+    return buckets
+
+
+@app.route("/api/daily_sales_summary")
+def api_daily_sales_summary():
+    conn = get_db()
+    cur = g.cursor
+    try:
+        store_id = request.args.get("store_id")
+        date_str = request.args.get("date") or datetime.now().strftime("%Y-%m-%d")
+        if not store_id:
+            return jsonify({"error": "매장을 선택해주세요."}), 400
+
+        cur.execute("SELECT name FROM stores WHERE id=%s", (store_id,))
+        store_row = cur.fetchone()
+        if not store_row:
+            return jsonify({"error": "매장을 찾을 수 없습니다."}), 404
+        store_name = store_row["name"]
+        date_label = datetime.strptime(date_str, "%Y-%m-%d").strftime("%m/%d")
+
+        sections = []
+
+        # ---- 플릭(일회용) : 니코틴 %로 그룹화 ----
+        flik_rows = _brand_sales_rows(cur, store_id, date_str, ["플릭"])
+        flik_buckets = _bucket_by_percent(flik_rows)
+        sections.append({
+            "key": "flik",
+            "title": f"[{date_label} {store_name} 플릭]",
+            "lines": [{"label": k, "qty": v} for k, v in sorted(flik_buckets.items(), key=lambda x: int(x[0].rstrip('%')))],
+            "extra_lines": [],
+            "total": sum(flik_buckets.values())
+        })
+
+        # ---- 엘프바(일회용) : 니코틴 % + 조인원 킷/팟 ----
+        elfbar_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 25K 아이스킹"])
+        elfbar_buckets = _bucket_by_percent(elfbar_rows)
+        joinone_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 조인원"])
+        joinone_buckets = _bucket_by_prefix(joinone_rows, [("조인원 킷", ["킷"]), ("조인원 팟", ["팟"])])
+        sections.append({
+            "key": "elfbar",
+            "title": f"[{date_label} {store_name} 엘프바]",
+            "lines": [{"label": k, "qty": v} for k, v in sorted(elfbar_buckets.items(), key=lambda x: int(x[0].rstrip('%')))],
+            "extra_lines": [{"label": k, "qty": v} for k, v in joinone_buckets.items()],
+            "total": sum(elfbar_buckets.values()) + sum(joinone_buckets.values())
+        })
+
+        # ---- 칠렉스 바이브(일회용) : 킷/팟 (브랜드 자체가 분리되어 있음) ----
+        vibe_kit_rows = _brand_sales_rows(cur, store_id, date_str, ["칠렉스 바이브 킷"])
+        vibe_pod_rows = _brand_sales_rows(cur, store_id, date_str, ["칠렉스 바이브 팟"])
+        vibe_kit_qty = sum(q for _, q in vibe_kit_rows)
+        vibe_pod_qty = sum(q for _, q in vibe_pod_rows)
+        sections.append({
+            "key": "chillex_vibe",
+            "title": f"[{date_label} {store_name} 칠렉스 바이브]",
+            "lines": [{"label": "바이브 킷", "qty": vibe_kit_qty}, {"label": "바이브 팟", "qty": vibe_pod_qty}],
+            "extra_lines": [],
+            "total": vibe_kit_qty + vibe_pod_qty
+        })
+
+        # ---- 카오린 전자담배 : 스타터킷 / 카트리지(킷+팟) / 배터리 ----
+        kaorin_rows = _brand_sales_rows(cur, store_id, date_str, ["카오린"])
+        kaorin_buckets = _bucket_by_prefix(kaorin_rows, [
+            ("배터리", ["배터리"]),
+            ("카트리지", ["킷", "팟"]),
+        ])
+        # 접두어가 없는 나머지는 스타터킷으로 처리
+        starter_qty = sum(q for _, q in kaorin_rows) - sum(kaorin_buckets.values())
+        sections.append({
+            "key": "kaorin",
+            "title": f"[{date_label} {store_name} 카오린 전자담배]",
+            "lines": [
+                {"label": "스타터킷", "qty": starter_qty},
+                {"label": "카트리지", "qty": kaorin_buckets["카트리지"]},
+                {"label": "배터리", "qty": kaorin_buckets["배터리"]},
+            ],
+            "extra_lines": [],
+            "total": starter_qty + kaorin_buckets["카트리지"] + kaorin_buckets["배터리"]
+        })
+
+        return jsonify({
+            "store_id": int(store_id),
+            "store_name": store_name,
+            "date": date_str,
+            "sections": sections
+        })
+    except Exception as e:
+        print(f"❌ 금일 보고 목록 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "데이터를 불러오는 중 오류가 발생했습니다."}), 500
+
+
+# ---------------------------------------------------------------------------
 # API - 금일 판매 목록
 # ---------------------------------------------------------------------------
 
@@ -2267,17 +2479,14 @@ def api_recommend_order():
         cur.execute(final_sql, all_params)
         rows = cur.fetchall()
 
-        result = []
-        for r in rows:
-            d = dict(r)
+        def build_item(d):
             total_sold = d["total_sold"] or 0
             current_qty = d["current_qty"] or 0
             avg_daily = round(total_sold / days, 1) if days > 0 else 0
             expected_demand = round(total_sold / days * target_days) if days > 0 else 0
             shortage = max(0, expected_demand - current_qty)
             recommend_order = int(shortage * 1.1) + 1 if shortage > 0 else 0
-
-            result.append({
+            return {
                 "product_id": d["product_id"],
                 "product_name": d["product_name"],
                 "brand_name": d["brand_name"],
@@ -2293,13 +2502,35 @@ def api_recommend_order():
                 "expected_demand": expected_demand,
                 "shortage": shortage,
                 "recommend_qty": recommend_order
-            })
+            }
+
+        result = [build_item(dict(r)) for r in rows]
+
+        # 발주 예산 비교: 현재 페이지가 아니라 필터에 해당하는 전체 목록 기준으로 계산한다.
+        all_sql = main_sql + order_sql
+        all_query_params = stock_params + sale_params
+        cur.execute(all_sql, all_query_params)
+        all_rows = cur.fetchall()
+        all_items = [build_item(dict(r)) for r in all_rows]
+        total_recommend_qty = sum(it["recommend_qty"] for it in all_items)
+        total_recommend_cost = sum(it["recommend_qty"] * (it["cost_price"] or 0) for it in all_items)
+
+        cur.execute("SELECT value FROM settings WHERE key = %s", ("order_budget",))
+        budget_row = cur.fetchone()
+        try:
+            order_budget = float(budget_row["value"]) if budget_row and budget_row["value"] else 0
+        except (TypeError, ValueError):
+            order_budget = 0
 
         return jsonify({
             "items": result,
             "total": total,
             "limit": limit,
-            "offset": offset
+            "offset": offset,
+            "total_recommend_qty": total_recommend_qty,
+            "total_recommend_cost": total_recommend_cost,
+            "order_budget": order_budget,
+            "order_budget_remaining": order_budget - total_recommend_cost
         })
 
     except Exception as e:

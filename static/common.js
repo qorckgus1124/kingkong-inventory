@@ -63,6 +63,24 @@ function fmt(n) {
   return Number(n).toLocaleString('ko-KR');
 }
 
+// "2026-07-28 10:15:23.123" / "2026-07-28T10:15:23" 등 다양한 형태를
+// "2026-07-28" (날짜만) 또는 "2026-07-28 10:15" (날짜+시간)으로 통일해서 보여준다.
+function fmtDate(dt) {
+  if (!dt) return '-';
+  const m = String(dt).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return String(dt);
+}
+
+function fmtDateTime(dt) {
+  if (!dt) return '-';
+  const m = String(dt).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+  const d = String(dt).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (d) return `${d[1]}-${d[2]}-${d[3]}`;
+  return String(dt);
+}
+
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
   return String(str)

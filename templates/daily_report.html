@@ -1,11 +1,79 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>📋 금일 판매 목록</h1>
-<div class="subtitle">모든 매장의 오늘 입출고 내역을 스크롤하여 확인하고 복사하세요. (취소된 내역은 자동 제외됩니다)</div>
+<h1>📋 금일 보고 목록</h1>
+<div class="subtitle">상단에서 선택한 매장의 오늘 판매 갯수를 브랜드별로 확인하고 복사하세요.</div>
+
+<!-- ============================================================ -->
+<!-- 금일 보고 목록 (브랜드별 판매 갯수 요약) -->
+<!-- ============================================================ -->
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+    <h3 style="margin:0;">🧾 브랜드별 오늘 판매 갯수</h3>
+    <button onclick="loadDailySalesSummary()">🔄 새로고침</button>
+  </div>
+  <div id="dailySummaryContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:14px;">
+    <div class="empty"><span class="empty-icon">⏳</span>불러오는 중...</div>
+  </div>
+</div>
 
 <div class="report-scroll" style="max-height:80vh; overflow-y:auto; padding-right:8px;">
   <div id="reportsContainer"></div>
 </div>
+
+<script>
+function renderSummarySection(section) {
+  const lines = [...section.lines, ...(section.extra_lines || [])];
+  const linesText = lines.map(l => `${l.label} = ${l.qty}`).join('\n');
+  const text = `${section.title}\n----------------------\n${linesText}\n----------------------\n총 : ${section.total}개`;
+  const linesHtml = section.lines.map(l => `<div style="display:flex; justify-content:space-between;"><span>${escapeHtml(l.label)}</span><strong>${l.qty}</strong></div>`).join('');
+  const extraHtml = (section.extra_lines || []).length
+    ? `<div style="border-top:1px dashed var(--border); margin:6px 0; padding-top:6px;">` +
+      section.extra_lines.map(l => `<div style="display:flex; justify-content:space-between;"><span>${escapeHtml(l.label)}</span><strong>${l.qty}</strong></div>`).join('') +
+      `</div>`
+    : '';
+  return `
+    <div style="border:1px solid var(--border); border-radius:10px; padding:12px 14px;">
+      <div style="font-weight:700; color:var(--text); margin-bottom:8px;">${escapeHtml(section.title)}</div>
+      <div style="font-size:13px; color:var(--text); display:flex; flex-direction:column; gap:2px;">${linesHtml}</div>
+      ${extraHtml}
+      <div style="border-top:1px solid var(--border); margin-top:8px; padding-top:8px; display:flex; justify-content:space-between; align-items:center;">
+        <strong>총 : ${section.total}개</strong>
+        <button data-copy-text="${encodeURIComponent(text)}" onclick="copySummaryText(this)" style="padding:4px 10px; font-size:12px;">📋 복사</button>
+      </div>
+    </div>
+  `;
+}
+
+function copySummaryText(btn) {
+  const text = decodeURIComponent(btn.getAttribute('data-copy-text'));
+  navigator.clipboard.writeText(text).then(() => {
+    toast('복사되었습니다.', false, '📋');
+  }).catch(() => {
+    toast('복사에 실패했습니다.', true, '⚠️');
+  });
+}
+
+async function loadDailySalesSummary() {
+  const container = document.getElementById('dailySummaryContainer');
+  const storeId = localStorage.getItem('global_store_id') || document.getElementById('globalStoreSelect')?.value;
+  if (!storeId) {
+    container.innerHTML = '<div class="empty"><span class="empty-icon">🏪</span>좌측 상단에서 매장을 선택해주세요.</div>';
+    return;
+  }
+  container.innerHTML = '<div class="empty"><span class="empty-icon">⏳</span>불러오는 중...</div>';
+  try {
+    const data = await api(`/api/daily_sales_summary?store_id=${storeId}`);
+    if (data.error) {
+      container.innerHTML = `<div class="empty"><span class="empty-icon">⚠️</span>${escapeHtml(data.error)}</div>`;
+      return;
+    }
+    container.innerHTML = data.sections.map(renderSummarySection).join('');
+  } catch (e) {
+    console.error('금일 보고 목록 로드 오류:', e);
+    container.innerHTML = '<div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러오는 중 오류가 발생했습니다.</div>';
+  }
+}
+</script>
 
 <script>
 async function loadAllReports() {
@@ -71,6 +139,7 @@ function stopAutoRefresh() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+  loadDailySalesSummary();
   loadAllReports();
   startAutoRefresh();
 
@@ -80,6 +149,7 @@ document.addEventListener('DOMContentLoaded', function() {
       stopAutoRefresh();
     } else {
       startAutoRefresh();
+      loadDailySalesSummary();
       loadAllReports(); // 다시 보일 때 즉시 갱신
     }
   });

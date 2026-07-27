@@ -17,7 +17,7 @@
     <select id="f_store" onchange="onStoreChange()">
       <option value="">매장 선택</option>
     </select>
-    <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" oninput="onSearchInput()" style="width:220px;">
+    <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="onSearchInput()" style="width:220px;">
     <button onclick="loadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
   </div>
 
@@ -58,7 +58,7 @@
     <select id="pre_store" onchange="onPreStoreChange()">
       <option value="">매장 선택</option>
     </select>
-    <input type="text" id="pre_searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" oninput="onPreSearchInput()" style="width:220px;">
+    <input type="text" id="pre_searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="onPreSearchInput()" style="width:220px;">
     <button onclick="loadAllPreProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
   </div>
 

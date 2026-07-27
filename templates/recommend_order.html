@@ -46,6 +46,9 @@
 <div class="summary-cards" style="margin-bottom:16px;">
   <div class="summary-card"><div class="label">추천 제품 수</div><div class="value" id="recommendCount">-</div></div>
   <div class="summary-card"><div class="label">총 추천 발주량</div><div class="value" id="totalRecommend">-</div></div>
+  <div class="summary-card"><div class="label">추천 발주 총액(원가 기준)</div><div class="value" id="totalRecommendCost">-</div></div>
+  <div class="summary-card"><div class="label">발주 예산</div><div class="value" id="orderBudgetValue">-</div></div>
+  <div class="summary-card"><div class="label">예산 대비 잔액</div><div class="value" id="orderBudgetRemaining">-</div></div>
 </div>
 
 <div class="table-wrap">
@@ -207,6 +210,21 @@ async function loadRecommend() {
     document.getElementById('prevPageBtn').disabled = currentPage <= 1;
     document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
 
+    // 발주 예산 비교 (필터에 해당하는 전체 목록 기준, 현재 페이지만이 아님)
+    const totalCost = data.total_recommend_cost || 0;
+    const budget = data.order_budget || 0;
+    const remaining = data.order_budget_remaining ?? (budget - totalCost);
+    document.getElementById('totalRecommendCost').textContent = fmt(totalCost) + '원';
+    document.getElementById('orderBudgetValue').textContent = budget > 0 ? fmt(budget) + '원' : '설정 안함';
+    const remainingEl = document.getElementById('orderBudgetRemaining');
+    if (budget > 0) {
+      remainingEl.textContent = (remaining < 0 ? '-' : '') + fmt(Math.abs(remaining)) + '원';
+      remainingEl.style.color = remaining < 0 ? 'var(--danger)' : 'var(--accent)';
+    } else {
+      remainingEl.textContent = '-';
+      remainingEl.style.color = '';
+    }
+
   } catch (e) {
     console.error('❌ 추천 로드 오류:', e);
     toast('데이터를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
@@ -215,6 +233,9 @@ async function loadRecommend() {
     document.getElementById('pageInfo').textContent = '0 / 0';
     document.getElementById('recommendCount').textContent = '-';
     document.getElementById('totalRecommend').textContent = '-';
+    document.getElementById('totalRecommendCost').textContent = '-';
+    document.getElementById('orderBudgetValue').textContent = '-';
+    document.getElementById('orderBudgetRemaining').textContent = '-';
   }
 }
 

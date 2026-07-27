@@ -56,7 +56,9 @@
 
 <script>
 // ---------- 베스트셀러 TOP 10 ----------
+let _bestsellerPeriod = 'day';
 async function loadBestsellers(period) {
+  _bestsellerPeriod = period;
   document.querySelectorAll('#bestsellerTabs .tab-btn').forEach(b => b.classList.remove('active'));
   const activeTabBtn = document.querySelector(`#bestsellerTabs .tab-btn[data-period="${period}"]`);
   if (activeTabBtn) activeTabBtn.classList.add('active');
@@ -65,7 +67,10 @@ async function loadBestsellers(period) {
   container.innerHTML = '<div style="color:var(--text-light); text-align:center; padding:20px;">⏳ 로딩 중...</div>';
 
   try {
-    const rows = await api(`/api/bestsellers?period=${period}`);
+    const storeId = localStorage.getItem('global_store_id') || '';
+    const params = new URLSearchParams({ period: period });
+    if (storeId) params.append('store_id', storeId);
+    const rows = await api(`/api/bestsellers?${params.toString()}`);
     if (!rows || rows.length === 0) {
       container.innerHTML = '<div style="color:var(--text-light); text-align:center; padding:20px;">📭 해당 기간의 판매 데이터가 없습니다.</div>';
       return;

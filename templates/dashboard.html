@@ -81,6 +81,12 @@
   </div>
 </div>
 
+<!-- 인수인계 메모 (읽기 전용, 플로팅 위젯의 내용과 동일) -->
+<div class="card">
+  <h3>📝 인수인계 메모</h3>
+  <div id="dashboardMemoContent" style="white-space:pre-wrap; font-size:13px; color:var(--text); line-height:1.6; min-height:24px;">불러오는 중...</div>
+</div>
+
 <!-- Chart.js CDN -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
@@ -168,7 +174,7 @@ async function loadDashboard() {
         <li style="padding:6px 0; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px;">
           <span class="type-badge ${t.type === '판매출고' ? 'type-out' : t.type === '입고' ? 'type-in' : 'type-etc'}">${t.type}</span>
           ${escapeHtml(t.product_name)} (${escapeHtml(t.store_name)}) - ${t.quantity}개
-          <span style="color:var(--text-light); font-size:12px; margin-left:auto;">${t.date_time}</span>
+          <span style="color:var(--text-light); font-size:12px; margin-left:auto;">${fmtDateTime(t.date_time)}</span>
         </li>
       `).join('');
     }
