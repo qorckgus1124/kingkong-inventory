@@ -1447,6 +1447,7 @@ def api_product_detail(pid):
 
 @app.route("/api/products/<int:pid>/price_history")
 def api_product_price_history(pid):
+    get_db()
     cur = g.cursor
     try:
         cur.execute(
@@ -3538,6 +3539,7 @@ def api_category_stats():
 
 @app.route("/api/customers", methods=["GET"])
 def api_customers():
+    get_db()
     cur = g.cursor
     try:
         search = normalize_search(request.args.get("search", ""))
@@ -3748,6 +3750,7 @@ def api_stocktake():
 
 @app.route("/api/stocktake/export")
 def api_stocktake_export():
+    get_db()
     cur = g.cursor
     store_id = request.args.get("store_id")
     if not store_id:
@@ -3777,6 +3780,7 @@ def api_stocktake_export():
 
 @app.route("/api/turnover_rate")
 def api_turnover_rate():
+    get_db()
     cur = g.cursor
     try:
         group_by = request.args.get("group_by", "category")
