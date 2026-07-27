@@ -4336,11 +4336,11 @@ def api_bestsellers():
             params.append(store_id)
 
         sql += """
-            GROUP BY p.id
-            HAVING COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) > 0
-            ORDER BY sold_qty DESC
-            LIMIT 10
-        """
+    GROUP BY p.id, b.name, b.color
+    HAVING COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) > 0
+    ORDER BY sold_qty DESC
+    LIMIT 10
+"""
 
         cur.execute(sql, params)
         rows = cur.fetchall()
