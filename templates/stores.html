@@ -886,7 +886,7 @@ function renderTransferGrid() {
   }
 
   if (q) {
-    list = list.filter(p => matchesSearch((p.brand_name || '') + (p.name || ''), q));
+    list = list.filter(p => matchesSearch(p.name || '', q) || matchesSearch(p.brand_name || '', q));
   }
 
   if (list.length === 0) {

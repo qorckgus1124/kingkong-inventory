@@ -1132,9 +1132,7 @@ def api_products():
                 sql += """ AND (
                     REPLACE(p.name, ' ', '') ILIKE %s
                     OR REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s
-                    OR REPLACE(COALESCE(b.name, '') || p.name, ' ', '') ILIKE %s
                 )"""
-                params.append(f"%{q_norm}%")
                 params.append(f"%{q_norm}%")
                 params.append(f"%{q_norm}%")
             if category_id:
@@ -1265,10 +1263,9 @@ def api_products_search():
             WHERE p.is_active = 1 AND (
                 REPLACE(p.name, ' ', '') ILIKE %s
                 OR REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s
-                OR REPLACE(COALESCE(b.name, '') || p.name, ' ', '') ILIKE %s
             )
             ORDER BY p.name LIMIT 15
-        """, (f"%{q_norm}%", f"%{q_norm}%", f"%{q_norm}%"))
+        """, (f"%{q_norm}%", f"%{q_norm}%"))
         rows = cur.fetchall()
         result = []
         for r in rows:
@@ -2674,9 +2671,7 @@ def api_forecast():
             main_where.append("""(
                 REPLACE(p.name, ' ', '') ILIKE %s
                 OR REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s
-                OR REPLACE(COALESCE(b.name, '') || p.name, ' ', '') ILIKE %s
             )""")
-            main_params.append(f"%{search_q_norm}%")
             main_params.append(f"%{search_q_norm}%")
             main_params.append(f"%{search_q_norm}%")
 

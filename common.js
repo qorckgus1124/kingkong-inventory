@@ -175,3 +175,17 @@ function clearAllCartsFromStorage() {
     console.warn('모든 장바구니 삭제 실패:', e);
   }
 }
+// ---------------------------------------------------------------------------
+// 공백 무시 검색 매칭 (서버 쪽 normalize_search()와 동일한 규칙)
+// "드 알" 처럼 검색어에 공백이 있어도, 대상 문자열에서 공백을 제거했을 때
+// 검색어(역시 공백 제거)가 "이어진 문자열"로 등장하는 경우에만 일치로 본다.
+// 예) "파드 알로에그레이프" -> "드알"을 포함(O), "레드애플 알로에" -> "드알" 미포함(X)
+// ---------------------------------------------------------------------------
+function normalizeSearchText(s) {
+  return (s || '').replace(/\s+/g, '').toLowerCase();
+}
+
+function matchesSearch(text, query) {
+  if (!query) return true;
+  return normalizeSearchText(text).includes(normalizeSearchText(query));
+}
