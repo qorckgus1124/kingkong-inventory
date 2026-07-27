@@ -11,12 +11,22 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 import psycopg2.errors
 from flask import Flask, g, jsonify, render_template, request, send_file, send_from_directory
+
+# 서버가 어느 지역(UTC 등)에서 돌아가더라도 항상 한국 시간 기준으로 동작하도록 고정
+KST = ZoneInfo("Asia/Seoul")
+
+
+def now_kst():
+    """항상 한국 표준시(KST) 기준의 현재 시각을 반환한다."""
+    return datetime.now(KST)
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "inventory.db")  # 더 이상 사용하지 않음 (PostgreSQL)
@@ -170,6 +180,14 @@ def get_db():
         # "set_session cannot be used inside a transaction" 에러가 난다.
         # (예전에는 Aiven 연결이 자주 끊겨서 매번 새 연결을 받아왔고,
         #  그 새 연결엔 헬스체크를 안 태워서 우연히 안 터졌을 뿐이다.)
+        # 커넥션 풀에서 재사용되는 "물리적" 연결마다 세션 타임존을 한국시간(KST)으로
+        # 한 번만 고정해둔다. 이렇게 해야 CURRENT_TIMESTAMP 등 DB에서 채워지는
+        # 시각들이 서버가 어느 지역(UTC 등)에서 돌고 있든 항상 한국 시간 기준으로 저장된다.
+        if not getattr(conn, "_kst_tz_set", False):
+            with conn.cursor() as tz_cur:
+                tz_cur.execute("SET TIME ZONE 'Asia/Seoul'")
+            conn.commit()
+            conn._kst_tz_set = True
         g.db = conn
         g.cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         g._db_pool_ref = pool
@@ -693,7 +711,7 @@ def index():
 
 @app.route("/dashboard")
 def dashboard_page():
-    return render_template("dashboard.html", active="dashboard", now=datetime.now())
+    return render_template("dashboard.html", active="dashboard", now=now_kst())
 
 @app.route("/categories")
 def categories_page():
@@ -2181,7 +2199,7 @@ def api_daily_sales_summary():
     cur = g.cursor
     try:
         store_id = request.args.get("store_id")
-        date_str = request.args.get("date") or datetime.now().strftime("%Y-%m-%d")
+        date_str = request.args.get("date") or now_kst().strftime("%Y-%m-%d")
         if not store_id:
             return jsonify({"error": "매장을 선택해주세요."}), 400
 
@@ -2280,8 +2298,8 @@ def api_daily_report():
         return jsonify({"error": "매장을 선택해주세요."}), 400
 
     try:
-        today = datetime.now().strftime("%Y-%m-%d")
-        date_display = datetime.now().strftime("%m/%d")
+        today = now_kst().strftime("%Y-%m-%d")
+        date_display = now_kst().strftime("%m/%d")
 
         cur.execute("SELECT name FROM stores WHERE id=%s", (store_id,))
         store = cur.fetchone()
@@ -2315,7 +2333,7 @@ def api_daily_report():
             WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고')
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
-              AND EXTRACT(HOUR FROM t.date_time) BETWEEN 0 AND 15
+              AND EXTRACT(HOUR FROM t.date_time) BETWEEN 8 AND 15
               AND NOT (
                     t.type IN ('판매취소', '입고취소')
                  OR (t.type = '판매출고' AND EXISTS (
@@ -3065,16 +3083,16 @@ def api_statistics():
         start_date = request.args.get("start_date")
         end_date = request.args.get("end_date")
         if not end_date:
-            end_date = datetime.now().strftime("%Y-%m-%d")
+            end_date = now_kst().strftime("%Y-%m-%d")
         if not start_date:
             if period == "day":
-                start_date = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+                start_date = (now_kst() - timedelta(days=14)).strftime("%Y-%m-%d")
             elif period == "week":
-                start_date = (datetime.now() - timedelta(days=56)).strftime("%Y-%m-%d")
+                start_date = (now_kst() - timedelta(days=56)).strftime("%Y-%m-%d")
             elif period == "month":
-                start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+                start_date = (now_kst() - timedelta(days=365)).strftime("%Y-%m-%d")
             else:
-                start_date = (datetime.now() - timedelta(days=365*5)).strftime("%Y-%m-%d")
+                start_date = (now_kst() - timedelta(days=365*5)).strftime("%Y-%m-%d")
 
         fmt_map = {
             "day": "YYYY-MM-DD",
@@ -3124,7 +3142,7 @@ def api_dashboard():
     try:
         conn = get_db()
         cur = g.cursor
-        today = datetime.now().date()
+        today = now_kst().date()
         month_start = today.replace(day=1)
         if month_start.month == 1:
             last_month_start = today.replace(year=today.year-1, month=12, day=1)
@@ -3573,7 +3591,7 @@ def api_customer_detail(customer_id):
             by_category[r["category_name"]].append(r["order_date"])
 
         predictions = []
-        today = datetime.now().date()
+        today = now_kst().date()
         for cat_name, dates in by_category.items():
             if len(dates) < 2:
                 continue
@@ -3904,16 +3922,16 @@ def api_export_statistics():
     if period not in ["day", "week", "month", "year"]:
         period = "day"
     if not end_date:
-        end_date = datetime.now().strftime("%Y-%m-%d")
+        end_date = now_kst().strftime("%Y-%m-%d")
     if not start_date:
         if period == "day":
-            start_date = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+            start_date = (now_kst() - timedelta(days=14)).strftime("%Y-%m-%d")
         elif period == "week":
-            start_date = (datetime.now() - timedelta(days=56)).strftime("%Y-%m-%d")
+            start_date = (now_kst() - timedelta(days=56)).strftime("%Y-%m-%d")
         elif period == "month":
-            start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+            start_date = (now_kst() - timedelta(days=365)).strftime("%Y-%m-%d")
         else:
-            start_date = (datetime.now() - timedelta(days=365*5)).strftime("%Y-%m-%d")
+            start_date = (now_kst() - timedelta(days=365*5)).strftime("%Y-%m-%d")
 
     fmt_map = {
         "day": "YYYY-MM-DD",
@@ -4198,7 +4216,7 @@ def api_import_transactions():
                     except:
                         raise ValueError(f"날짜 형식이 올바르지 않습니다. ('{date}') YYYY-MM-DD 형식으로 입력하세요.")
                 else:
-                    date = datetime.now().strftime("%Y-%m-%d")
+                    date = now_kst().strftime("%Y-%m-%d")
 
                 if brand_name:
                     cur.execute(
@@ -4676,7 +4694,7 @@ def api_category_trend():
     conn = get_db()
     cur = g.cursor
     try:
-        today = datetime.now().date()
+        today = now_kst().date()
         month_start = today.replace(day=1)
 
         if month_start.month == 1:
@@ -4734,7 +4752,7 @@ def api_bestsellers():
         period = request.args.get("period", "week")
         store_id = request.args.get("store_id")
 
-        today = datetime.now().date()
+        today = now_kst().date()
         if period == "day":
             start_date = today.strftime("%Y-%m-%d")
         elif period == "week":
