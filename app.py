@@ -604,6 +604,17 @@ def _apply_stock_delta(db, store_id, product_id, ttype, quantity):
 # 라우트 (페이지)
 # ---------------------------------------------------------------------------
 
+@app.route("/api/version")
+def api_version():
+    """지금 Render에 실제로 어떤 코드가 떠 있는지 브라우저에서 바로 확인하기 위한 엔드포인트.
+    예) https://<내-render-주소>/api/version 접속했을 때 아래 값이 안 보이면
+    (404가 뜨거나 다른 값이 보이면) 새로 배포한 코드가 아직 반영되지 않은 것이다."""
+    return jsonify({
+        "build": "search-space-insensitive-2026-07-27",
+        "note": "검색어 공백 무시(예: '드 알' -> '드알') 매칭 적용됨",
+    })
+
+
 @app.route("/")
 def index():
     return render_template("products.html", active="products")
