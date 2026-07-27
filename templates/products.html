@@ -995,7 +995,8 @@ async function uploadExcel(event) {
 
 async function exportProducts() {
   const store_id = document.getElementById('storeSelect').value || '';
-  window.open(`/api/export/${store_id || 'all'}/products`, '_blank');
+  const show_inactive = document.getElementById('showInactive').checked ? '1' : '0';
+  window.open(`/api/export/${store_id || 'all'}/products?show_inactive=${show_inactive}`, '_blank');
 }
 
 // ---------- 초기화 ----------

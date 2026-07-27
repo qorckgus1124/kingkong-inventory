@@ -141,9 +141,11 @@ function fallbackCopy(textarea) {
 }
 
 // ---------- 장바구니 ----------
+// localStorage를 사용해 같은 브라우저의 다른 탭/페이지로 이동해도 장바구니가 유지되도록 한다.
+// (sessionStorage는 탭마다 독립된 저장소라 새 탭이나 다른 탭으로 옮기면 장바구니가 사라진다.)
 function saveCartToStorage(key, cart) {
   try {
-    sessionStorage.setItem(key, JSON.stringify(cart));
+    localStorage.setItem(key, JSON.stringify(cart));
   } catch (e) {
     console.warn('장바구니 저장 실패:', e);
   }
@@ -151,7 +153,7 @@ function saveCartToStorage(key, cart) {
 
 function loadCartFromStorage(key) {
   try {
-    const data = sessionStorage.getItem(key);
+    const data = localStorage.getItem(key);
     return data ? JSON.parse(data) : {};
   } catch (e) {
     console.warn('장바구니 복원 실패:', e);
@@ -161,7 +163,7 @@ function loadCartFromStorage(key) {
 
 function clearCartFromStorage(key) {
   try {
-    sessionStorage.removeItem(key);
+    localStorage.removeItem(key);
   } catch (e) {
     console.warn('장바구니 삭제 실패:', e);
   }
@@ -170,7 +172,7 @@ function clearCartFromStorage(key) {
 function clearAllCartsFromStorage() {
   try {
     const keys = ['normal_cart', 'pre_cart', 'transfer_cart'];
-    keys.forEach(key => sessionStorage.removeItem(key));
+    keys.forEach(key => localStorage.removeItem(key));
   } catch (e) {
     console.warn('모든 장바구니 삭제 실패:', e);
   }

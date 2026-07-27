@@ -3771,7 +3771,9 @@ def api_stocktake_export():
     for r in rows:
         writer.writerow([r['category_name'] or '', r['brand_name'] or '', r['product_name'], r['qty']])
     output.seek(0)
-    return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='실사표.csv')
+    resp = send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='실사표.csv')
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -3881,8 +3883,15 @@ def api_backup():
 def api_export_products(store_id):
     conn = get_db()
     cur = g.cursor
+    # 화면(제품 관리 목록)은 기본적으로 활성 제품만 보여주므로, 다운로드도 같은 기준을 따라야
+    # "화면에 보이는 재고"와 "다운로드한 재고"가 일치한다. show_inactive=1을 넘기면 비활성(단종)
+    # 제품도 포함해서 내려준다 (화면의 "비활성 포함" 체크박스와 동일한 동작).
+    show_inactive = request.args.get("show_inactive", "0") == "1"
+    active_filter = "" if show_inactive else "WHERE p.is_active = 1"
+    active_filter_and = "" if show_inactive else "AND p.is_active = 1"
+
     if store_id == 'all' or store_id == '':
-        cur.execute("""
+        cur.execute(f"""
             SELECT p.id, p.name, b.name as brand_name, c.name as category_name, p.cost_price, p.card_cost_price, p.sale_price,
                    COALESCE(SUM(ss.qty), 0) as qty,
                    COALESCE(SUM(ss.min_qty), 0) as min_qty,
@@ -3891,6 +3900,7 @@ def api_export_products(store_id):
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             LEFT JOIN store_stock ss ON ss.product_id = p.id
+            {active_filter}
             GROUP BY p.id, p.name, b.name, c.name, p.cost_price, p.card_cost_price, p.sale_price, p.is_active
             ORDER BY p.id
         """)
@@ -3899,7 +3909,7 @@ def api_export_products(store_id):
             store_id_int = int(store_id)
         except:
             return jsonify({"error": "올바른 매장 ID가 아닙니다."}), 400
-        cur.execute("""
+        cur.execute(f"""
             SELECT p.id, p.name, b.name as brand_name, c.name as category_name, p.cost_price, p.card_cost_price, p.sale_price,
                    ss.qty, ss.min_qty,
                    CASE WHEN p.is_active THEN '활성' ELSE '비활성' END as status
@@ -3907,7 +3917,7 @@ def api_export_products(store_id):
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             JOIN store_stock ss ON ss.product_id = p.id
-            WHERE ss.store_id = %s
+            WHERE ss.store_id = %s {active_filter_and}
             ORDER BY p.id
         """, (store_id_int,))
 
@@ -3918,7 +3928,9 @@ def api_export_products(store_id):
     for r in rows:
         writer.writerow([r['id'], r['name'], r['brand_name'] or '', r['category_name'] or '', r['cost_price'], r['card_cost_price'], r['sale_price'], r['qty'], r['min_qty'], r['status']])
     output.seek(0)
-    return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='재고목록.csv')
+    resp = send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='재고목록.csv')
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    return resp
 
 @app.route("/api/export/transactions")
 def api_export_transactions():

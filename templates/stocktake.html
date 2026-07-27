@@ -10,31 +10,37 @@
 </div>
 
 <div class="card">
-  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr;">
     <div class="form-field"><label>매장</label><select id="storeSelect" onchange="load()"></select></div>
     <div class="form-field"><label>실사 담당자</label><input type="text" id="staffInput" placeholder="이름"></div>
     <div class="form-field">
-      <label>&nbsp;</label>
-      <div style="display:flex; gap:8px;">
-        <button class="primary" onclick="save()" style="flex:1;">💾 저장</button>
-        <button onclick="exportCsv()" style="flex:1;">⬇️ 실사표 내보내기</button>
-      </div>
-    </div>
-  </div>
-  <div class="form-grid" style="grid-template-columns: 1fr 1fr; margin-top:10px;">
-    <div class="form-field">
-      <label>🔍 제품 검색 (제품명/브랜드)</label>
+      <label>🔍 제품 검색</label>
       <input type="text" id="searchInput" placeholder="제품명 또는 브랜드로 검색" oninput="render()">
     </div>
     <div class="form-field">
-      <label>📥 실사표 업로드하여 일괄 적용</label>
-      <div style="display:flex; gap:8px;">
-        <input type="file" id="uploadInput" accept=".csv" style="flex:1;">
-        <button onclick="uploadCsv()">일괄 적용</button>
-      </div>
+      <label>&nbsp;</label>
+      <button class="primary" onclick="save()" style="width:100%;">💾 실사 결과 저장</button>
     </div>
   </div>
-  <div class="subtitle" style="margin-top:6px;">업로드하는 CSV는 "⬇️ 실사표 내보내기"로 받은 파일과 같은 형식(카테고리, 브랜드, 제품명, 갯수)이어야 합니다. 제품명이 일치하는 항목의 "실사 수량"만 자동으로 채워지며, 실제 저장은 아래 💾 저장 버튼을 눌러야 반영됩니다.</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 실사 업로드칸 (입출고 관리와 동일한 스타일) -->
+<!-- ============================================================ -->
+<div class="card upload-area">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+    <div>
+      <strong>📥 실사표 업로드하여 일괄 적용</strong>
+      <div style="font-size:12px; color:var(--text-light);">📌 매장을 돌며 종이나 엑셀에 적어둔 실사 수량을 CSV로 올리면, 제품명이 일치하는 항목의 "실사 수량"만 자동으로 채워집니다. 실제 저장은 아래 💾 실사 결과 저장 버튼을 눌러야 반영됩니다.</div>
+      <div style="font-size:11px; color:var(--text-light);">필수 형식: 카테고리, 브랜드, 제품명, 갯수 (⬇️ 실사표 내보내기로 받은 파일과 동일)</div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <button onclick="exportCsv()">⬇️ 실사표 내보내기</button>
+      <button onclick="document.getElementById('uploadInput').click()" class="primary">📤 실사표 업로드</button>
+      <input type="file" id="uploadInput" accept=".csv" style="display:none" onchange="uploadCsv(event)">
+    </div>
+  </div>
+  <div id="stocktakeUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:6px; background:var(--card-bg); border:1px solid var(--border); min-height:20px; display:none;"></div>
 </div>
 
 <div class="table-wrap">
@@ -185,15 +191,29 @@ function parseCsvText(text) {
   return rows.filter(r => r.length > 0 && !(r.length === 1 && r[0] === ''));
 }
 
-async function uploadCsv() {
+async function uploadCsv(event) {
   const fileInput = document.getElementById('uploadInput');
-  const file = fileInput.files && fileInput.files[0];
+  const resultDiv = document.getElementById('stocktakeUploadResult');
+  const file = (event && event.target && event.target.files && event.target.files[0]) || (fileInput.files && fileInput.files[0]);
   if (!file) { toast('업로드할 실사표 CSV 파일을 선택해주세요.', true, '⚠️'); return; }
-  if (!items || items.length === 0) { toast('먼저 매장을 선택해주세요.', true, '⚠️'); return; }
+  if (!items || items.length === 0) {
+    toast('먼저 매장을 선택해주세요.', true, '⚠️');
+    fileInput.value = '';
+    return;
+  }
+
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<span style="color:var(--text-light);">⏳ 업로드 처리 중...</span>';
+
   try {
     const text = await file.text();
     const rows = parseCsvText(text);
-    if (rows.length === 0) { toast('파일 내용을 읽을 수 없습니다.', true, '⚠️'); return; }
+    if (rows.length === 0) {
+      resultDiv.innerHTML = '<span style="color:var(--danger);">❌ 파일 내용을 읽을 수 없습니다.</span>';
+      toast('파일 내용을 읽을 수 없습니다.', true, '⚠️');
+      fileInput.value = '';
+      return;
+    }
 
     // 헤더 확인: 카테고리, 브랜드, 제품명, 갯수
     let header = rows[0].map(h => h.trim());
@@ -228,11 +248,16 @@ async function uploadCsv() {
 
     updateStats();
     render();
-    toast(`업로드 적용 완료: ${matched}개 반영, ${Object.keys(qtyByName).length - matched >= 0 ? unmatched + '개 항목은 파일에 없어 그대로 둠' : ''}`, false, '📥');
+    resultDiv.innerHTML = `<span style="color:var(--accent);">✅ ${matched}개 항목에 실사 수량 반영</span>` +
+      (unmatched > 0 ? `<span style="color:var(--text-light);"> · ${unmatched}개 항목은 파일에 없어 시스템 수량 그대로 둠</span>` : '') +
+      `<div style="font-size:11px; color:var(--text-light); margin-top:4px;">아직 저장되지 않았습니다. 위 💾 실사 결과 저장 버튼을 눌러야 재고에 반영됩니다.</div>`;
+    toast(`업로드 적용 완료: ${matched}개 반영`, false, '📥');
     fileInput.value = '';
   } catch (e) {
     console.error('실사표 업로드 오류:', e);
+    resultDiv.innerHTML = '<span style="color:var(--danger);">❌ 파일을 읽는 중 오류가 발생했습니다.</span>';
     toast('파일을 읽는 중 오류가 발생했습니다.', true, '⚠️');
+    fileInput.value = '';
   }
 }
 
