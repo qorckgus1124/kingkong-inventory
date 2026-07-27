@@ -300,6 +300,7 @@ let preCart = loadCartFromStorage(PRE_CART_STORAGE_KEY);
 let prePayment = null;
 let preSelectedCategory = 'all';
 let preSearchQuery = '';
+let preProducts = [];
 
 // ---------- 매장/카테고리/제품 로드 ----------
 async function loadStores() {
@@ -414,6 +415,8 @@ function pickPreCategory(id) {
 }
 
 // ---------- 일반 판매 제품 로드 ----------
+const normalSearchGuard = makeSearchGuard();
+
 async function loadProducts(forceLoad = false) {
   console.log('📡 제품 목록 로드 시작... (forceLoad:', forceLoad, ')');
   const store_id = document.getElementById('f_store').value;
@@ -433,11 +436,18 @@ async function loadProducts(forceLoad = false) {
   const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc' });
   if (q) params.append('q', q);
 
+  const myToken = normalSearchGuard.next();
   try {
-    products = await api('/api/products?' + params.toString());
+    const result = await api('/api/products?' + params.toString());
+    if (!normalSearchGuard.isCurrent(myToken)) {
+      console.log('⏭️ 오래된 검색 응답 무시 (더 최신 검색이 이미 진행됨)');
+      return;
+    }
+    products = result;
     console.log(`✅ 제품 데이터 수신 (${products.length}개)`);
     renderGrid();
   } catch (e) {
+    if (!normalSearchGuard.isCurrent(myToken)) return;
     console.error('❌ 제품 로드 오류:', e);
     toast('제품 목록을 불러오지 못했습니다.', true, '⚠️');
     document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">📦</span>제품을 불러올 수 없습니다.</div>';
@@ -521,6 +531,8 @@ function renderGrid() {
 }
 
 // ---------- 선결제 제품 로드 ----------
+const preSearchGuard = makeSearchGuard();
+
 async function loadPreProducts(forceLoad = false) {
   console.log('📡 선결제 제품 목록 로드 시작... (forceLoad:', forceLoad, ')');
   const store_id = document.getElementById('pre_store').value;
@@ -539,11 +551,18 @@ async function loadPreProducts(forceLoad = false) {
   const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc' });
   if (q) params.append('q', q);
 
+  const myToken = preSearchGuard.next();
   try {
-    products = await api('/api/products?' + params.toString());
-    console.log(`✅ 선결제 제품 데이터 수신 (${products.length}개)`);
+    const result = await api('/api/products?' + params.toString());
+    if (!preSearchGuard.isCurrent(myToken)) {
+      console.log('⏭️ 오래된 선결제 검색 응답 무시 (더 최신 검색이 이미 진행됨)');
+      return;
+    }
+    preProducts = result;
+    console.log(`✅ 선결제 제품 데이터 수신 (${preProducts.length}개)`);
     renderPreGrid();
   } catch (e) {
+    if (!preSearchGuard.isCurrent(myToken)) return;
     console.error('❌ 선결제 제품 로드 오류:', e);
     document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">📦</span>제품을 불러올 수 없습니다.</div>';
   }
@@ -577,7 +596,7 @@ function onPreStoreChange() {
 // ---------- 선결제 그리드 ----------
 function renderPreGrid() {
   const grid = document.getElementById('pre_grid');
-  let list = products;
+  let list = preProducts;
 
   if (!list || list.length === 0) {
     grid.innerHTML = '<div class="empty"><span class="empty-icon">📦</span>표시할 제품이 없습니다.</div>';
@@ -799,7 +818,7 @@ async function checkout() {
 
 // ---------- 선결제 장바구니 ----------
 function addToPreCart(pid) {
-  const product = products.find(p => p.id === pid);
+  const product = preProducts.find(p => p.id === pid);
   if (!product) return;
 
   const key = `${pid}_pre`;

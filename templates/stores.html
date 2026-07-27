@@ -851,6 +851,8 @@ function loadAllTransferProducts() {
   loadTransferProducts();
 }
 
+const storesTransferSearchGuard = makeSearchGuard();
+
 async function loadTransferProducts() {
   const store_id = document.getElementById('fromStore').value;
   if (!store_id) {
@@ -866,10 +868,14 @@ async function loadTransferProducts() {
   });
   if (q) params.append('q', q);
 
+  const myToken = storesTransferSearchGuard.next();
   try {
-    transferProducts = await api('/api/products?' + params.toString());
+    const result = await api('/api/products?' + params.toString());
+    if (!storesTransferSearchGuard.isCurrent(myToken)) return;
+    transferProducts = result;
     renderTransferGrid();
   } catch (e) {
+    if (!storesTransferSearchGuard.isCurrent(myToken)) return;
     console.error('제품 로드 오류:', e);
     toast('제품 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
   }

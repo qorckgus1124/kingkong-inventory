@@ -321,6 +321,7 @@ document.addEventListener('change', function(e) {
 
 // ---------- 제품 자동완성 ----------
 let acTimer;
+const productAcGuard = makeSearchGuard();
 function onProductInput() {
   selectedProduct = null;
   document.getElementById('selectedInfo').textContent = '';
@@ -328,8 +329,10 @@ function onProductInput() {
   const q = document.getElementById('f_product').value.trim();
   if (!q) { hideAc(); return; }
   acTimer = setTimeout(async () => {
+    const myToken = productAcGuard.next();
     try {
       const response = await api('/api/products/search?q=' + encodeURIComponent(q));
+      if (!productAcGuard.isCurrent(myToken)) return;
       if (response && Array.isArray(response)) {
         acItems = response;
         renderAc();
@@ -338,6 +341,7 @@ function onProductInput() {
         hideAc();
       }
     } catch (e) {
+      if (!productAcGuard.isCurrent(myToken)) return;
       console.error('제품 검색 오류:', e);
       acItems = [];
       hideAc();

@@ -189,3 +189,21 @@ function matchesSearch(text, query) {
   if (!query) return true;
   return normalizeSearchText(text).includes(normalizeSearchText(query));
 }
+
+// ---------------------------------------------------------------------------
+// 검색 결과 경쟁 상태(race condition) 방지
+// 타이핑할 때마다 새 요청을 보내면, 앞서 보낸 요청(예: "드")이 나중에 보낸
+// 요청(예: "드 알")보다 응답 크기가 커서 네트워크에서 더 늦게 도착하는 경우가
+// 있다. 이때 아무 안전장치가 없으면 늦게 도착한 "드" 결과가 화면에 먼저 그려진
+// "드 알" 결과를 덮어써서, 잠깐 맞게 보이다가 다시 예전 상태로 돌아가는 것처럼
+// 보인다. makeSearchGuard()로 만든 가드에 매 요청마다 순번표(token)를 받고,
+// 응답이 왔을 때 그 순번표가 여전히 "가장 최근에 보낸 요청"인지 확인해서,
+// 아니면(더 최신 요청이 이미 나간 상태라면) 화면 반영을 건너뛴다.
+// ---------------------------------------------------------------------------
+function makeSearchGuard() {
+  let token = 0;
+  return {
+    next() { return ++token; },
+    isCurrent(t) { return t === token; },
+  };
+}

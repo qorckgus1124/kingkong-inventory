@@ -305,6 +305,8 @@ function loadAllProducts() {
 }
 
 // ---------- 제품 목록 로드 (재고 많은 순 정렬) ----------
+const transferSearchGuard = makeSearchGuard();
+
 async function loadProducts() {
   const store_id = document.getElementById('fromStore').value;
   if (!store_id) {
@@ -320,10 +322,14 @@ async function loadProducts() {
   });
   if (q) params.append('q', q);
 
+  const myToken = transferSearchGuard.next();
   try {
-    products = await api('/api/products?' + params.toString());
+    const result = await api('/api/products?' + params.toString());
+    if (!transferSearchGuard.isCurrent(myToken)) return;
+    products = result;
     renderProductGrid();
   } catch (e) {
+    if (!transferSearchGuard.isCurrent(myToken)) return;
     console.error('제품 로드 오류:', e);
     toast('제품 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
   }

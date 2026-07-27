@@ -521,9 +521,12 @@ function sortBy(col) {
   load();
 }
 
+const productsSearchGuard = makeSearchGuard();
+
 async function load() {
   if (!initialLoadDone) return;
 
+  const myToken = productsSearchGuard.next();
   try {
     const q = document.getElementById('searchBox').value.trim();
     const category_id = document.getElementById('filterCategory').value;
@@ -532,9 +535,12 @@ async function load() {
     const store_id = document.getElementById('storeSelect').value;
     const params = new URLSearchParams({ q, category_id, brand_id, sort: sortState.col, order: sortState.order, show_inactive });
     if (store_id) params.append('store_id', store_id);
-    products = await api('/api/products?' + params.toString());
+    const result = await api('/api/products?' + params.toString());
+    if (!productsSearchGuard.isCurrent(myToken)) return;
+    products = result;
     render();
   } catch (e) {
+    if (!productsSearchGuard.isCurrent(myToken)) return;
     console.error('제품 로드 오류:', e);
     toast('제품 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
     render();

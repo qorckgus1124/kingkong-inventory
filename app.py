@@ -610,8 +610,8 @@ def api_version():
     예) https://<내-render-주소>/api/version 접속했을 때 아래 값이 안 보이면
     (404가 뜨거나 다른 값이 보이면) 새로 배포한 코드가 아직 반영되지 않은 것이다."""
     return jsonify({
-        "build": "search-fix-v3-boundary-2026-07-27",
-        "note": "검색어 공백 무시 + 브랜드명/제품명 경계 오매칭 버그 수정 적용됨",
+        "build": "search-fix-v4-race-2026-07-27",
+        "note": "검색어 공백 무시 + 브랜드/제품명 경계 버그 수정 + 타이핑 중 검색 결과 뒤집힘(경쟁 상태) 수정 적용됨",
     })
 
 

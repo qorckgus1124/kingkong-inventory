@@ -75,6 +75,7 @@ let currentPage = 1;
 let totalPages = 1;
 let totalItems = 0;
 let rowsPerPage = 20;
+const forecastSearchGuard = makeSearchGuard();
 
 // ---------- 필터 드롭다운 로드 ----------
 async function loadFilters() {
@@ -155,8 +156,13 @@ async function loadForecast() {
   if (category_id) params.append('category_id', category_id);
   if (brand_id) params.append('brand_id', brand_id);
 
+  const myToken = forecastSearchGuard.next();
   try {
     const data = await api('/api/forecast?' + params.toString());
+    if (!forecastSearchGuard.isCurrent(myToken)) {
+      console.log('⏭️ 오래된 예측 검색 응답 무시 (더 최신 검색이 이미 진행됨)');
+      return;
+    }
     console.log('✅ 예측 데이터 수신:', data);
 
     const rows = data.items || [];
@@ -208,6 +214,7 @@ async function loadForecast() {
     document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
 
   } catch (e) {
+    if (!forecastSearchGuard.isCurrent(myToken)) return;
     console.error('❌ 예측 로드 오류:', e);
     toast('데이터를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
     document.getElementById('tbody').innerHTML = '<tr><td colspan="9"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.<br><span style="font-size:12px;color:var(--text-light);">' + e.message + '</span></div></td></tr>';

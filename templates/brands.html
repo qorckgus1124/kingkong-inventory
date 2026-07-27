@@ -151,6 +151,8 @@ async function loadCategories() {
 }
 
 // ---------- 브랜드 목록 로드 ----------
+const brandsSearchGuard = makeSearchGuard();
+
 async function loadBrands() {
   const status = document.getElementById('statusFilter').value;
   const search = document.getElementById('searchBrand').value.trim();
@@ -161,13 +163,17 @@ async function loadBrands() {
   if (search) params.append('search', search);
   if (params.toString()) url += '?' + params.toString();
   
+  const myToken = brandsSearchGuard.next();
   try {
-    brands = await api(url);
+    const result = await api(url);
+    if (!brandsSearchGuard.isCurrent(myToken)) return;
+    brands = result;
     selectedBrandIds.clear();
     document.getElementById('selectAll').checked = false;
     updateBatchUI();
     renderBrands();
   } catch (e) {
+    if (!brandsSearchGuard.isCurrent(myToken)) return;
     console.error('브랜드 로드 오류:', e);
     toast('브랜드를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
   }
