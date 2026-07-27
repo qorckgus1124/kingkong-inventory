@@ -180,14 +180,13 @@ def get_db():
         # "set_session cannot be used inside a transaction" 에러가 난다.
         # (예전에는 Aiven 연결이 자주 끊겨서 매번 새 연결을 받아왔고,
         #  그 새 연결엔 헬스체크를 안 태워서 우연히 안 터졌을 뿐이다.)
-        # 커넥션 풀에서 재사용되는 "물리적" 연결마다 세션 타임존을 한국시간(KST)으로
-        # 한 번만 고정해둔다. 이렇게 해야 CURRENT_TIMESTAMP 등 DB에서 채워지는
-        # 시각들이 서버가 어느 지역(UTC 등)에서 돌고 있든 항상 한국 시간 기준으로 저장된다.
-        if not getattr(conn, "_kst_tz_set", False):
-            with conn.cursor() as tz_cur:
-                tz_cur.execute("SET TIME ZONE 'Asia/Seoul'")
-            conn.commit()
-            conn._kst_tz_set = True
+        # 커넥션 풀에서 재사용되는 연결이라도 세션 타임존을 한국시간(KST)으로 맞춰준다.
+        # (psycopg2 connection 객체는 임의 속성을 못 붙이는 타입이라 "한 번만 설정" 캐싱은
+        #  AttributeError를 일으킨다. SET TIME ZONE 자체는 매우 가벼운 명령이라 매 요청마다
+        #  실행해도 성능에 문제가 없다.)
+        with conn.cursor() as tz_cur:
+            tz_cur.execute("SET TIME ZONE 'Asia/Seoul'")
+        conn.commit()
         g.db = conn
         g.cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         g._db_pool_ref = pool
@@ -2181,6 +2180,27 @@ def _bucket_by_percent(rows):
     return buckets
 
 
+def _all_percent_labels_for_brand(cur, brand_names):
+    """오늘 판매 여부와 상관없이, 해당 브랜드에 등록된 모든 제품명에서
+    'N%' 표기를 전부 뽑아 라벨 집합으로 반환한다.
+    (오늘 판매가 0개인 %도 항상 목록에 표시하기 위함)"""
+    if not brand_names:
+        return set()
+    placeholders = ",".join(["%s"] * len(brand_names))
+    cur.execute(f"""
+        SELECT p.name as product_name
+        FROM products p
+        JOIN brands b ON b.id = p.brand_id
+        WHERE b.name IN ({placeholders})
+    """, list(brand_names))
+    labels = set()
+    for r in cur.fetchall():
+        m = re.match(r"^\s*(\d+)\s*%", r["product_name"] or "")
+        if m:
+            labels.add(f"{m.group(1)}%")
+    return labels
+
+
 def _bucket_by_prefix(rows, prefix_labels):
     """제품명 맨 앞 접두어로 그룹화. prefix_labels: [(레이블, [접두어,...]), ...] 순서대로 매칭."""
     buckets = {label: 0 for label, _ in prefix_labels}
@@ -2229,6 +2249,9 @@ def api_daily_sales_summary():
         # ---- 엘프바(일회용) : 니코틴 % + 조인원 킷/팟 ----
         elfbar_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 25K 아이스킹"])
         elfbar_buckets = _bucket_by_percent(elfbar_rows)
+        # 오늘 판매가 없는 %도(예: 1%) 항상 표시되도록, 제품으로 등록된 % 옵션은 모두 0으로 채워둔다
+        for _pct in _all_percent_labels_for_brand(cur, ["엘프바 25K 아이스킹"]):
+            elfbar_buckets.setdefault(_pct, 0)
         joinone_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 조인원"])
         joinone_buckets = _bucket_by_prefix(joinone_rows, [("조인원 킷", ["킷"]), ("조인원 팟", ["팟"])])
         sections.append({
@@ -3174,6 +3197,8 @@ def api_dashboard():
             "category_comparison": {
                 "this_month_quantity": {},
                 "last_month_quantity": {},
+                "this_month_brand_quantity": {},
+                "last_month_brand_quantity": {},
                 "this_month_start": month_start.strftime("%Y-%m-%d"),
                 "this_month_end": today.strftime("%Y-%m-%d"),
                 "last_month_start": last_month_start.strftime("%Y-%m-%d"),
@@ -3397,6 +3422,43 @@ def api_dashboard():
             default_response["category_comparison"]["this_month_quantity"] = this_month_qty
             default_response["category_comparison"]["last_month_quantity"] = last_month_qty
 
+            # ---- 일회용 브랜드별(플릭/엘프바/칠렉스 바이브/카오린) 이번달 vs 저번달 출고 수량 ----
+            def get_brand_quantity(start_date, end_date, brand_names):
+                placeholders = ",".join(["%s"] * len(brand_names))
+                brand_q = f"""
+                    SELECT COALESCE(SUM(t.quantity), 0) as quantity
+                    FROM stock_transactions t
+                    JOIN products p ON p.id = t.product_id
+                    JOIN brands b ON b.id = p.brand_id
+                    WHERE t.type = '판매출고'
+                      AND date(t.date_time) >= date(%s)
+                      AND date(t.date_time) <= date(%s)
+                      AND b.name IN ({placeholders})
+                """
+                params = [start_date, end_date] + list(brand_names)
+                if store_id:
+                    brand_q += " AND t.store_id = %s"
+                    params.append(store_id)
+                cur.execute(brand_q, params)
+                row = cur.fetchone()
+                return row["quantity"] if row else 0
+
+            disposable_brand_groups = {
+                "플릭": ["플릭 슬림"],
+                "엘프바": ["엘프바 25K 아이스킹", "엘프바 조인원"],
+                "칠렉스 바이브": ["칠렉스 바이브 킷", "칠렉스 바이브 팟"],
+                "카오린": ["카오린"],
+            }
+            this_month_brand_qty = {}
+            last_month_brand_qty = {}
+            for label, names in disposable_brand_groups.items():
+                this_month_brand_qty[label] = get_brand_quantity(
+                    month_start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d"), names)
+                last_month_brand_qty[label] = get_brand_quantity(
+                    last_month_start.strftime("%Y-%m-%d"), last_month_today.strftime("%Y-%m-%d"), names)
+            default_response["category_comparison"]["this_month_brand_quantity"] = this_month_brand_qty
+            default_response["category_comparison"]["last_month_brand_quantity"] = last_month_brand_qty
+
             total_days = calendar.monthrange(today.year, today.month)[1]
             days_elapsed = today.day
             month_total_revenue = default_response["month"]["revenue"]
@@ -3427,7 +3489,7 @@ def api_dashboard():
             "recent_transactions": [],
             "category_sales": [],
             "stock_value": {"total_cost_value": 0, "total_sale_value": 0, "total_profit_potential": 0},
-            "category_comparison": {"this_month_quantity": {}, "last_month_quantity": {}},
+            "category_comparison": {"this_month_quantity": {}, "last_month_quantity": {}, "this_month_brand_quantity": {}, "last_month_brand_quantity": {}},
             "forecast": {"total_days": 0, "days_elapsed": 0, "current_revenue": 0, "forecast_revenue": 0, "current_profit": 0, "forecast_profit": 0},
             "monthly_target": {"target": 0, "total_days": 0, "days_elapsed": 0, "remaining_days": 0, "current_revenue": 0, "daily_avg_needed": 0, "remaining_amount": 0, "progress_percent": 0}
         })

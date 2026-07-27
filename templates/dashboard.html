@@ -43,6 +43,19 @@
       <div id="lastMonthCategories"></div>
     </div>
   </div>
+  <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:14px;">
+    <h4 style="margin-bottom:8px;">🧴 일회용 브랜드별 비교 (카오린 / 엘프바 / 칠렉스 바이브 / 플릭)</h4>
+    <div style="display:flex; gap:20px; flex-wrap:wrap; padding:10px 0;">
+      <div style="flex:1; min-width:200px;">
+        <h4 style="margin-bottom:8px;">이번달 ({{ now.strftime('%Y-%m-%d') }})</h4>
+        <div id="thisMonthBrands"></div>
+      </div>
+      <div style="flex:1; min-width:200px;">
+        <h4 style="margin-bottom:8px;">저번달 (동일 기간)</h4>
+        <div id="lastMonthBrands"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="dashboard-grid">
@@ -147,6 +160,25 @@ async function loadDashboard() {
       <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border);">
         <span>${name}</span>
         <span>${fmt(lastMonth[name] || 0)}개</span>
+      </div>
+    `).join('');
+
+    // 일회용 브랜드별(카오린/엘프바/칠렉스 바이브/플릭) 출고 수량 비교
+    const thisMonthBrands = data.category_comparison?.this_month_brand_quantity || {};
+    const lastMonthBrands = data.category_comparison?.last_month_brand_quantity || {};
+    const brandNames = ['카오린', '엘프바', '칠렉스 바이브', '플릭'];
+    const thisBrandContainer = document.getElementById('thisMonthBrands');
+    const lastBrandContainer = document.getElementById('lastMonthBrands');
+    thisBrandContainer.innerHTML = brandNames.map(name => `
+      <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border);">
+        <span>${name}</span>
+        <span>${fmt(thisMonthBrands[name] || 0)}개</span>
+      </div>
+    `).join('');
+    lastBrandContainer.innerHTML = brandNames.map(name => `
+      <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border);">
+        <span>${name}</span>
+        <span>${fmt(lastMonthBrands[name] || 0)}개</span>
       </div>
     `).join('');
 
