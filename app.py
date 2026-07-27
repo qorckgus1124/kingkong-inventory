@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
+import psycopg2.errors
 from flask import Flask, g, jsonify, render_template, request, send_file, send_from_directory
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +37,39 @@ def normalize_search(text):
     "알로에")는 걸러낸다.
     """
     return re.sub(r"\s+", "", text or "")
+
+
+def upsert_customer(cur, name, phone, address=None):
+    """전화번호를 기준으로 고객을 찾아 없으면 새로 등록하고, 있으면 이름/주소가
+    비어있던 경우에 한해 채워 넣는다. 선결제 주문이 들어올 때마다 호출되어
+    고객 테이블을 자동으로 최신 상태로 유지한다. 고객 id를 반환한다 (전화번호가
+    없으면 None)."""
+    phone = (phone or "").strip()
+    if not phone:
+        return None
+    name = (name or "").strip() or None
+    address = (address or "").strip() or None
+    cur.execute("SELECT id, name, address FROM customers WHERE phone = %s", (phone,))
+    existing = cur.fetchone()
+    if existing:
+        updates = []
+        params = []
+        if name and not existing["name"]:
+            updates.append("name = %s")
+            params.append(name)
+        if address and not existing["address"]:
+            updates.append("address = %s")
+            params.append(address)
+        if updates:
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+            params.append(existing["id"])
+            cur.execute(f"UPDATE customers SET {', '.join(updates)} WHERE id = %s", params)
+        return existing["id"]
+    cur.execute(
+        "INSERT INTO customers (name, phone, address) VALUES (%s, %s, %s) RETURNING id",
+        (name, phone, address)
+    )
+    return cur.fetchone()["id"]
 
 
 # Flask 3.0 기본 JSON 인코더는 datetime을 "Tue, 28 Jul 2026 09:15:00 GMT" 같은
@@ -379,6 +413,44 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # ---------------------------------------------------------------
+        # 고객 관리(CRM)
+        # ---------------------------------------------------------------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                phone TEXT UNIQUE,
+                address TEXT,
+                memo TEXT,
+                is_vip INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        # 선결제 주문이 어느 고객 소속인지 연결 (전화번호로 매칭)
+        cur.execute("""
+            ALTER TABLE pre_orders
+            ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL;
+        """)
+        # 기존에 쌓여있던 선결제 주문의 고객명/연락처를 고객 테이블로 승격(백필)
+        cur.execute("""
+            INSERT INTO customers (name, phone, address)
+            SELECT DISTINCT ON (customer_phone) customer_name, customer_phone, customer_address
+            FROM pre_orders
+            WHERE customer_phone IS NOT NULL AND customer_phone <> ''
+            ORDER BY customer_phone, created_at DESC
+            ON CONFLICT (phone) DO NOTHING;
+        """)
+        cur.execute("""
+            UPDATE pre_orders po
+            SET customer_id = c.id
+            FROM customers c
+            WHERE po.customer_id IS NULL AND po.customer_phone = c.phone
+              AND po.customer_phone IS NOT NULL AND po.customer_phone <> '';
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pre_orders_customer_id ON pre_orders(customer_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);")
 
         # 기본 매장 (ID=1)
         cur.execute("INSERT INTO stores (id, name) VALUES (1, '강남역점') ON CONFLICT (id) DO NOTHING;")
@@ -674,6 +746,18 @@ def transfer_page():
 @app.route("/forecast")
 def forecast_page():
     return render_template("forecast.html", active="forecast")
+
+@app.route("/customers")
+def customers_page():
+    return render_template("customers.html", active="customers")
+
+@app.route("/stocktake")
+def stocktake_page():
+    return render_template("stocktake.html", active="stocktake")
+
+@app.route("/turnover")
+def turnover_page():
+    return render_template("turnover.html", active="turnover")
 
 @app.route("/static/product_images/<path:filename>")
 def product_image(filename):
@@ -1343,6 +1427,21 @@ def api_product_detail(pid):
     except Exception as e:
         print(f"❌ 제품 수정 오류: {e}")
         return jsonify({"error": "수정 중 오류가 발생했습니다."}), 500
+
+@app.route("/api/products/<int:pid>/price_history")
+def api_product_price_history(pid):
+    cur = g.cursor
+    try:
+        cur.execute(
+            """SELECT id, product_id, field_name, old_value, new_value, changed_at, staff
+               FROM price_history WHERE product_id = %s ORDER BY changed_at DESC""",
+            (pid,)
+        )
+        rows = cur.fetchall()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        print(f"❌ 가격 변경 이력 조회 오류: {e}")
+        return jsonify([])
 
 @app.route("/api/products/batch_update", methods=["POST"])
 def api_products_batch_update():
@@ -3354,6 +3453,160 @@ def api_category_stats():
 
 
 # ---------------------------------------------------------------------------
+# API - 고객 관리 (CRM)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/customers", methods=["GET"])
+def api_customers():
+    cur = g.cursor
+    try:
+        search = normalize_search(request.args.get("search", ""))
+        vip_only = request.args.get("vip_only") == "1"
+
+        sql = """
+            SELECT c.id, c.name, c.phone, c.address, c.memo, c.is_vip, c.created_at,
+                   COUNT(po.id) as order_count,
+                   COALESCE(SUM(po.total_amount), 0) as total_spent,
+                   MAX(po.created_at) as last_order_at
+            FROM customers c
+            LEFT JOIN pre_orders po ON po.customer_id = c.id
+        """
+        where = []
+        params = []
+        if vip_only:
+            where.append("c.is_vip = 1")
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " GROUP BY c.id ORDER BY c.is_vip DESC, MAX(po.created_at) DESC NULLS LAST, c.id DESC"
+        cur.execute(sql, params)
+        rows = [dict(r) for r in cur.fetchall()]
+
+        if search:
+            rows = [r for r in rows
+                    if search in normalize_search(r.get("name") or "")
+                    or search in normalize_search(r.get("phone") or "")]
+
+        # 3회 이상 구매하거나 VIP로 지정된 고객은 "단골"로 표시
+        for r in rows:
+            r["is_regular"] = bool(r["is_vip"]) or (r["order_count"] or 0) >= 3
+        return jsonify(rows)
+    except Exception as e:
+        print(f"❌ 고객 목록 조회 오류: {e}")
+        return jsonify([])
+
+
+@app.route("/api/customers/<int:customer_id>", methods=["GET", "PUT", "DELETE"])
+def api_customer_detail(customer_id):
+    conn = get_db()
+    cur = g.cursor
+
+    if request.method == "DELETE":
+        try:
+            cur.execute("DELETE FROM customers WHERE id = %s", (customer_id,))
+            conn.commit()
+            return jsonify({"ok": True})
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ 고객 삭제 오류: {e}")
+            return jsonify({"error": "삭제 중 오류가 발생했습니다."}), 500
+
+    if request.method == "PUT":
+        try:
+            data = request.get_json(force=True)
+            fields = {}
+            for key in ("name", "phone", "address", "memo"):
+                if key in data:
+                    fields[key] = (data[key] or "").strip() or None
+            if "is_vip" in data:
+                fields["is_vip"] = 1 if data["is_vip"] else 0
+            if not fields:
+                return jsonify({"error": "변경할 내용이 없습니다."}), 400
+            set_clause = ", ".join(f"{k} = %s" for k in fields) + ", updated_at = CURRENT_TIMESTAMP"
+            params = list(fields.values()) + [customer_id]
+            cur.execute(f"UPDATE customers SET {set_clause} WHERE id = %s", params)
+            conn.commit()
+            return jsonify({"ok": True})
+        except psycopg2.errors.UniqueViolation:
+            conn.rollback()
+            return jsonify({"error": "이미 등록된 연락처입니다."}), 400
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ 고객 수정 오류: {e}")
+            return jsonify({"error": "수정 중 오류가 발생했습니다."}), 500
+
+    # GET: 상세 - 구매 이력 + 카테고리별 재구매 주기 예측
+    try:
+        cur.execute("SELECT * FROM customers WHERE id = %s", (customer_id,))
+        customer = cur.fetchone()
+        if not customer:
+            return jsonify({"error": "고객을 찾을 수 없습니다."}), 404
+        customer = dict(customer)
+
+        cur.execute("""
+            SELECT po.id, po.created_at, po.status, po.total_amount, po.payment_method,
+                   string_agg(p.name || ' x' || poi.quantity, ', ' ORDER BY poi.id) as items_summary,
+                   array_agg(DISTINCT c.name) FILTER (WHERE c.name IS NOT NULL) as categories
+            FROM pre_orders po
+            JOIN pre_order_items poi ON poi.pre_order_id = po.id
+            JOIN products p ON p.id = poi.product_id
+            LEFT JOIN categories c ON c.id = p.category_id
+            WHERE po.customer_id = %s
+            GROUP BY po.id
+            ORDER BY po.created_at DESC
+        """, (customer_id,))
+        orders = [dict(r) for r in cur.fetchall()]
+        customer["orders"] = orders
+
+        # 카테고리별 주문 날짜 목록 -> 평균 재구매 간격(일) -> 다음 예상 구매일
+        cur.execute("""
+            SELECT c.name as category_name, po.created_at::date as order_date
+            FROM pre_orders po
+            JOIN pre_order_items poi ON poi.pre_order_id = po.id
+            JOIN products p ON p.id = poi.product_id
+            LEFT JOIN categories c ON c.id = p.category_id
+            WHERE po.customer_id = %s AND c.name IS NOT NULL
+            GROUP BY c.name, po.created_at::date
+            ORDER BY c.name, po.created_at::date
+        """, (customer_id,))
+        by_category = defaultdict(list)
+        for r in cur.fetchall():
+            by_category[r["category_name"]].append(r["order_date"])
+
+        predictions = []
+        today = datetime.now().date()
+        for cat_name, dates in by_category.items():
+            if len(dates) < 2:
+                continue
+            intervals = [(dates[i + 1] - dates[i]).days for i in range(len(dates) - 1)]
+            avg_interval = round(sum(intervals) / len(intervals))
+            if avg_interval <= 0:
+                continue
+            last_date = dates[-1]
+            predicted_next = last_date + timedelta(days=avg_interval)
+            days_until = (predicted_next - today).days
+            if days_until < 0:
+                status = "지남"
+            elif days_until <= 3:
+                status = "임박"
+            else:
+                status = "여유"
+            predictions.append({
+                "category_name": cat_name,
+                "avg_interval_days": avg_interval,
+                "last_order_date": last_date.isoformat(),
+                "predicted_next_date": predicted_next.isoformat(),
+                "days_until": days_until,
+                "status": status,
+            })
+        customer["repurchase_predictions"] = predictions
+
+        return jsonify(customer)
+    except Exception as e:
+        print(f"❌ 고객 상세 조회 오류: {e}")
+        return jsonify({"error": "조회 중 오류가 발생했습니다."}), 500
+
+
+# ---------------------------------------------------------------------------
 # API - 재고 실사
 # ---------------------------------------------------------------------------
 
@@ -3367,11 +3620,15 @@ def api_stocktake():
             return jsonify({"error": "매장을 선택해주세요."}), 400
         try:
             cur.execute("""
-                SELECT p.id as product_id, p.name as product_name, ss.qty as system_qty, ss.qty as actual_qty, ss.min_qty
+                SELECT p.id as product_id, p.name as product_name,
+                       c.name as category_name, b.name as brand_name,
+                       ss.qty as system_qty, ss.qty as actual_qty, ss.min_qty
                 FROM products p
                 JOIN store_stock ss ON ss.product_id = p.id
+                LEFT JOIN categories c ON c.id = p.category_id
+                LEFT JOIN brands b ON b.id = p.brand_id
                 WHERE p.is_active = 1 AND ss.store_id = %s
-                ORDER BY p.name
+                ORDER BY COALESCE(c.name, ''), COALESCE(b.name, ''), p.name
             """, (store_id,))
             rows = cur.fetchall()
             return jsonify([dict(r) for r in rows])
@@ -3407,6 +3664,112 @@ def api_stocktake():
     except Exception as e:
         print(f"❌ 재고 실사 저장 오류: {e}")
         return jsonify({"error": "저장 중 오류가 발생했습니다."}), 500
+
+
+@app.route("/api/stocktake/export")
+def api_stocktake_export():
+    cur = g.cursor
+    store_id = request.args.get("store_id")
+    if not store_id:
+        return jsonify({"error": "매장을 선택해주세요."}), 400
+    cur.execute("""
+        SELECT c.name as category_name, b.name as brand_name, p.name as product_name, ss.qty as qty
+        FROM products p
+        JOIN store_stock ss ON ss.product_id = p.id
+        LEFT JOIN categories c ON c.id = p.category_id
+        LEFT JOIN brands b ON b.id = p.brand_id
+        WHERE p.is_active = 1 AND ss.store_id = %s
+        ORDER BY COALESCE(c.name, ''), COALESCE(b.name, ''), p.name
+    """, (store_id,))
+    rows = cur.fetchall()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['카테고리', '브랜드', '제품명', '갯수'])
+    for r in rows:
+        writer.writerow([r['category_name'] or '', r['brand_name'] or '', r['product_name'], r['qty']])
+    output.seek(0)
+    return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='실사표.csv')
+
+
+# ---------------------------------------------------------------------------
+# API - 카테고리/브랜드별 재고회전율
+# ---------------------------------------------------------------------------
+
+@app.route("/api/turnover_rate")
+def api_turnover_rate():
+    cur = g.cursor
+    try:
+        group_by = request.args.get("group_by", "category")
+        if group_by not in ("category", "brand"):
+            group_by = "category"
+        days = int(request.args.get("days", 30))
+        store_id = request.args.get("store_id")
+
+        stock_where = "p.is_active = 1"
+        stock_params = []
+        if store_id:
+            stock_where += " AND ss.store_id = %s"
+            stock_params.append(int(store_id))
+
+        sale_where = "t.type IN ('판매출고', '판매취소', '선결예약') AND t.date_time >= CURRENT_DATE - INTERVAL '%s days'"
+        sale_params = [days]
+        if store_id:
+            sale_where += " AND t.store_id = %s"
+            sale_params.append(int(store_id))
+
+        group_col = "c.name" if group_by == "category" else "b.name"
+        group_color = "c.color" if group_by == "category" else "b.color"
+
+        sql = f"""
+            WITH stock AS (
+                SELECT p.id as product_id, p.category_id, p.brand_id, SUM(ss.qty) as qty
+                FROM products p
+                JOIN store_stock ss ON ss.product_id = p.id
+                WHERE {stock_where}
+                GROUP BY p.id, p.category_id, p.brand_id
+            ),
+            sales AS (
+                SELECT t.product_id,
+                    SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity
+                             WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END) as sold_qty
+                FROM stock_transactions t
+                WHERE {sale_where}
+                GROUP BY t.product_id
+            )
+            SELECT {group_col} as group_name, {group_color} as group_color,
+                   COALESCE(SUM(stock.qty), 0) as current_qty,
+                   COALESCE(SUM(sales.sold_qty), 0) as total_sold
+            FROM stock
+            LEFT JOIN sales ON sales.product_id = stock.product_id
+            LEFT JOIN categories c ON c.id = stock.category_id
+            LEFT JOIN brands b ON b.id = stock.brand_id
+            GROUP BY {group_col}, {group_color}
+            HAVING {group_col} IS NOT NULL
+        """
+        cur.execute(sql, stock_params + sale_params)
+        rows = cur.fetchall()
+
+        result = []
+        for r in rows:
+            current_qty = r["current_qty"] or 0
+            total_sold = max(r["total_sold"] or 0, 0)
+            avg_daily = total_sold / days if days > 0 else 0
+            days_to_deplete = round(current_qty / avg_daily, 1) if avg_daily > 0 else None
+            turnover_count = round(total_sold / current_qty, 2) if current_qty > 0 else None
+            result.append({
+                "group_name": r["group_name"],
+                "group_color": r["group_color"],
+                "current_qty": current_qty,
+                "total_sold": total_sold,
+                "avg_daily_sales": round(avg_daily, 2),
+                "days_to_deplete": days_to_deplete,
+                "turnover_count": turnover_count,
+            })
+        result.sort(key=lambda x: (x["days_to_deplete"] is None, x["days_to_deplete"] if x["days_to_deplete"] is not None else 0))
+        return jsonify(result)
+    except Exception as e:
+        print(f"❌ 재고회전율 조회 오류: {e}")
+        return jsonify([])
 
 
 # ---------------------------------------------------------------------------
@@ -4203,10 +4566,12 @@ def api_pre_orders():
                 "cost_price": product["cost_price"] or 0
             })
 
+        customer_id = upsert_customer(cur, customer_name, customer_phone, customer_address)
+
         cur.execute(
-            """INSERT INTO pre_orders (store_id, customer_name, customer_phone, customer_address, request_memo, payment_method, total_amount, status)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, '대기') RETURNING id""",
-            (store_id, customer_name, customer_phone, customer_address, request_memo, payment_method, total_amount)
+            """INSERT INTO pre_orders (store_id, customer_name, customer_phone, customer_address, request_memo, payment_method, total_amount, status, customer_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, '대기', %s) RETURNING id""",
+            (store_id, customer_name, customer_phone, customer_address, request_memo, payment_method, total_amount, customer_id)
         )
         order_id = cur.fetchone()["id"]
 

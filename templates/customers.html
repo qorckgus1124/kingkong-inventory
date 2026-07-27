@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>👤 고객 관리</h1>
+<div class="subtitle">선결제 주문에서 자동으로 등록된 고객 목록입니다. 구매 이력과 재구매 시점을 확인할 수 있습니다.</div>
+
+<div class="summary-cards">
+  <div class="summary-card"><div class="label">👥 전체 고객</div><div class="value" id="statTotal">-</div></div>
+  <div class="summary-card" style="background:var(--accent-light);"><div class="label">⭐ VIP 고객</div><div class="value" id="statVip">-</div></div>
+  <div class="summary-card" style="background:var(--accent-light);"><div class="label">🔁 단골 고객</div><div class="value" id="statRegular">-</div></div>
+  <div class="summary-card"><div class="label">💰 전체 누적 결제</div><div class="value" id="statSpent">-</div></div>
+</div>
+
+<div class="card">
+  <div class="form-grid" style="grid-template-columns: 2fr 1fr;">
+    <div class="form-field"><label>검색 (이름/연락처)</label><input type="text" id="searchInput" placeholder="이름 또는 연락처" oninput="render()"></div>
+    <div class="form-field">
+      <label>&nbsp;</label>
+      <label style="display:flex; align-items:center; gap:6px; font-weight:normal; cursor:pointer; height:38px;">
+        <input type="checkbox" id="vipOnly" onchange="load()" style="width:auto;"> 단골/VIP만 보기
+      </label>
+    </div>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>고객</th><th>연락처</th><th>구분</th><th>주문 횟수</th><th>누적 결제금액</th><th>최근 방문일</th><th style="width:100px"></th>
+    </tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+</div>
+
+<!-- 고객 상세 모달 -->
+<div id="customerModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.55); z-index:1000; justify-content:center; align-items:center; backdrop-filter:blur(2px);">
+  <div style="background:var(--card-bg); border-radius:14px; padding:26px; max-width:640px; width:92%; max-height:85vh; overflow-y:auto; position:relative; box-shadow:var(--shadow);">
+    <button onclick="closeModal()" style="position:absolute; top:14px; right:18px; border:none; background:none; font-size:22px; cursor:pointer; color:var(--text-light); line-height:1;">✕</button>
+    <h2 id="modalTitle" style="color:var(--text); margin:0 0 18px 0;">👤 고객 상세</h2>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+let customers = [];
+let currentCustomer = null;
+
+function avatarColor(name) {
+  const colors = ['#4f8ff7', '#e07a5f', '#81b29a', '#9b5de5', '#f4a261', '#2a9d8f'];
+  const code = (name || '?').charCodeAt(0) || 0;
+  return colors[code % colors.length];
+}
+
+async function load() {
+  const vipOnly = document.getElementById('vipOnly').checked ? '1' : '0';
+  customers = await api(`/api/customers?vip_only=${vipOnly}`);
+  updateStats();
+  render();
+}
+
+function updateStats() {
+  const list = customers || [];
+  const vipCount = list.filter(c => c.is_vip).length;
+  const regularCount = list.filter(c => c.is_regular).length;
+  const totalSpent = list.reduce((sum, c) => sum + (c.total_spent || 0), 0);
+  document.getElementById('statTotal').textContent = fmt(list.length) + '명';
+  document.getElementById('statVip').textContent = fmt(vipCount) + '명';
+  document.getElementById('statRegular').textContent = fmt(regularCount) + '명';
+  document.getElementById('statSpent').textContent = fmt(totalSpent) + '원';
+}
+
+function render() {
+  const q = document.getElementById('searchInput').value.trim().toLowerCase();
+  const tbody = document.getElementById('tbody');
+  let list = customers || [];
+  if (q) {
+    list = list.filter(c => (c.name || '').toLowerCase().includes(q) || (c.phone || '').includes(q));
+  }
+  if (list.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><span class="empty-icon">👤</span>등록된 고객이 없습니다.<div class="empty-hint">선결제 주문이 등록되면 자동으로 고객이 등록됩니다.</div></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map((c, idx) => {
+    const initial = (c.name || '?').trim().charAt(0) || '?';
+    return `
+    <tr style="cursor:pointer;" onclick="openCustomer(${c.id})">
+      <td><span class="row-number">${idx + 1}</span></td>
+      <td>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="width:32px; height:32px; border-radius:50%; background:${avatarColor(c.name)}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; flex-shrink:0;">${escapeHtml(initial)}</div>
+          <span>${escapeHtml(c.name || '(이름 없음)')}</span>
+        </div>
+      </td>
+      <td>${escapeHtml(c.phone || '-')}</td>
+      <td>${c.is_vip ? '<span class="chip" style="background:#e07a5f;">⭐ VIP</span>' : (c.is_regular ? '<span class="chip" style="background:#4f8ff7;">🔁 단골</span>' : '<span style="color:var(--text-light);">-</span>')}</td>
+      <td>${fmt(c.order_count)}회</td>
+      <td style="font-weight:600;">${fmt(c.total_spent)}원</td>
+      <td>${fmtDate(c.last_order_at)}</td>
+      <td><button onclick="event.stopPropagation(); toggleVip(${c.id}, ${c.is_vip ? 0 : 1})">${c.is_vip ? 'VIP 해제' : 'VIP 지정'}</button></td>
+    </tr>
+  `;
+  }).join('');
+}
+
+async function toggleVip(id, value) {
+  await api(`/api/customers/${id}`, { method: 'PUT', body: JSON.stringify({ is_vip: value }) });
+  toast(value ? 'VIP로 지정했습니다.' : 'VIP를 해제했습니다.', false, '✅');
+  load();
+}
+
+async function openCustomer(id) {
+  const c = await api(`/api/customers/${id}`);
+  if (!c || c.error) return;
+  currentCustomer = c;
+  document.getElementById('modalTitle').textContent = `👤 ${c.name || '(이름 없음)'} · ${c.phone || '-'}`;
+
+  const predictionsHtml = (c.repurchase_predictions || []).length === 0
+    ? '<div class="empty-hint">재구매 주기를 예측하려면 같은 카테고리 상품을 2회 이상 주문해야 합니다.</div>'
+    : c.repurchase_predictions.map(p => {
+        const statusColor = p.status === '임박' ? '#e07a5f' : (p.status === '지남' ? '#c44536' : '#81b29a');
+        return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border);">
+          <div><strong>${escapeHtml(p.category_name)}</strong><div style="font-size:12px; color:var(--text-light); margin-top:2px;">평균 ${p.avg_interval_days}일 주기 · 최근 구매 ${p.last_order_date}</div></div>
+          <div style="text-align:right;">
+            <span class="chip" style="background:${statusColor};">${p.status}</span>
+            <div style="font-size:12px; color:var(--text-light); margin-top:4px;">예상: ${p.predicted_next_date}</div>
+          </div>
+        </div>`;
+      }).join('');
+
+  const ordersHtml = (c.orders || []).length === 0
+    ? '<tr><td colspan="4"><div class="empty-hint" style="padding:12px 0;">구매 이력이 없습니다.</div></td></tr>'
+    : c.orders.map(o => `
+        <tr>
+          <td>${fmtDateTime(o.created_at)}</td>
+          <td>${escapeHtml(o.items_summary || '-')}</td>
+          <td>${fmt(o.total_amount)}원</td>
+          <td>${escapeHtml(o.status)}</td>
+        </tr>`).join('');
+
+  document.getElementById('modalBody').innerHTML = `
+    <div class="form-field" style="margin-bottom:20px;"><label>메모</label><input type="text" id="custMemo" value="${escapeHtml(c.memo || '')}" placeholder="메모 입력" onblur="updateMemo(${c.id}, this.value)"></div>
+    <h4 style="color:var(--text); margin-bottom:8px;">🔮 재구매 주기 예측</h4>
+    <div style="margin-bottom:20px;">${predictionsHtml}</div>
+    <h4 style="color:var(--text); margin-bottom:8px;">📋 구매 이력</h4>
+    <div class="table-wrap" style="max-height:220px; overflow-y:auto;">
+      <table>
+        <thead><tr><th>일시</th><th>주문 내역</th><th>금액</th><th>상태</th></tr></thead>
+        <tbody>${ordersHtml}</tbody>
+      </table>
+    </div>
+  `;
+  document.getElementById('customerModal').style.display = 'flex';
+}
+
+async function updateMemo(id, value) {
+  await api(`/api/customers/${id}`, { method: 'PUT', body: JSON.stringify({ memo: value.trim() || null }) });
+}
+
+function closeModal() {
+  document.getElementById('customerModal').style.display = 'none';
+}
+
+load();
+</script>
+{% endblock %}

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🔁 카테고리·브랜드별 재고회전율</h1>
+<div class="subtitle">최근 판매 데이터를 기준으로 며칠 만에 재고가 소진되는지, 얼마나 자주 회전하는지 확인합니다.</div>
+
+<div class="summary-cards">
+  <div class="summary-card"><div class="label">🚨 7일 이내 소진 예상</div><div class="value" id="statUrgent">-</div></div>
+  <div class="summary-card"><div class="label">⏳ 14일 이내 소진 예상</div><div class="value" id="statSoon">-</div></div>
+  <div class="summary-card" style="background:var(--accent-light);"><div class="label">📦 여유 재고</div><div class="value" id="statSafe">-</div></div>
+</div>
+
+<div class="card">
+  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+    <div class="form-field">
+      <label>기준</label>
+      <div class="tab-row">
+        <button class="tab-btn active" id="tab_category" onclick="switchGroup('category')">카테고리별</button>
+        <button class="tab-btn" id="tab_brand" onclick="switchGroup('brand')">브랜드별</button>
+      </div>
+    </div>
+    <div class="form-field"><label>매장</label><select id="storeSelect" onchange="load()"><option value="">전체 매장</option></select></div>
+    <div class="form-field"><label>분석 기간</label>
+      <select id="daysSelect" onchange="load()">
+        <option value="7">최근 7일</option>
+        <option value="14">최근 14일</option>
+        <option value="30" selected>최근 30일</option>
+        <option value="90">최근 90일</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th id="groupHeader">카테고리</th><th>현재 재고</th><th>기간 내 판매량</th><th>일평균 판매</th><th style="width:200px;">소진 예상 일수</th><th>회전 횟수</th>
+    </tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+</div>
+<div style="display:flex; gap:16px; margin-top:12px; font-size:12px; color:var(--text-light); align-items:center;">
+  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:#c44536; margin-right:4px;"></span>7일 이하 - 재고 부족 위험</span>
+  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:#e07a5f; margin-right:4px;"></span>14일 이하 - 주의</span>
+  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:#81b29a; margin-right:4px;"></span>여유</span>
+</div>
+
+<script>
+let groupBy = 'category';
+
+async function loadStores() {
+  const stores = await api('/api/stores');
+  const sel = document.getElementById('storeSelect');
+  sel.innerHTML = '<option value="">전체 매장</option>' + (stores || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+}
+
+function switchGroup(g) {
+  groupBy = g;
+  document.getElementById('tab_category').classList.toggle('active', g === 'category');
+  document.getElementById('tab_brand').classList.toggle('active', g === 'brand');
+  document.getElementById('groupHeader').textContent = g === 'category' ? '카테고리' : '브랜드';
+  load();
+}
+
+async function load() {
+  const storeId = document.getElementById('storeSelect').value;
+  const days = document.getElementById('daysSelect').value;
+  const params = new URLSearchParams({ group_by: groupBy, days });
+  if (storeId) params.set('store_id', storeId);
+  const rows = await api(`/api/turnover_rate?${params.toString()}`);
+  updateStats(rows || []);
+  render(rows || []);
+}
+
+function updateStats(rows) {
+  const urgent = rows.filter(r => r.days_to_deplete !== null && r.days_to_deplete <= 7).length;
+  const soon = rows.filter(r => r.days_to_deplete !== null && r.days_to_deplete > 7 && r.days_to_deplete <= 14).length;
+  const safe = rows.filter(r => r.days_to_deplete === null || r.days_to_deplete > 14).length;
+  document.getElementById('statUrgent').textContent = fmt(urgent) + '개';
+  document.getElementById('statSoon').textContent = fmt(soon) + '개';
+  document.getElementById('statSafe').textContent = fmt(safe) + '개';
+}
+
+function render(rows) {
+  const tbody = document.getElementById('tbody');
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">📊</span>표시할 데이터가 없습니다.</div></td></tr>';
+    return;
+  }
+  const maxDeplete = Math.max(...rows.map(r => r.days_to_deplete || 0), 30);
+  tbody.innerHTML = rows.map(r => {
+    let depleteLabel = '재고 소진 없음';
+    let depleteColor = '#81b29a';
+    let barPercent = 100;
+    if (r.days_to_deplete !== null && r.days_to_deplete !== undefined) {
+      depleteLabel = `${r.days_to_deplete}일`;
+      barPercent = Math.min(100, Math.round((r.days_to_deplete / maxDeplete) * 100));
+      if (r.days_to_deplete <= 7) depleteColor = '#c44536';
+      else if (r.days_to_deplete <= 14) depleteColor = '#e07a5f';
+      else depleteColor = '#81b29a';
+    }
+    return `
+    <tr>
+      <td><span class="chip" style="background:${r.group_color || '#8a8f98'};">${escapeHtml(r.group_name)}</span></td>
+      <td>${fmt(r.current_qty)}</td>
+      <td>${fmt(r.total_sold)}</td>
+      <td>${r.avg_daily_sales}</td>
+      <td>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="flex:1; background:var(--input-bg); border-radius:4px; height:8px; overflow:hidden;">
+            <div style="width:${barPercent}%; height:100%; background:${depleteColor};"></div>
+          </div>
+          <span style="color:${depleteColor}; font-weight:600; white-space:nowrap; font-size:12px;">${depleteLabel}</span>
+        </div>
+      </td>
+      <td>${r.turnover_count !== null && r.turnover_count !== undefined ? r.turnover_count + '회' : '-'}</td>
+    </tr>`;
+  }).join('');
+}
+
+(async () => {
+  await loadStores();
+  load();
+})();
+</script>
+{% endblock %}
