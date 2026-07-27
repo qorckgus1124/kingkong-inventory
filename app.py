@@ -2330,7 +2330,20 @@ def api_daily_report():
                         for typ in sorted(cat_types):
                             if brand in grouped[cat][typ]:
                                 all_items.extend(grouped[cat][typ][brand])
-                        for product, qty, extra in sorted(all_items, key=lambda x: x[0]):
+                        # 같은 제품명 + 같은 부가정보(이동 정보 등)는 수량을 합쳐서 한 줄로 표시
+                        # (예: 같은 제품을 결제 1개 + 서비스 1개로 나눠 등록해도 "제품명 2"로 합산됨)
+                        merged_qty = {}
+                        merged_order = []
+                        for product, qty, extra in all_items:
+                            key = (product, extra)
+                            if key not in merged_qty:
+                                merged_qty[key] = 0
+                                merged_order.append(key)
+                            merged_qty[key] += qty
+                        for product, extra in sorted(merged_order, key=lambda x: x[0]):
+                            qty = merged_qty[(product, extra)]
+                            if qty == 0:
+                                continue
                             if extra:
                                 block.append(f"{product} {qty}{extra}")
                             else:
