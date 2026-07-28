@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block content %}
+<h1><i class="ti ti-bolt page-icon"></i>빠른 입출고</h1>
+<div class="subtitle">숫자 패드로 빠르게 수량을 입력하고 연속으로 입출고를 등록합니다. (모바일 최적화)
+  <a href="/transactions" style="margin-left:8px;">상세 입출고 관리 →</a>
+</div>
+
+<div class="qio-wrap">
+  <!-- 매장 / 유형 선택 -->
+  <div class="card qio-card">
+    <div class="form-field" style="margin-bottom:10px;">
+      <label>매장 *</label>
+      <select id="qioStoreSelect"></select>
+    </div>
+    <div class="form-field">
+      <label>유형 *</label>
+      <div class="qio-type-tabs" id="qioTypeTabs">
+        <button type="button" class="qio-type-btn active" data-type="입고">📥 입고</button>
+        <button type="button" class="qio-type-btn" data-type="판매출고">💸 판매출고</button>
+        <button type="button" class="qio-type-btn" data-type="반품">↩️ 반품</button>
+        <button type="button" class="qio-type-btn" data-type="폐기">🗑️ 폐기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 제품 검색 -->
+  <div class="card qio-card">
+    <div class="form-field autocomplete-wrap">
+      <label>제품명 *</label>
+      <input type="text" id="qioProductInput" placeholder="제품명을 입력하세요" autocomplete="off">
+      <div class="autocomplete-list" id="qioAcList"></div>
+    </div>
+    <div id="qioSelectedProduct" class="qio-selected-product" style="display:none;"></div>
+  </div>
+
+  <!-- 숫자 패드 -->
+  <div class="card qio-card">
+    <label>수량</label>
+    <div class="qio-qty-display" id="qioQtyDisplay">0</div>
+    <div class="keypad-grid">
+      <button type="button" class="keypad-btn" data-key="1">1</button>
+      <button type="button" class="keypad-btn" data-key="2">2</button>
+      <button type="button" class="keypad-btn" data-key="3">3</button>
+      <button type="button" class="keypad-btn" data-key="4">4</button>
+      <button type="button" class="keypad-btn" data-key="5">5</button>
+      <button type="button" class="keypad-btn" data-key="6">6</button>
+      <button type="button" class="keypad-btn" data-key="7">7</button>
+      <button type="button" class="keypad-btn" data-key="8">8</button>
+      <button type="button" class="keypad-btn" data-key="9">9</button>
+      <button type="button" class="keypad-btn keypad-clear" data-key="clear">C</button>
+      <button type="button" class="keypad-btn" data-key="0">0</button>
+      <button type="button" class="keypad-btn keypad-back" data-key="back">⌫</button>
+    </div>
+    <div class="qio-quick-add">
+      <button type="button" onclick="qioQuickAdd(1)">+1</button>
+      <button type="button" onclick="qioQuickAdd(5)">+5</button>
+      <button type="button" onclick="qioQuickAdd(10)">+10</button>
+    </div>
+  </div>
+
+  <button type="button" class="primary qio-submit-btn" id="qioSubmitBtn" onclick="qioSubmit()">등록하기</button>
+
+  <!-- 최근 등록 내역 (이 화면에서 방금 등록한 것들, 세션 한정) -->
+  <div class="card qio-card" id="qioRecentCard" style="display:none;">
+    <div class="qio-recent-title">✅ 방금 등록됨</div>
+    <div id="qioRecentList"></div>
+  </div>
+</div>
+
+<script>
+let qioType = '입고';
+let qioQty = '';
+let qioSelectedProduct = null;
+let qioRecent = [];
+
+async function qioLoadStores() {
+  const stores = await api('/api/stores');
+  const sel = document.getElementById('qioStoreSelect');
+  sel.innerHTML = (stores || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  const saved = localStorage.getItem('global_store_id');
+  if (saved && stores.some(s => s.id == saved)) {
+    sel.value = saved;
+  } else if (stores.length > 0) {
+    sel.value = stores[0].id;
+  }
+  sel.addEventListener('change', () => {
+    localStorage.setItem('global_store_id', sel.value);
+    qioRefreshSelectedProductStock();
+  });
+}
+
+document.getElementById('qioTypeTabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.qio-type-btn');
+  if (!btn) return;
+  qioType = btn.dataset.type;
+  document.querySelectorAll('.qio-type-btn').forEach(b => b.classList.toggle('active', b === btn));
+});
+
+// ---------- 제품 검색 ----------
+const qioInput = document.getElementById('qioProductInput');
+const qioAcGuard = makeSearchGuard();
+let qioAcTimer;
+qioInput.addEventListener('input', () => {
+  qioSelectedProduct = null;
+  document.getElementById('qioSelectedProduct').style.display = 'none';
+  clearTimeout(qioAcTimer);
+  const q = qioInput.value.trim();
+  const listEl = document.getElementById('qioAcList');
+  if (!q) { listEl.classList.remove('show'); return; }
+  qioAcTimer = setTimeout(async () => {
+    const myToken = qioAcGuard.next();
+    const storeId = document.getElementById('qioStoreSelect').value;
+    const res = await api('/api/products/search?q=' + encodeURIComponent(q) + (storeId ? '&store_id=' + storeId : ''));
+    if (!qioAcGuard.isCurrent(myToken)) return;
+    qioRenderAc(res || []);
+  }, 200);
+});
+
+function qioRenderAc(items) {
+  const listEl = document.getElementById('qioAcList');
+  if (!items.length) { listEl.classList.remove('show'); return; }
+  listEl.innerHTML = items.map((p, i) => `
+    <div class="autocomplete-item" onclick="qioPickProduct(${i})">
+      ${escapeHtml(p.name)}
+      ${p.brand_name ? `<span class="brand-tag" style="background:${p.brand_color || '#8a8f98'}; margin-left:6px;">${escapeHtml(p.brand_name)}</span>` : ''}
+      <div class="meta">현재고 ${fmt(p.qty)}개</div>
+    </div>
+  `).join('');
+  listEl.classList.add('show');
+  listEl._items = items;
+}
+
+function qioPickProduct(i) {
+  const listEl = document.getElementById('qioAcList');
+  const p = (listEl._items || [])[i];
+  if (!p) return;
+  qioSelectedProduct = p;
+  qioInput.value = p.name;
+  listEl.classList.remove('show');
+  qioRenderSelectedProduct();
+}
+
+async function qioRefreshSelectedProductStock() {
+  if (!qioSelectedProduct) return;
+  const storeId = document.getElementById('qioStoreSelect').value;
+  const res = await api('/api/products/search?q=' + encodeURIComponent(qioSelectedProduct.name) + (storeId ? '&store_id=' + storeId : ''));
+  const match = (res || []).find(p => p.id === qioSelectedProduct.id);
+  if (match) { qioSelectedProduct = match; qioRenderSelectedProduct(); }
+}
+
+function qioRenderSelectedProduct() {
+  const box = document.getElementById('qioSelectedProduct');
+  if (!qioSelectedProduct) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.innerHTML = `
+    <div class="qio-sp-name">${escapeHtml(qioSelectedProduct.name)}</div>
+    <div class="qio-sp-meta">현재고 <strong>${fmt(qioSelectedProduct.qty)}개</strong> · 판매가 ${fmt(qioSelectedProduct.sale_price)}원</div>
+  `;
+}
+
+// ---------- 숫자 패드 ----------
+document.querySelector('.keypad-grid').addEventListener('click', (e) => {
+  const btn = e.target.closest('.keypad-btn');
+  if (!btn) return;
+  const key = btn.dataset.key;
+  if (key === 'clear') {
+    qioQty = '';
+  } else if (key === 'back') {
+    qioQty = qioQty.slice(0, -1);
+  } else {
+    if (qioQty.length >= 6) return; // 과도한 자리수 방지
+    qioQty = qioQty === '0' ? key : qioQty + key;
+  }
+  qioUpdateQtyDisplay();
+});
+
+function qioQuickAdd(n) {
+  const cur = parseInt(qioQty || '0', 10);
+  qioQty = String(cur + n);
+  qioUpdateQtyDisplay();
+}
+
+function qioUpdateQtyDisplay() {
+  document.getElementById('qioQtyDisplay').textContent = qioQty || '0';
+}
+
+// ---------- 등록 ----------
+async function qioSubmit() {
+  const storeId = document.getElementById('qioStoreSelect').value;
+  const qty = parseInt(qioQty || '0', 10);
+
+  if (!storeId) { toast('매장을 선택해주세요.', true, '⚠️'); return; }
+  if (!qioSelectedProduct) { toast('제품을 선택해주세요.', true, '⚠️'); return; }
+  if (!qty || qty <= 0) { toast('수량을 입력해주세요.', true, '⚠️'); return; }
+
+  const btn = document.getElementById('qioSubmitBtn');
+  btn.disabled = true;
+  try {
+    const res = await api('/api/transactions', {
+      method: 'POST',
+      body: JSON.stringify({
+        product_id: qioSelectedProduct.id,
+        store_id: storeId,
+        type: qioType,
+        quantity: qty,
+      }),
+    });
+    if (res && res.ok) {
+      toast(`${qioType} ${fmt(qty)}개 등록완료`, false, '✅');
+      qioRecent.unshift({ name: qioSelectedProduct.name, type: qioType, qty });
+      qioRecent = qioRecent.slice(0, 8);
+      qioRenderRecent();
+      // 다음 제품을 빠르게 이어서 등록할 수 있도록 제품/수량만 초기화 (매장·유형은 유지)
+      qioQty = '';
+      qioUpdateQtyDisplay();
+      qioSelectedProduct = null;
+      qioInput.value = '';
+      document.getElementById('qioSelectedProduct').style.display = 'none';
+      qioInput.focus();
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function qioRenderRecent() {
+  const card = document.getElementById('qioRecentCard');
+  const list = document.getElementById('qioRecentList');
+  if (!qioRecent.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  list.innerHTML = qioRecent.map(r => `
+    <div class="qio-recent-item">
+      <span>${escapeHtml(r.name)}</span>
+      <span class="qio-recent-tag">${escapeHtml(r.type)} ${fmt(r.qty)}개</span>
+    </div>
+  `).join('');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  qioLoadStores();
+  qioUpdateQtyDisplay();
+});
+</script>
+{% endblock %}

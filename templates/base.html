@@ -73,6 +73,7 @@
         <a class="nav-item {{ 'active' if active=='brands' else '' }}" href="/brands" data-label="브랜드 관리"><i class="ti ti-tags nav-ic"></i>브랜드 관리</a>
         <a class="nav-item {{ 'active' if active=='categories' else '' }}" href="/categories" data-label="카테고리 관리"><i class="ti ti-list-details nav-ic"></i>카테고리 관리</a>
         <a class="nav-item {{ 'active' if active=='transactions' else '' }}" href="/transactions" data-shortcut="t" data-label="입출고 관리"><i class="ti ti-transfer nav-ic"></i>입출고 관리</a>
+        <a class="nav-item {{ 'active' if active=='quick_io' else '' }}" href="/quick_io" data-label="빠른 입출고"><i class="ti ti-bolt nav-ic"></i>빠른 입출고</a>
         <a class="nav-item {{ 'active' if active=='transfer' else '' }}" href="/transfer" data-label="재고 이동"><i class="ti ti-arrows-shuffle nav-ic"></i>재고 이동</a>
         <a class="nav-item {{ 'active' if active=='stocktake' else '' }}" href="/stocktake" data-label="재고 실사"><i class="ti ti-clipboard-check nav-ic"></i>재고 실사</a>
         <a class="nav-item {{ 'active' if active=='timemachine' else '' }}" href="/timemachine" data-label="타임머신 조회"><i class="ti ti-clock-back nav-ic"></i>타임머신 조회</a>
@@ -176,7 +177,7 @@ function filterNavItems(query) {
     <i class="ti ti-package nav-icon"></i>
     <span class="nav-label">제품</span>
   </a>
-  <a href="/transactions" class="{{ 'active' if active=='transactions' else '' }}">
+  <a href="/quick_io" class="{{ 'active' if active=='quick_io' else '' }}">
     <i class="ti ti-transfer nav-icon"></i>
     <span class="nav-label">입출고</span>
   </a>

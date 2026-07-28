@@ -1119,3 +1119,93 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
 @media (min-width: 769px) {
   .mobile-bottom-nav { display: none !important; }
 }
+
+/* ---------- 빠른 입출고 (숫자 패드형) ---------- */
+.qio-wrap { max-width: 480px; margin: 0 auto 30px; display: flex; flex-direction: column; gap: 12px; }
+.qio-card { padding: 16px; }
+
+.qio-type-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.qio-type-btn {
+  padding: 10px 4px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+  min-height: 44px;
+}
+.qio-type-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+.qio-selected-product {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--accent-light);
+}
+.qio-sp-name { font-weight: 700; font-size: 14px; }
+.qio-sp-meta { font-size: 12px; color: var(--text-light); margin-top: 2px; }
+
+.qio-qty-display {
+  text-align: center;
+  font-size: 42px;
+  font-weight: 700;
+  padding: 14px 0 18px;
+  color: var(--text);
+  letter-spacing: 1px;
+}
+.keypad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.keypad-btn {
+  min-height: 56px;
+  font-size: 20px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.keypad-btn:active { background: var(--accent-light); }
+.keypad-btn.keypad-clear { color: var(--danger); }
+.keypad-btn.keypad-back { color: var(--text-light); font-size: 18px; }
+
+.qio-quick-add { display: flex; gap: 8px; margin-top: 10px; }
+.qio-quick-add button {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.qio-submit-btn {
+  width: 100%;
+  padding: 16px 0;
+  font-size: 17px;
+  font-weight: 700;
+  border-radius: 10px;
+}
+
+.qio-recent-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
+.qio-recent-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.qio-recent-item:last-child { border-bottom: none; }
+.qio-recent-tag { color: var(--accent); font-weight: 600; font-size: 12px; }
+
+@media (max-width: 480px) {
+  .qio-qty-display { font-size: 36px; }
+  .keypad-btn { min-height: 52px; font-size: 18px; }
+}

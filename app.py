@@ -825,6 +825,10 @@ def customers_page():
 def stocktake_page():
     return render_template("stocktake.html", active="stocktake")
 
+@app.route("/quick_io")
+def quick_io_page():
+    return render_template("quick_io.html", active="quick_io")
+
 @app.route("/turnover")
 def turnover_page():
     return render_template("turnover.html", active="turnover")
