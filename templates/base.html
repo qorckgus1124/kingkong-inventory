@@ -26,6 +26,7 @@
 <meta name="twitter:image" content="https://kingkong-inventory.onrender.com/static/link-thumbnail.jpg">
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/common.js"></script>
 </head>
@@ -45,47 +46,78 @@
 
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <div class="brand">📦 재고·판매관리</div>
-    <div class="store-selector" style="padding: 8px 10px; margin-bottom: 10px;">
+    <div class="brand"><span class="brand-mark"><i class="ti ti-box"></i></span>재고·판매관리</div>
+    <div class="store-selector" style="padding: 0 2px; margin-bottom: 10px;">
       <select id="globalStoreSelect" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:13px; cursor:pointer;">
         <option value="">🏪 매장 선택</option>
       </select>
     </div>
-    <nav>
-      <a class="nav-item {{ 'active' if active=='dashboard' else '' }}" href="/dashboard" data-shortcut="d">🏠 대시보드</a>
-      <a class="nav-item {{ 'active' if active=='sales' else '' }}" href="/sales" data-shortcut="s">💰 판매 등록</a>
-      <a class="nav-item {{ 'active' if active=='products' else '' }}" href="/" data-shortcut="p">📦 제품 관리</a>
-      <a class="nav-item {{ 'active' if active=='transactions' else '' }}" href="/transactions" data-shortcut="t">🔄 입출고 관리</a>
-      <a class="nav-item {{ 'active' if active=='brands' else '' }}" href="/brands">🏷️ 브랜드 관리</a>
-      <a class="nav-item {{ 'active' if active=='performance' else '' }}" href="/performance">📊 판매 실적</a>
-      <a class="nav-item {{ 'active' if active=='statistics' else '' }}" href="/statistics">📈 매출 통계</a>
-      <a class="nav-item {{ 'active' if active=='daily_report' else '' }}" href="/daily_report">📋 금일 보고 목록</a>
-      <a class="nav-item {{ 'active' if active=='recommend_order' else '' }}" href="/recommend_order">📦 발주 추천</a>
-      <a class="nav-item {{ 'active' if active=='forecast' else '' }}" href="/forecast">📊 출고 예측</a>
-      <a class="nav-item {{ 'active' if active=='transfer' else '' }}" href="/transfer">🔄 재고 이동</a>
-      <a class="nav-item {{ 'active' if active=='categories' else '' }}" href="/categories">🏷️ 카테고리 관리</a>
-      <a class="nav-item {{ 'active' if active=='stores' else '' }}" href="/stores">🏬 매장 관리</a>
-      <a class="nav-item {{ 'active' if active=='suppliers' else '' }}" href="/suppliers">🤝 거래처 관리</a>
-      <a class="nav-item {{ 'active' if active=='customers' else '' }}" href="/customers">👤 고객 관리</a>
-      <a class="nav-item {{ 'active' if active=='stocktake' else '' }}" href="/stocktake">🧾 재고 실사</a>
-      <a class="nav-item {{ 'active' if active=='turnover' else '' }}" href="/turnover">🔁 재고회전율</a>
-      <a class="nav-item {{ 'active' if active=='settings' else '' }}" href="/settings">⚙️ 설정</a>
+    <div class="nav-search">
+      <i class="ti ti-search"></i>
+      <input type="text" id="navSearchInput" placeholder="메뉴 검색" oninput="filterNavItems(this.value)">
+      <span class="kbd">/</span>
+    </div>
+    <nav id="sidebarNav">
+      <div class="nav-group">
+        <div class="nav-group-label">홈</div>
+        <a class="nav-item {{ 'active' if active=='dashboard' else '' }}" href="/dashboard" data-shortcut="d" data-label="대시보드"><i class="ti ti-layout-dashboard nav-ic"></i>대시보드</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">판매</div>
+        <a class="nav-item {{ 'active' if active=='sales' else '' }}" href="/sales" data-shortcut="s" data-label="판매 등록"><i class="ti ti-cash nav-ic"></i>판매 등록</a>
+        <a class="nav-item {{ 'active' if active=='daily_report' else '' }}" href="/daily_report" data-label="금일 보고 목록"><i class="ti ti-clipboard-list nav-ic"></i>금일 보고 목록</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">재고</div>
+        <a class="nav-item {{ 'active' if active=='products' else '' }}" href="/" data-shortcut="p" data-label="제품 관리"><i class="ti ti-package nav-ic"></i>제품 관리</a>
+        <a class="nav-item {{ 'active' if active=='brands' else '' }}" href="/brands" data-label="브랜드 관리"><i class="ti ti-tags nav-ic"></i>브랜드 관리</a>
+        <a class="nav-item {{ 'active' if active=='categories' else '' }}" href="/categories" data-label="카테고리 관리"><i class="ti ti-list-details nav-ic"></i>카테고리 관리</a>
+        <a class="nav-item {{ 'active' if active=='transactions' else '' }}" href="/transactions" data-shortcut="t" data-label="입출고 관리"><i class="ti ti-transfer nav-ic"></i>입출고 관리</a>
+        <a class="nav-item {{ 'active' if active=='transfer' else '' }}" href="/transfer" data-label="재고 이동"><i class="ti ti-arrows-shuffle nav-ic"></i>재고 이동</a>
+        <a class="nav-item {{ 'active' if active=='stocktake' else '' }}" href="/stocktake" data-label="재고 실사"><i class="ti ti-clipboard-check nav-ic"></i>재고 실사</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">분석</div>
+        <a class="nav-item {{ 'active' if active=='performance' else '' }}" href="/performance" data-label="판매 실적"><i class="ti ti-chart-bar nav-ic"></i>판매 실적</a>
+        <a class="nav-item {{ 'active' if active=='statistics' else '' }}" href="/statistics" data-label="매출 통계"><i class="ti ti-chart-line nav-ic"></i>매출 통계</a>
+        <a class="nav-item {{ 'active' if active=='turnover' else '' }}" href="/turnover" data-label="재고회전율"><i class="ti ti-refresh nav-ic"></i>재고회전율</a>
+        <a class="nav-item {{ 'active' if active=='recommend_order' else '' }}" href="/recommend_order" data-label="발주 추천"><i class="ti ti-bulb nav-ic"></i>발주 추천</a>
+        <a class="nav-item {{ 'active' if active=='forecast' else '' }}" href="/forecast" data-label="출고 예측"><i class="ti ti-trending-up nav-ic"></i>출고 예측</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">관리</div>
+        <a class="nav-item {{ 'active' if active=='stores' else '' }}" href="/stores" data-label="매장 관리"><i class="ti ti-building-store nav-ic"></i>매장 관리</a>
+        <a class="nav-item {{ 'active' if active=='suppliers' else '' }}" href="/suppliers" data-label="거래처 관리"><i class="ti ti-handshake nav-ic"></i>거래처 관리</a>
+        <a class="nav-item {{ 'active' if active=='customers' else '' }}" href="/customers" data-label="고객 관리"><i class="ti ti-users nav-ic"></i>고객 관리</a>
+        <a class="nav-item {{ 'active' if active=='settings' else '' }}" href="/settings" data-label="설정"><i class="ti ti-settings nav-ic"></i>설정</a>
+      </div>
     </nav>
     <div class="sidebar-footer">
       <button class="theme-toggle" onclick="toggleTheme()" id="themeToggle">🌙 다크 모드</button>
-      <div style="text-align:center; font-size:11px; color:var(--text-light);">3~6단계 통합</div>
     </div>
   </aside>
 
   <main class="content">
     <div class="breadcrumb">
-      <span>🏠</span>
-      <span class="sep">›</span>
       <span class="current">{{ active|replace('_', ' ')|title }}</span>
     </div>
     {% block content %}{% endblock %}
   </main>
 </div>
+
+<script>
+function filterNavItems(query) {
+  const q = query.trim().toLowerCase();
+  document.querySelectorAll('#sidebarNav .nav-item').forEach(item => {
+    const label = (item.getAttribute('data-label') || item.textContent).toLowerCase();
+    item.classList.toggle('hidden-by-search', q.length > 0 && !label.includes(q));
+  });
+  document.querySelectorAll('#sidebarNav .nav-group').forEach(group => {
+    const visible = group.querySelectorAll('.nav-item:not(.hidden-by-search)').length > 0;
+    group.style.display = visible ? '' : 'none';
+  });
+}
+</script>
 
 <!-- 플로팅 패널 -->
 <div class="floating-panel" id="floatingPanel">

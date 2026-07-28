@@ -2,55 +2,70 @@
 /* 기본 변수 및 리셋 */
 /* ============================================================ */
 :root {
-  --bg: #FBFBFA;
-  --text: #37352F;
-  --text-light: #8a8f98;
-  --border: #ebebea;
-  --accent: #4f8ff7;
-  --accent-light: #eaf1fe;
-  --danger: #e05252;
-  --danger-light: #fdecec;
+  --bg: #FAFAFA;
+  --text: #1C1C1F;
+  --text-light: #6B6F76;
+  --text-muted: #9799A1;
+  --border: #E4E4E7;
+  --border-strong: #D4D4D8;
+  --accent: #3B6FE0;
+  --accent-hover: #2F5BC4;
+  --accent-light: #EBF1FD;
+  --danger: #D6473C;
+  --danger-light: #FBEAE9;
+  --success: #16794F;
+  --success-light: #E7F5EE;
+  --warning: #9A6400;
+  --warning-light: #FDF3DE;
   --radius: 8px;
+  --radius-card: 12px;
   --card-bg: #ffffff;
   --sidebar-bg: #ffffff;
-  --hover-bg: #f1f1f0;
+  --hover-bg: #F2F2F3;
   --input-bg: #ffffff;
-  --shadow: 0 4px 20px rgba(0,0,0,0.06);
-  --transition: 0.3s ease;
-  --textarea-bg: #f9f9f8;
+  --shadow: 0 1px 2px rgba(16,16,20,0.04), 0 4px 12px rgba(16,16,20,0.05);
+  --transition: 0.15s ease;
+  --textarea-bg: #f9f9fa;
   --calendar-bg: #ffffff;
-  --calendar-empty-bg: #f9f9f8;
-  --calendar-today-bg: #eaf1fe;
-  --calendar-text: #37352F;
+  --calendar-empty-bg: #f9f9fa;
+  --calendar-today-bg: #EBF1FD;
+  --calendar-text: #1C1C1F;
   --calendar-border: var(--border);
   --page-bg: var(--bg);
 }
 
 /* 다크 모드 */
 body.dark-mode {
-  --bg: #1a1a1a;
-  --text: #e8e8e8;
-  --text-light: #9a9a9a;
-  --border: #3a3a3a;
-  --accent: #6b9fff;
-  --accent-light: #1e2a3a;
-  --danger: #ff6b6b;
-  --danger-light: #3a1a1a;
-  --card-bg: #252525;
-  --sidebar-bg: #1f1f1f;
-  --hover-bg: #333333;
-  --input-bg: #2a2a2a;
-  --shadow: 0 4px 20px rgba(0,0,0,0.4);
-  --textarea-bg: #2a2a2a;
-  --calendar-bg: #2a2a2a;
-  --calendar-empty-bg: #1f1f1f;
-  --calendar-today-bg: #1e2a3a;
-  --calendar-text: #e8e8e8;
-  --calendar-border: #3a3a3a;
-  --page-bg: #1a1a1a;
+  --bg: #17171A;
+  --text: #EDEDEF;
+  --text-light: #A0A3AB;
+  --text-muted: #77797F;
+  --border: #2C2C31;
+  --border-strong: #3A3A40;
+  --accent: #6E96F0;
+  --accent-hover: #86A8F5;
+  --accent-light: #1E2A44;
+  --danger: #F0665C;
+  --danger-light: #3A1E1C;
+  --success: #4BC190;
+  --success-light: #16302A;
+  --warning: #E3A93C;
+  --warning-light: #362A11;
+  --card-bg: #1D1D20;
+  --sidebar-bg: #19191C;
+  --hover-bg: #232326;
+  --input-bg: #202023;
+  --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.3);
+  --textarea-bg: #202023;
+  --calendar-bg: #1D1D20;
+  --calendar-empty-bg: #19191C;
+  --calendar-today-bg: #1E2A44;
+  --calendar-text: #EDEDEF;
+  --calendar-border: #2C2C31;
+  --page-bg: #17171A;
 }
 
-* { box-sizing: border-box; transition: background-color var(--transition), color var(--transition), border-color var(--transition), box-shadow var(--transition), transform 0.2s ease; }
+* { box-sizing: border-box; transition: background-color var(--transition), color var(--transition), border-color var(--transition), box-shadow var(--transition); }
 
 body {
   margin: 0;
@@ -60,37 +75,6 @@ body {
   font-size: 14px;
   transition: background-color var(--transition), color var(--transition);
 }
-
-/* ---------- 탭별 배경색 ---------- */
-body[data-page="dashboard"] .content { --page-bg: #f0f4ff; }
-body[data-page="sales"] .content { --page-bg: #fff8f0; }
-body[data-page="products"] .content { --page-bg: #f5f5f5; }
-body[data-page="transactions"] .content { --page-bg: #f0faf0; }
-body[data-page="brands"] .content { --page-bg: #f5f0ff; }
-body[data-page="performance"] .content { --page-bg: #f8f0ff; }
-body[data-page="statistics"] .content { --page-bg: #f0f5ff; }
-body[data-page="daily_report"] .content { --page-bg: #fafff0; }
-body[data-page="recommend_order"] .content { --page-bg: #fff5f5; }
-body[data-page="transfer"] .content { --page-bg: #f5faff; }
-body[data-page="stores"] .content { --page-bg: #f5faff; }
-body[data-page="categories"] .content { --page-bg: #f5f5ff; }
-body[data-page="suppliers"] .content { --page-bg: #f5f5f5; }
-body[data-page="settings"] .content { --page-bg: #f5f5f5; }
-
-body.dark-mode[data-page="dashboard"] .content { --page-bg: #1a1a2e; }
-body.dark-mode[data-page="sales"] .content { --page-bg: #1e1a1a; }
-body.dark-mode[data-page="products"] .content { --page-bg: #1a1a1a; }
-body.dark-mode[data-page="transactions"] .content { --page-bg: #1a1e1a; }
-body.dark-mode[data-page="brands"] .content { --page-bg: #1a1a2e; }
-body.dark-mode[data-page="performance"] .content { --page-bg: #1e1a2e; }
-body.dark-mode[data-page="statistics"] .content { --page-bg: #1a1a2e; }
-body.dark-mode[data-page="daily_report"] .content { --page-bg: #1a1e1a; }
-body.dark-mode[data-page="recommend_order"] .content { --page-bg: #2e1a1a; }
-body.dark-mode[data-page="transfer"] .content { --page-bg: #1a1a2e; }
-body.dark-mode[data-page="stores"] .content { --page-bg: #1a1a2e; }
-body.dark-mode[data-page="categories"] .content { --page-bg: #1a1a2e; }
-body.dark-mode[data-page="suppliers"] .content { --page-bg: #1a1a1a; }
-body.dark-mode[data-page="settings"] .content { --page-bg: #1a1a1a; }
 
 .content {
   flex: 1;
@@ -103,22 +87,22 @@ body.dark-mode[data-page="settings"] .content { --page-bg: #1a1a1a; }
 
 /* ---------- 브레드크럼 ---------- */
 .breadcrumb {
-  font-size: 13px;
-  color: var(--text-light);
+  font-size: 12px;
+  color: var(--text-muted);
   margin-bottom: 16px;
   padding: 8px 0;
 }
-.breadcrumb .sep { margin: 0 6px; color: var(--text-light); }
-.breadcrumb .current { color: var(--text); font-weight: 600; }
+.breadcrumb .sep { margin: 0 6px; color: var(--text-muted); }
+.breadcrumb .current { color: var(--text-light); font-weight: 500; }
 
 /* ---------- 레이아웃 ---------- */
 .layout { display: flex; min-height: 100vh; }
 
 .sidebar {
-  width: 220px;
+  width: 224px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
-  padding: 20px 12px;
+  padding: 14px 10px;
   display: flex;
   flex-direction: column;
   background: var(--sidebar-bg);
@@ -129,28 +113,45 @@ body.dark-mode[data-page="settings"] .content { --page-bg: #1a1a1a; }
   z-index: 100;
 }
 
-.brand { font-weight: 700; font-size: 15px; padding: 8px 10px 20px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 13px; padding: 6px 8px 14px; color: var(--text); }
+.brand .brand-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--text); color: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+
+.nav-search {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; margin-bottom: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text-muted); font-size: 12px; background: var(--input-bg);
+}
+.nav-search input { border: none; background: transparent; outline: none; font-size: 12px; color: var(--text); flex: 1; font-family: inherit; }
+.nav-search input::placeholder { color: var(--text-muted); }
+.nav-search .kbd { font-size: 10px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+
+.nav-group { margin-bottom: 10px; }
+.nav-group-label { font-size: 11px; color: var(--text-muted); padding: 4px 10px; font-weight: 500; letter-spacing: 0.02em; }
 
 .nav-item {
   display: flex;
   align-items: center;
-  padding: 9px 10px;
+  gap: 8px;
+  padding: 7px 10px;
   border-radius: 6px;
-  color: var(--text);
+  color: var(--text-light);
   text-decoration: none;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
   cursor: pointer;
   font-size: 13px;
 }
-.nav-item:hover { background: var(--hover-bg); transform: translateX(3px); }
-.nav-item.active { background: var(--accent-light); color: var(--accent); font-weight: 600; border-left: 3px solid var(--accent); }
-.nav-item .shortcut-hint { font-size: 10px; color: var(--text-light); background: var(--hover-bg); padding: 1px 6px; border-radius: 4px; margin-left: auto; }
+.nav-item .nav-ic { font-size: 14px; width: 16px; text-align: center; flex-shrink: 0; }
+.nav-item:hover { background: var(--hover-bg); color: var(--text); }
+.nav-item.active { background: var(--accent-light); color: var(--accent); font-weight: 500; }
+.nav-item .shortcut-hint { font-size: 10px; color: var(--text-muted); background: var(--hover-bg); padding: 1px 6px; border-radius: 4px; margin-left: auto; }
+.nav-item.hidden-by-search { display: none; }
 
 .sidebar-footer {
   margin-top: auto;
   padding: 10px;
   font-size: 11px;
-  color: var(--text-light);
+  color: var(--text-muted);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -164,19 +165,41 @@ body.dark-mode[data-page="settings"] .content { --page-bg: #1a1a1a; }
   gap: 8px;
   padding: 6px 10px;
   border-radius: 6px;
-  background: var(--hover-bg);
+  background: transparent;
   border: 1px solid var(--border);
   cursor: pointer;
   font-size: 13px;
-  color: var(--text);
+  color: var(--text-light);
   transition: all var(--transition);
   width: 100%;
   justify-content: center;
 }
-.theme-toggle:hover { background: var(--accent-light); border-color: var(--accent); transform: scale(1.02); }
+.theme-toggle:hover { background: var(--hover-bg); border-color: var(--border-strong); color: var(--text); }
+
+/* ---------- 공통: 배지 ---------- */
+.badge { display: inline-flex; align-items: center; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500; }
+.badge-success { background: var(--success-light); color: var(--success); }
+.badge-warning { background: var(--warning-light); color: var(--warning); }
+.badge-danger { background: var(--danger-light); color: var(--danger); }
+.badge-neutral { background: var(--hover-bg); color: var(--text-light); }
+
+/* ---------- 공통: 일괄 작업 바 ---------- */
+.bulk-bar {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--accent-light); border: 1px solid var(--accent);
+  border-radius: var(--radius); padding: 8px 12px; margin-bottom: 10px;
+  font-size: 13px; color: var(--accent);
+}
+.bulk-bar .bulk-actions { margin-left: auto; display: flex; gap: 6px; }
+.bulk-bar .bulk-actions button { border: 1px solid var(--border-strong); background: var(--card-bg); border-radius: 6px; padding: 0 10px; height: 26px; font-size: 12px; color: var(--text); }
+.bulk-bar .bulk-actions button.danger { color: var(--danger); }
+
+/* ---------- 공통: 인라인 편집 셀 ---------- */
+.cell-editable { border-bottom: 1px dashed var(--border-strong); cursor: text; }
+.cell-editable:hover { background: var(--hover-bg); }
 
 /* ---------- 공통 ---------- */
-h1 { font-size: 22px; margin: 0 0 4px; }
+h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
 .subtitle { color: var(--text-light); margin-bottom: 24px; font-size: 13px; }
 
 .toolbar {
