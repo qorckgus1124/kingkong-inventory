@@ -1999,6 +1999,8 @@ def maintenance_orphaned_page():
     return render_template("maintenance_orphaned.html")
 
 
+@app.route("/api/transfer", methods=["POST"])
+def api_transfer():
     conn = get_db()
     cur = g.cursor
     data = request.get_json(force=True)
