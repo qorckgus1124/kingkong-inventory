@@ -1864,22 +1864,37 @@ def api_transactions_cancel_batch():
         placeholders = ','.join(['%s'] * len(ids))
         cur.execute(f"SELECT * FROM stock_transactions WHERE id IN ({placeholders})", ids)
         rows = cur.fetchall()
-        valid_rows = [r for r in rows if r["type"] == "판매출고"]
+        sale_rows = [r for r in rows if r["type"] == "판매출고"]
 
-        if not valid_rows:
+        if not sale_rows:
             return jsonify({"cancelled": 0, "failed": len(ids), "errors": ["선택한 항목 중 판매출고가 없습니다."]}), 400
 
-        # 판매출고를 완전히 삭제하기 전에, 이미 취소 처리된 적이 없는 건이라면
-        # 매장 재고를 판매 전 상태로 복구한다. (예전에는 그냥 지워버리기만 해서
-        # 삭제 후에도 재고가 판매된 채로 줄어든 상태로 남아있었다.)
-        for row in valid_rows:
+        # 이미 취소(판매취소) 처리된 판매출고 건은 삭제 대상에서 제외한다.
+        # 원본을 지워버리면 짝이 맞아야 할 판매취소(-) 기록만 고아로 남아
+        # 매출/이익 집계가 원인 모를 마이너스로 잡히는 버그가 있었기 때문.
+        valid_rows = []
+        already_cancelled_count = 0
+        for row in sale_rows:
             cur.execute(
                 "SELECT COUNT(*) as c FROM stock_transactions WHERE ref_transaction_id=%s AND type='판매취소'",
                 (row["id"],)
             )
             already_cancelled = cur.fetchone()["c"] > 0
-            if not already_cancelled:
-                _apply_stock_delta(conn, row["store_id"], row["product_id"], "판매취소", row["quantity"])
+            if already_cancelled:
+                already_cancelled_count += 1
+            else:
+                valid_rows.append(row)
+
+        errors = []
+        if already_cancelled_count:
+            errors.append(f"이미 취소 처리된 {already_cancelled_count}건은 건너뛰었습니다. (취소 기록만 남아 매출이 왜곡되는 것을 방지)")
+
+        if not valid_rows:
+            return jsonify({"cancelled": 0, "failed": len(ids), "errors": errors or ["선택한 항목이 모두 이미 취소된 건입니다."]}), 400
+
+        # 판매출고를 완전히 삭제하기 전에 매장 재고를 판매 전 상태로 복구한다.
+        for row in valid_rows:
+            _apply_stock_delta(conn, row["store_id"], row["product_id"], "판매취소", row["quantity"])
 
         valid_ids = [r["id"] for r in valid_rows]
         placeholders2 = ','.join(['%s'] * len(valid_ids))
@@ -1889,7 +1904,7 @@ def api_transactions_cancel_batch():
         return jsonify({
             "cancelled": len(valid_ids),
             "failed": len(ids) - len(valid_ids),
-            "errors": []
+            "errors": errors
         })
     except Exception as e:
         conn.rollback()

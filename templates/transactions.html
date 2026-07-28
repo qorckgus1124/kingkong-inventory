@@ -643,7 +643,8 @@ async function deleteSelected() {
       method: 'POST',
       body: JSON.stringify({ ids })
     });
-    toast(`✅ ${result.cancelled}건 삭제 완료 (실패 ${result.failed}건)`, result.failed > 0, result.failed > 0 ? '⚠️' : '✅');
+    const extra = (result.errors && result.errors.length) ? ' - ' + result.errors.join(' ') : '';
+    toast(`✅ ${result.cancelled}건 삭제 완료 (실패 ${result.failed}건)${extra}`, result.failed > 0, result.failed > 0 ? '⚠️' : '✅');
     selectedIds.clear();
     document.getElementById('selectAll').checked = false;
     updateSelectedUI();
@@ -755,7 +756,7 @@ async function load() {
         }
         return `
           <tr>
-            <td><input type="checkbox" class="row-checkbox" value="${t.id}" onchange="toggleCheckbox(${t.id})"></td>
+            <td><input type="checkbox" class="row-checkbox" value="${t.id}" onchange="toggleCheckbox(${t.id})" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : ''}></td>
             <td>${fmtDateTime(t.date_time)}</td>
             <td>${escapeHtml(t.product_name)}</td>
             <td>${t.brand_name ? `<span class="brand-tag" style="background:${t.brand_color || '#8a8f98'};">${escapeHtml(t.brand_name)}</span>` : '-'}</td>
