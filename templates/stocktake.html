@@ -88,7 +88,7 @@ function updateStats() {
   document.getElementById('statDiffCount').textContent = fmt(diffItems.length) + '개';
   const netEl = document.getElementById('statNetDiff');
   netEl.textContent = (netDiff > 0 ? '+' : '') + fmt(netDiff) + '개';
-  netEl.style.color = netDiff === 0 ? '' : (netDiff > 0 ? '#4f8ff7' : '#c44536');
+  netEl.style.color = netDiff === 0 ? '' : (netDiff > 0 ? 'var(--accent)' : 'var(--danger)');
 }
 
 function getFilteredItems() {
@@ -140,7 +140,7 @@ function render() {
 
 function diffLabel(diff) {
   if (diff === 0) return '<span style="color:var(--text-light);">0</span>';
-  const color = diff > 0 ? '#4f8ff7' : '#c44536';
+  const color = diff > 0 ? 'var(--accent)' : 'var(--danger)';
   return `<span style="color:${color};">${diff > 0 ? '+' : ''}${diff}</span>`;
 }
 

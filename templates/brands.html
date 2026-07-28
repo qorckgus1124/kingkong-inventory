@@ -43,11 +43,16 @@
   <button onclick="exportBrandsCSV()" class="primary">📥 CSV 내보내기</button>
   <button onclick="document.getElementById('brandCsvUpload').click()">📤 CSV 업로드</button>
   <input type="file" id="brandCsvUpload" accept=".csv" style="display:none" onchange="uploadBrandsCSV(event)">
+</div>
 
-  <!-- 일괄 승인/수정 버튼 -->
-  <button class="success" onclick="batchApproveBrands()" id="batchApproveBtn" disabled>✅ 선택 승인</button>
-  <button class="primary" onclick="batchEditBrands()" id="batchEditBtn" disabled>✏️ 선택 수정</button>
-  <span style="font-size:12px; color:var(--text-light);" id="batchSelectedCount">0개 선택</span>
+<!-- 일괄 작업 바: 체크박스 선택 시에만 노출 -->
+<div id="bulkBar" class="bulk-bar" style="display:none;">
+  <span><strong id="bulkCount">0</strong>개 선택됨</span>
+  <div class="bulk-actions">
+    <button onclick="batchApproveBrands()">✅ 선택 승인</button>
+    <button onclick="batchEditBrands()">✏️ 선택 수정</button>
+    <button class="danger" onclick="clearBrandSelection()">선택 해제</button>
+  </div>
 </div>
 
 <div class="table-wrap">
@@ -188,7 +193,7 @@ function renderBrands() {
   
   tbody.innerHTML = brands.map((b, idx) => {
     const statusLabel = b.status === 'approved' ? '✅ 승인' : '⏳ 대기';
-    const statusClass = b.status === 'approved' ? 'chip-approved' : 'chip-pending';
+    const statusClass = b.status === 'approved' ? 'badge-success' : 'badge-warning';
     const checked = selectedBrandIds.has(b.id) ? 'checked' : '';
     return `
       <tr>
@@ -197,7 +202,7 @@ function renderBrands() {
         <td><span class="brand-tag" style="background:${b.color || '#8a8f98'};">${escapeHtml(b.name)}</span></td>
         <td>${b.category_name ? escapeHtml(b.category_name) : '<span style="color:var(--text-light);">미지정</span>'}</td>
         <td><span style="display:inline-block; width:24px; height:24px; border-radius:4px; background:${b.color || '#8a8f98'}; border:1px solid var(--border);"></span></td>
-        <td><span class="chip ${statusClass}">${statusLabel}</span></td>
+        <td><span class="badge ${statusClass}">${statusLabel}</span></td>
         <td>${b.product_count || 0}</td>
         <td>
           <button onclick="openEditBrandModal(${b.id})" style="padding:2px 10px; font-size:12px;">✏️ 수정</button>
@@ -244,9 +249,13 @@ function updateSelectAll() {
 
 function updateBatchUI() {
   const count = selectedBrandIds.size;
-  document.getElementById('batchSelectedCount').textContent = count + '개 선택';
-  document.getElementById('batchApproveBtn').disabled = count === 0;
-  document.getElementById('batchEditBtn').disabled = count === 0;
+  document.getElementById('bulkCount').textContent = count;
+  document.getElementById('bulkBar').style.display = count > 0 ? 'flex' : 'none';
+}
+
+function clearBrandSelection() {
+  selectedBrandIds.clear();
+  renderBrands();
 }
 
 // ---------- 브랜드 추가 ----------
@@ -466,8 +475,6 @@ document.addEventListener('DOMContentLoaded', function() {
   font-weight: 500;
   color: white;
 }
-.chip-approved { background: #34a853; color: white; }
-.chip-pending { background: #fbbc04; color: #333; }
 .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 </style>
 {% endblock %}

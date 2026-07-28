@@ -1116,7 +1116,7 @@ async function loadMovements() {
       return;
     }
     tbody.innerHTML = rows.map((m, idx) => {
-      const statusClass = m.status === '완료' ? 'chip-approved' : m.status === '취소' ? 'chip-pending' : '';
+      const statusClass = m.status === '완료' ? 'badge-success' : m.status === '취소' ? 'badge-neutral' : 'badge-neutral';
       return `
         <tr>
           <td><span class="row-number">${idx + 1}</span></td>
@@ -1128,7 +1128,7 @@ async function loadMovements() {
           <td style="font-weight:600;">${fmt(m.total_cost || 0)}원</td>
           <td>${escapeHtml(m.staff || '-')}</td>
           <td>${escapeHtml(m.memo || '-')}</td>
-          <td><span class="chip ${statusClass}">${m.status}</span></td>
+          <td><span class="badge ${statusClass}">${m.status}</span></td>
           <td>${m.created_at}</td>
           <td>
             ${m.status === '완료' ? `<button class="danger" onclick="cancelMovement(${m.id})" style="padding:2px 8px; font-size:11px;">취소</button>` : '-'}

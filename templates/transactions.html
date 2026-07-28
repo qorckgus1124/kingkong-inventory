@@ -65,30 +65,9 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- 4. 다중 상태 변경 -->
-<!-- ============================================================ -->
-<div class="card">
-  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-    <strong style="font-size:14px;">🔧 선택한 항목 상태 일괄 변경</strong>
-    <select id="batchStatusSelect" style="padding:6px 10px;">
-      <option value="입고">입고</option>
-      <option value="판매출고">판매출고</option>
-      <option value="반품">반품</option>
-      <option value="폐기">폐기</option>
-      <option value="조정">조정</option>
-    </select>
-    <button class="primary" onclick="batchStatusChange()" id="batchStatusBtn" disabled>적용</button>
-    <span style="font-size:12px; color:var(--text-light);" id="batchSelectedCount">0개 선택</span>
-  </div>
-</div>
-
-<!-- ============================================================ -->
 <!-- 5. 필터/툴바 -->
 <!-- ============================================================ -->
 <div class="toolbar" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px;">
-  <button class="danger" onclick="deleteSelected()" id="deleteSelectedBtn" disabled>🗑️ 선택 삭제</button>
-  <span style="font-size:12px; color:var(--text-light);" id="selectedCount">0개 선택</span>
-  <div style="flex:1;"></div>
   <label style="font-size:12px; color:var(--text-light);">조회 줄수:
     <input type="number" id="rowsPerPage" value="20" min="5" max="100" style="width:60px;" onchange="changePage(0)">
   </label>
@@ -108,6 +87,23 @@
     <input type="checkbox" id="includeCancelled" onchange="load()"> 취소 내역 포함
   </label>
   <button onclick="clearFilters()">필터 초기화</button>
+</div>
+
+<!-- 일괄 작업 바: 체크박스 선택 시에만 노출 -->
+<div id="bulkBar" class="bulk-bar" style="display:none;">
+  <span><strong id="bulkCount">0</strong>개 선택됨</span>
+  <div class="bulk-actions">
+    <select id="batchStatusSelect" style="height:26px; padding:0 6px;">
+      <option value="입고">입고</option>
+      <option value="판매출고">판매출고</option>
+      <option value="반품">반품</option>
+      <option value="폐기">폐기</option>
+      <option value="조정">조정</option>
+    </select>
+    <button onclick="batchStatusChange()">유형 일괄 변경</button>
+    <button class="danger" onclick="deleteSelected()">🗑️ 선택 삭제</button>
+    <button onclick="clearTxnSelection()">선택 해제</button>
+  </div>
 </div>
 
 <!-- ============================================================ -->
@@ -234,8 +230,8 @@ let selectedIds = new Set();
 let currentRows = [];
 
 const TYPE_CLASS = {
-  '입고': 'type-in', '입고취소': 'type-in', '이동입고': 'type-in',
-  '판매출고': 'type-out', '반품': 'type-out', '폐기': 'type-out', '이동출고': 'type-out',
+  '입고': 'badge-success', '입고취소': 'badge-success', '이동입고': 'badge-success',
+  '판매출고': 'badge-danger', '반품': 'badge-danger', '폐기': 'badge-danger', '이동출고': 'badge-danger',
 };
 
 // ---------- 매장 로드 ----------
@@ -603,10 +599,15 @@ function updateSelectAll() {
 
 function updateSelectedUI() {
   const count = selectedIds.size;
-  document.getElementById('selectedCount').textContent = count + '개 선택';
-  document.getElementById('deleteSelectedBtn').disabled = count === 0;
-  document.getElementById('batchSelectedCount').textContent = count + '개 선택';
-  document.getElementById('batchStatusBtn').disabled = count === 0;
+  document.getElementById('bulkCount').textContent = count;
+  document.getElementById('bulkBar').style.display = count > 0 ? 'flex' : 'none';
+}
+
+function clearTxnSelection() {
+  selectedIds.clear();
+  document.getElementById('selectAll').checked = false;
+  document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+  updateSelectedUI();
 }
 
 // ---------- 삭제 (행 하나 바로 삭제, 체크박스 선택 불필요) ----------
@@ -761,7 +762,7 @@ async function load() {
             <td>${escapeHtml(t.product_name)}</td>
             <td>${t.brand_name ? `<span class="brand-tag" style="background:${t.brand_color || '#8a8f98'};">${escapeHtml(t.brand_name)}</span>` : '-'}</td>
             <td>${escapeHtml(t.store_name)}</td>
-            <td><span class="type-badge ${TYPE_CLASS[t.type] || 'type-etc'}">${t.type}</span></td>
+            <td><span class="badge ${TYPE_CLASS[t.type] || 'badge-neutral'}">${t.type}</span></td>
             <td>${fmt(t.quantity)}</td>
             <td>${escapeHtml(t.staff || '-')}</td>
             <td>${escapeHtml(t.memo || '-')}</td>
@@ -984,13 +985,6 @@ document.addEventListener('DOMContentLoaded', async function() {
   font-weight: 500;
   color: white;
 }
-.type-badge { padding: 2px 8px; border-radius: 5px; font-size: 12px; font-weight: 600; }
-.type-in { background: #e6f4ea; color: #1a7f37; }
-body.dark-mode .type-in { background: #1a3a2a; color: #7fcf8f; }
-.type-out { background: #fdecec; color: #d1342b; }
-body.dark-mode .type-out { background: #3a1a1a; color: #ff6b6b; }
-.type-etc { background: #f1f1f0; color: #6b6b6b; }
-body.dark-mode .type-etc { background: #333; color: #aaa; }
 
 .txn-row {
   position: relative;

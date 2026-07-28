@@ -36,11 +36,11 @@ function render() {
   tbody.innerHTML = suppliers.map((s, idx) => `
     <tr>
       <td><span class="row-number">${idx + 1}</span></td>
-      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'name', this.textContent)">${escapeHtml(s.name)}</td>
-      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'contact', this.textContent)">${escapeHtml(s.contact || '-')}</td>
-      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'phone', this.textContent)">${escapeHtml(s.phone || '-')}</td>
-      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'link', this.textContent)">${escapeHtml(s.link || '-')}</td>
-      <td class="editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'memo', this.textContent)">${escapeHtml(s.memo || '-')}</td>
+      <td class="cell-editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'name', this.textContent)">${escapeHtml(s.name)}</td>
+      <td class="cell-editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'contact', this.textContent)">${escapeHtml(s.contact || '-')}</td>
+      <td class="cell-editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'phone', this.textContent)">${escapeHtml(s.phone || '-')}</td>
+      <td class="cell-editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'link', this.textContent)">${escapeHtml(s.link || '-')}</td>
+      <td class="cell-editable" contenteditable="true" onblur="updateSupplier(${s.id}, 'memo', this.textContent)">${escapeHtml(s.memo || '-')}</td>
       <td><button class="danger" onclick="deleteSupplier(${s.id})">삭제</button></td>
     </tr>
   `).join('');

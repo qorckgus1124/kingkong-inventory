@@ -41,7 +41,7 @@ function render() {
   tbody.innerHTML = categories.map((c, idx) => `
     <tr>
       <td><span class="row-number">${idx + 1}</span></td>
-      <td class="editable" contenteditable="true" onblur="rename(${c.id}, this.textContent, '${c.color}')">${escapeHtml(c.name)}</td>
+      <td class="cell-editable" contenteditable="true" onblur="rename(${c.id}, this.textContent, '${c.color}')">${escapeHtml(c.name)}</td>
       <td><input type="color" value="${c.color}" onchange="rename(${c.id}, '${escapeHtml(c.name)}', this.value)"></td>
       <td><button class="danger" onclick="removeCategory(${c.id})">삭제</button></td>
     </tr>
