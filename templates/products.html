@@ -141,6 +141,7 @@
     <button onclick="closeModal()" style="position:absolute; top:12px; right:16px; border:none; background:none; font-size:24px; cursor:pointer; color:var(--text);">✕</button>
     <h2 id="modalTitle" style="color:var(--text); margin-top:0;">📦 제품 수정</h2>
     <div id="modalBody"></div>
+    <div id="modalVariantsSection" style="margin-top:8px;"></div>
     <hr style="border-color:var(--border);">
     <h4 style="color:var(--text);">📋 가격 변경 이력</h4>
     <div id="modalPriceHistory" style="font-size:13px; max-height:200px; overflow-y:auto;"></div>
@@ -595,7 +596,7 @@ function render() {
     <tr style="${p.is_active ? '' : 'opacity:0.45'}; cursor:pointer;" onclick="showProductDetail(${p.id})">
       <td onclick="event.stopPropagation();"><input type="checkbox" class="row-checkbox" value="${p.id}" ${checked} onchange="toggleProduct(${p.id})"></td>
       <td><span class="row-number">${idx + 1}</span></td>
-      <td class="cell-editable" contenteditable="true" onblur="updateField(${p.id}, 'name', this.textContent)" onclick="event.stopPropagation();">${escapeHtml(p.name)}</td>
+      <td class="cell-editable" contenteditable="true" onblur="updateField(${p.id}, 'name', this.textContent)" onclick="event.stopPropagation();">${p.is_variant ? '<span style="color:var(--text-light); margin-right:2px;">↳</span>' : ''}${escapeHtml(p.name)}${p.variant_count > 0 ? `<span class="chip" style="background:var(--accent); color:#fff; font-size:10px; padding:1px 7px; margin-left:6px;">옵션 ${p.variant_count}개</span>` : ''}</td>
       <td>${brandTag(p.brand_id)}</td>
       <td>${categoryChip(p.category_id)}</td>
       <td class="cell-editable" contenteditable="true" onblur="updateField(${p.id}, 'cost_price', this.textContent)" onclick="event.stopPropagation();">${fmt(p.cost_price)}</td>
@@ -838,10 +839,87 @@ async function showProductDetail(id) {
         </table>
       `;
     }
+
+    await renderVariantsSection(product);
   } catch (e) {
     console.error('상세 로드 오류:', e);
     document.getElementById('modalBody').innerHTML = '<div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div>';
     document.getElementById('modalPriceHistory').innerHTML = '';
+    document.getElementById('modalVariantsSection').innerHTML = '';
+  }
+}
+
+// ---------- 🔥 옵션(변형) 관리 ("묶어보기") ----------
+async function renderVariantsSection(product) {
+  const box = document.getElementById('modalVariantsSection');
+
+  if (product.is_variant) {
+    box.innerHTML = `
+      <div style="background:var(--hover-bg); border-radius:8px; padding:10px 12px; font-size:12px; color:var(--text-light);">
+        🔗 이 제품은 <strong style="color:var(--text);">${escapeHtml(product.parent_name || '상위 제품')}</strong>의 옵션(<strong style="color:var(--text);">${escapeHtml(product.option_name || '')}</strong>)입니다.
+      </div>
+    `;
+    return;
+  }
+
+  try {
+    const variants = await api(`/api/products?parent_id=${product.id}&show_inactive=1`);
+    box.innerHTML = `
+      <div style="border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:4px;">
+        <div style="font-weight:600; color:var(--text); margin-bottom:8px;">🎨 옵션(맛/용량 등) 관리 ${variants.length > 0 ? `(${variants.length}개)` : ''}</div>
+        ${variants.length === 0
+          ? '<div style="font-size:12px; color:var(--text-light); margin-bottom:8px;">등록된 옵션이 없습니다. 맛/용량/색상별로 재고를 따로 관리하려면 옵션을 추가하세요.</div>'
+          : `<div style="display:flex; flex-direction:column; gap:6px; margin-bottom:10px;">
+              ${variants.map(v => `
+                <div style="display:flex; align-items:center; justify-content:space-between; background:var(--hover-bg); border-radius:6px; padding:6px 10px; ${v.is_active ? '' : 'opacity:0.5;'}">
+                  <span style="font-size:13px; color:var(--text); cursor:pointer;" onclick="showProductDetail(${v.id})">${escapeHtml(v.option_name || v.name)} <span style="color:var(--text-light); font-size:11px;">(재고 ${fmt(v.qty)})</span></span>
+                  <button class="danger" style="padding:2px 8px; font-size:11px;" onclick="deleteVariantProduct(${v.id}, ${product.id})">삭제</button>
+                </div>
+              `).join('')}
+            </div>`
+        }
+        <div style="display:flex; gap:6px;">
+          <input type="text" id="newVariantName" placeholder="옵션명 (예: 딸기맛 30ml)" style="flex:1; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text); font-size:12px;" onkeydown="if(event.key==='Enter'){addVariantOption(${product.id});}">
+          <button class="primary" style="padding:6px 14px; font-size:12px;" onclick="addVariantOption(${product.id})">+ 옵션 추가</button>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    console.error('옵션 목록 로드 오류:', e);
+    box.innerHTML = '';
+  }
+}
+
+async function addVariantOption(parentId) {
+  const input = document.getElementById('newVariantName');
+  const optionName = input.value.trim();
+  if (!optionName) {
+    toast('옵션명을 입력해주세요.', true, '⚠️');
+    return;
+  }
+  try {
+    await api('/api/products', {
+      method: 'POST',
+      body: JSON.stringify({ parent_product_id: parentId, option_name: optionName })
+    });
+    toast('옵션이 추가되었습니다.', false, '✅');
+    input.value = '';
+    await showProductDetail(parentId);
+    await load();
+  } catch (e) {
+    console.error('옵션 추가 오류:', e);
+  }
+}
+
+async function deleteVariantProduct(variantId, parentId) {
+  if (!confirm('이 옵션을 삭제하시겠습니까? 관련 재고/거래 기록도 함께 삭제됩니다.')) return;
+  try {
+    await api(`/api/products/${variantId}`, { method: 'DELETE' });
+    toast('옵션이 삭제되었습니다.', false, '✅');
+    await showProductDetail(parentId);
+    await load();
+  } catch (e) {
+    console.error('옵션 삭제 오류:', e);
   }
 }
 
@@ -893,6 +971,7 @@ async function saveProductEdit() {
 
 function closeModal() {
   document.getElementById('productModal').style.display = 'none';
+  document.getElementById('modalVariantsSection').innerHTML = '';
   editingProductId = null;
 }
 

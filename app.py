@@ -492,6 +492,19 @@ def init_db():
         # 기본 매장 (ID=1)
         cur.execute("INSERT INTO stores (id, name) VALUES (1, '강남역점') ON CONFLICT (id) DO NOTHING;")
 
+        # 🔥 옵션별 재고 관리 ("묶어보기"): 맛/용량/색상 등 옵션을 하나의 부모 제품 아래로 묶는다.
+        # 옵션(변형) 제품도 내부적으로는 products 테이블의 평범한 한 행이라
+        # 재고/판매/입출고/리포트 등 기존 로직을 전혀 건드리지 않고 그대로 재사용할 수 있다.
+        cur.execute("""
+            ALTER TABLE products
+            ADD COLUMN IF NOT EXISTS parent_product_id INTEGER REFERENCES products(id) ON DELETE SET NULL;
+        """)
+        cur.execute("""
+            ALTER TABLE products
+            ADD COLUMN IF NOT EXISTS option_name TEXT;
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_products_parent ON products(parent_product_id);")
+
         # 기본 카테고리
         cur.execute("SELECT COUNT(*) FROM categories")
         if cur.fetchone()['count'] == 0:
@@ -689,6 +702,26 @@ def product_row_to_dict(db, row, store_id=None):
     else:
         d["brand_name"] = None
         d["brand_color"] = None
+
+    # 🔥 옵션별 재고 관리 ("묶어보기"): 이 제품이 옵션(변형)을 몇 개 갖고 있는지 / 자신이 옵션인지
+    try:
+        cur.execute(
+            "SELECT COUNT(*) as cnt FROM products WHERE parent_product_id=%s AND is_active=1",
+            (row["id"],)
+        )
+        d["variant_count"] = cur.fetchone()["cnt"] or 0
+    except Exception:
+        d["variant_count"] = 0
+    d["is_variant"] = bool(d.get("parent_product_id"))
+    if d["is_variant"]:
+        try:
+            cur.execute("SELECT name FROM products WHERE id=%s", (d["parent_product_id"],))
+            parent = cur.fetchone()
+            d["parent_name"] = parent["name"] if parent else None
+        except Exception:
+            d["parent_name"] = None
+    else:
+        d["parent_name"] = None
 
     return d
 
@@ -1234,6 +1267,7 @@ def api_products():
             category_id = request.args.get("category_id")
             brand_id = request.args.get("brand_id")
             store_id = request.args.get("store_id")
+            parent_id = request.args.get("parent_id")
             sort = request.args.get("sort", "id")
             order = request.args.get("order", "asc")
             show_inactive = request.args.get("show_inactive", "0") == "1"
@@ -1248,6 +1282,9 @@ def api_products():
             params = []
             if not show_inactive:
                 sql += " AND p.is_active=1"
+            if parent_id:
+                sql += " AND p.parent_product_id = %s"
+                params.append(parent_id)
             if q:
                 q_norm = normalize_search(q)
                 sql += """ AND (
@@ -1312,31 +1349,58 @@ def api_products():
 
     data = request.get_json(force=True)
     name = (data.get("name") or "").strip()
+
+    # 🔥 옵션(변형) 제품 생성: parent_product_id가 오면 "묶어보기" 옵션으로 취급한다.
+    parent_product_id = data.get("parent_product_id") or None
+    parent_row = None
+    if parent_product_id:
+        cur.execute("SELECT * FROM products WHERE id=%s", (parent_product_id,))
+        parent_row = cur.fetchone()
+        if not parent_row:
+            return jsonify({"error": "상위 제품을 찾을 수 없습니다."}), 400
+        if parent_row["parent_product_id"]:
+            return jsonify({"error": "옵션 제품에는 하위 옵션을 추가할 수 없습니다."}), 400
+
+    option_name = (data.get("option_name") or "").strip() or None
+    if parent_row:
+        if not option_name:
+            return jsonify({"error": "옵션명을 입력해주세요. (예: 딸기맛 30ml)"}), 400
+        name = f"{parent_row['name']} - {option_name}"
+
     if not name:
         return jsonify({"error": "제품명을 입력해주세요."}), 400
 
-    user_brand_id = data.get("brand_id") or None
-    user_category_id = data.get("category_id") or None
+    if parent_row:
+        # 옵션 제품은 별도 입력이 없으면 상위 제품의 브랜드/카테고리/가격을 그대로 물려받는다.
+        brand_id = data.get("brand_id") or parent_row["brand_id"]
+        category_id = data.get("category_id") or parent_row["category_id"]
+        cost_price = int(data.get("cost_price") if data.get("cost_price") not in (None, "") else (parent_row["cost_price"] or 0))
+        card_cost_price = int(data.get("card_cost_price") if data.get("card_cost_price") not in (None, "") else (parent_row["card_cost_price"] or 0))
+        sale_price = int(data.get("sale_price") if data.get("sale_price") not in (None, "") else (parent_row["sale_price"] or 0))
+    else:
+        user_brand_id = data.get("brand_id") or None
+        user_category_id = data.get("category_id") or None
 
-    brand_id, category_id = auto_assign_brand_and_category(name, user_brand_id, user_category_id)
+        brand_id, category_id = auto_assign_brand_and_category(name, user_brand_id, user_category_id)
 
-    if user_brand_id:
-        brand_id = user_brand_id
-    if user_category_id:
-        category_id = user_category_id
+        if user_brand_id:
+            brand_id = user_brand_id
+        if user_category_id:
+            category_id = user_category_id
 
-    cost_price = int(data.get("cost_price") or 0)
-    card_cost_price = int(data.get("card_cost_price") or 0)
-    sale_price = int(data.get("sale_price") or 0)
+        cost_price = int(data.get("cost_price") or 0)
+        card_cost_price = int(data.get("card_cost_price") or 0)
+        sale_price = int(data.get("sale_price") or 0)
+
     memo = data.get("memo") or None
     initial_qty = int(data.get("initial_qty") or 0)
     store_id = data.get("store_id")
 
     try:
         cur.execute(
-            """INSERT INTO products (name, brand_id, category_id, cost_price, card_cost_price, sale_price, memo)
-               VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-            (name, brand_id, category_id, cost_price, card_cost_price, sale_price, memo)
+            """INSERT INTO products (name, brand_id, category_id, cost_price, card_cost_price, sale_price, memo, parent_product_id, option_name)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (name, brand_id, category_id, cost_price, card_cost_price, sale_price, memo, parent_product_id, option_name)
         )
         product_id = cur.fetchone()["id"]
 

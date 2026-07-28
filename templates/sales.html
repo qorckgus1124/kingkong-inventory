@@ -96,7 +96,7 @@
           </div>
           <div class="form-field" style="margin-bottom:4px;">
             <label style="font-size:12px; color:var(--text-light);">📝 요청사항</label>
-            <textarea id="pre_request_memo" placeholder="요청사항을 입력하세요." style="width:100%; height:40px; resize:vertical; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text); font-family:inherit; font-size:13px;"></textarea>
+            <textarea id="pre_request_memo" placeholder="요청사항을 입력하세요." rows="1" oninput="autoGrowTextarea(this)" style="width:100%; min-height:36px; resize:none; overflow:hidden; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text); font-family:inherit; font-size:13px; line-height:1.4;"></textarea>
           </div>
         </div>
         <div class="cart-title" style="margin-top:4px;">🛒 장바구니</div>
@@ -376,6 +376,12 @@ body.dark-mode .cat-tab.active {
 <script>
 console.log('✅ 판매 등록 페이지 로드됨');
 
+// 텍스트창(요청사항)이 내부 스크롤 대신 입력 내용에 맞춰 높이가 자동으로 늘어나도록 처리
+function autoGrowTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+
 // ---------- 공통 변수 ----------
 let categories = [];
 let products = [];
@@ -604,6 +610,9 @@ function renderGrid() {
     list = list.filter(p => p.category_id === selectedCategory);
   }
 
+  // 🔥 옵션(맛/용량 등)을 가진 부모 제품은 그 자체로 판매하는 용도가 아니라 묶음 라벨이므로 그리드에서 제외
+  list = list.filter(p => !(p.variant_count > 0));
+
   if (list.length === 0) {
     grid.innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div>';
     return;
@@ -705,6 +714,9 @@ function renderPreGrid() {
   if (preSelectedCategory !== 'all') {
     list = list.filter(p => p.category_id === preSelectedCategory);
   }
+
+  // 🔥 옵션(맛/용량 등)을 가진 부모 제품은 묶음 라벨이므로 제외하고 옵션 제품만 노출
+  list = list.filter(p => !(p.variant_count > 0));
 
   if (list.length === 0) {
     grid.innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div>';
@@ -1196,7 +1208,7 @@ async function checkoutPreOrder() {
     document.getElementById('pre_customer_name').value = '';
     document.getElementById('pre_customer_phone').value = '';
     document.getElementById('pre_customer_address').value = '';
-    document.getElementById('pre_request_memo').value = '';
+    { const m = document.getElementById('pre_request_memo'); m.value = ''; m.style.height = 'auto'; }
     await loadPreOrders();
     const q = document.getElementById('pre_searchBox').value.trim();
     if (q) {
