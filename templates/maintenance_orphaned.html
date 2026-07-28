@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🧹 매출 오류 기록 정리</h1>
+<div class="subtitle">원본 판매 기록이 삭제되어 짝을 잃은 "판매취소" 기록을 찾아 정리합니다. (오늘/이번달 매출이 원인 모르게 마이너스로 나올 때 사용)</div>
+
+<div class="card">
+  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <button class="primary" onclick="loadOrphans()">🔍 확인하기</button>
+    <span id="summaryText" style="font-size:13px; color:var(--text-light);"></span>
+  </div>
+
+  <div id="resultArea" style="margin-top:16px;"></div>
+
+  <div id="deleteArea" style="margin-top:16px; display:none;">
+    <button class="danger" onclick="deleteOrphans()">🗑️ 위 목록 전부 삭제 (재고에는 영향 없음)</button>
+    <span id="deleteStatus" style="font-size:12px; color:var(--text-light); margin-left:8px;"></span>
+  </div>
+</div>
+
+<script>
+let lastIds = [];
+
+function fmt(n) {
+  return (n || 0).toLocaleString('ko-KR');
+}
+
+async function loadOrphans() {
+  document.getElementById('resultArea').innerHTML = '⏳ 조회 중...';
+  document.getElementById('deleteArea').style.display = 'none';
+  try {
+    const res = await fetch('/api/maintenance/orphaned-cancellations');
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('resultArea').innerHTML = `<span style="color:var(--danger);">오류: ${data.error}</span>`;
+      return;
+    }
+    lastIds = data.items.map(i => i.id);
+    document.getElementById('summaryText').textContent =
+      `총 ${data.count}건, 매출 영향 합계 ${fmt(data.total_revenue_impact)}원`;
+
+    if (data.count === 0) {
+      document.getElementById('resultArea').innerHTML = '<div style="color:var(--text-light);">깨끗합니다. 고아 기록이 없습니다. 👍</div>';
+      return;
+    }
+
+    const rows = data.items.map(it => `
+      <tr>
+        <td>${it.id}</td>
+        <td>${(it.date_time || '').toString().replace('T',' ').slice(0,19)}</td>
+        <td>${it.product_name || '-'}</td>
+        <td>${it.store_name || '-'}</td>
+        <td>${fmt(it.quantity)}</td>
+        <td>${fmt(it.unit_price)}</td>
+        <td>${fmt(it.revenue_impact)}</td>
+        <td>${it.memo || '-'}</td>
+      </tr>
+    `).join('');
+
+    document.getElementById('resultArea').innerHTML = `
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="text-align:left; border-bottom:1px solid var(--border);">
+            <th style="padding:6px;">ID</th>
+            <th style="padding:6px;">취소된 시각</th>
+            <th style="padding:6px;">제품</th>
+            <th style="padding:6px;">매장</th>
+            <th style="padding:6px;">수량</th>
+            <th style="padding:6px;">단가</th>
+            <th style="padding:6px;">매출 영향</th>
+            <th style="padding:6px;">메모</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+    document.getElementById('deleteArea').style.display = 'block';
+  } catch (e) {
+    document.getElementById('resultArea').innerHTML = `<span style="color:var(--danger);">조회 중 오류가 발생했습니다: ${e}</span>`;
+  }
+}
+
+async function deleteOrphans() {
+  if (!lastIds.length) return;
+  if (!confirm(`${lastIds.length}건을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다. (재고 수량에는 영향 없음)`)) return;
+  document.getElementById('deleteStatus').textContent = '처리 중...';
+  try {
+    const res = await fetch('/api/maintenance/orphaned-cancellations', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ids: lastIds })
+    });
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('deleteStatus').textContent = '오류: ' + data.error;
+      return;
+    }
+    document.getElementById('deleteStatus').textContent = `✅ ${data.deleted}건 삭제 완료. 대시보드를 새로고침해서 확인해보세요.`;
+    document.getElementById('deleteArea').style.display = 'none';
+    loadOrphans();
+  } catch (e) {
+    document.getElementById('deleteStatus').textContent = '삭제 중 오류가 발생했습니다: ' + e;
+  }
+}
+
+loadOrphans();
+</script>
+{% endblock %}

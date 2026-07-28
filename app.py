@@ -1913,11 +1913,72 @@ def api_transactions_cancel_batch():
 
 
 # ---------------------------------------------------------------------------
-# API - 재고 이동
+# 유지보수 - 고아(원본 삭제됨) 판매취소 기록 정리
 # ---------------------------------------------------------------------------
 
-@app.route("/api/transfer", methods=["POST"])
-def api_transfer():
+@app.route("/api/maintenance/orphaned-cancellations", methods=["GET"])
+def api_maintenance_orphaned_list():
+    conn = get_db()
+    cur = g.cursor
+    try:
+        cur.execute("""
+            SELECT t.id, t.date_time, p.name as product_name, s.name as store_name,
+                   t.quantity, t.unit_price, t.unit_cost,
+                   (t.quantity * t.unit_price) as revenue_impact,
+                   t.ref_transaction_id, t.staff, t.memo
+            FROM stock_transactions t
+            LEFT JOIN products p ON p.id = t.product_id
+            LEFT JOIN stores s ON s.id = t.store_id
+            WHERE t.type = '판매취소'
+              AND NOT EXISTS (SELECT 1 FROM stock_transactions o WHERE o.id = t.ref_transaction_id)
+            ORDER BY t.date_time DESC
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+        total_revenue_impact = sum(int(r["revenue_impact"] or 0) for r in rows)
+        return jsonify({"items": rows, "count": len(rows), "total_revenue_impact": total_revenue_impact})
+    except Exception as e:
+        print(f"❌ 고아 취소기록 조회 오류: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/maintenance/orphaned-cancellations", methods=["DELETE"])
+def api_maintenance_orphaned_delete():
+    conn = get_db()
+    cur = g.cursor
+    try:
+        data = request.get_json(force=True) if request.data else {}
+        ids = data.get("ids", [])
+        ids = [int(i) for i in ids]
+        if not ids:
+            return jsonify({"error": "삭제할 항목이 없습니다."}), 400
+
+        # 안전을 위해 서버에서 다시 한번 "정말 고아 판매취소 기록인지" 검증 후 그것만 삭제한다.
+        placeholders = ','.join(['%s'] * len(ids))
+        cur.execute(f"""
+            SELECT t.id FROM stock_transactions t
+            WHERE t.id IN ({placeholders})
+              AND t.type = '판매취소'
+              AND NOT EXISTS (SELECT 1 FROM stock_transactions o WHERE o.id = t.ref_transaction_id)
+        """, ids)
+        confirmed_ids = [r["id"] for r in cur.fetchall()]
+        if not confirmed_ids:
+            return jsonify({"deleted": 0, "error": "조건에 맞는 항목이 없습니다. (이미 정리되었거나 목록이 오래되었을 수 있어요)"}), 400
+
+        placeholders2 = ','.join(['%s'] * len(confirmed_ids))
+        cur.execute(f"DELETE FROM stock_transactions WHERE id IN ({placeholders2})", confirmed_ids)
+        conn.commit()
+        return jsonify({"deleted": len(confirmed_ids)})
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ 고아 취소기록 삭제 오류: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/maintenance/orphaned-cancellations")
+def maintenance_orphaned_page():
+    return render_template("maintenance_orphaned.html")
+
+
     conn = get_db()
     cur = g.cursor
     data = request.get_json(force=True)
