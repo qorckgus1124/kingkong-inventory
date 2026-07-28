@@ -2246,11 +2246,13 @@ def api_movements():
 # API - 금일 보고 목록 (매장별 브랜드 그룹 판매 집계)
 # ---------------------------------------------------------------------------
 
-def _brand_sales_rows(cur, store_id, date_str, brand_names):
-    """지정한 브랜드(들)의 특정 매장/날짜 순 판매 수량(제품명별)을 반환한다."""
+def _brand_sales_rows(cur, store_id, date_str, brand_names, category_name=None):
+    """지정한 브랜드(들)의 특정 매장/날짜 순 판매 수량(제품명별)을 반환한다.
+    category_name을 지정하면 해당 카테고리(예: '일회용')에 속한 제품만 집계한다."""
     if not brand_names:
         return []
     placeholders = ",".join(["%s"] * len(brand_names))
+    cat_filter = " AND c.name = %s" if category_name else ""
     sql = f"""
         SELECT p.name as product_name,
                COALESCE(SUM(CASE WHEN t.type = '판매출고' THEN t.quantity ELSE 0 END), 0)
@@ -2258,13 +2260,18 @@ def _brand_sales_rows(cur, store_id, date_str, brand_names):
         FROM stock_transactions t
         JOIN products p ON p.id = t.product_id
         JOIN brands b ON b.id = p.brand_id
+        LEFT JOIN categories c ON c.id = p.category_id
         WHERE b.name IN ({placeholders})
           AND t.store_id = %s
           AND date(t.date_time) = %s
           AND t.type IN ('판매출고', '판매취소')
+          {cat_filter}
         GROUP BY p.id, p.name
     """
-    cur.execute(sql, list(brand_names) + [store_id, date_str])
+    params = list(brand_names) + [store_id, date_str]
+    if category_name:
+        params.append(category_name)
+    cur.execute(sql, params)
     return [(r["product_name"], r["qty"]) for r in cur.fetchall()]
 
 
@@ -2280,24 +2287,51 @@ def _bucket_by_percent(rows):
     return buckets
 
 
-def _all_percent_labels_for_brand(cur, brand_names):
+def _bucket_elfbar_percent(rows):
+    """엘프바 25K 아이스킹 전용: 제품명 맨 앞의 'N%' 표기로 그룹화하되,
+    %가 전혀 적혀있지 않은 맛(예: '망고', '멘솔' 등)은 전부 '1%'로 집계한다."""
+    buckets = {}
+    for name, qty in rows:
+        n = name or ""
+        m = re.match(r"^\s*(\d+)\s*%", n)
+        label = f"{m.group(1)}%" if m else "1%"
+        buckets[label] = buckets.get(label, 0) + (qty or 0)
+    return buckets
+
+
+def _all_percent_labels_for_brand(cur, brand_names, category_name=None, always_include=None):
     """오늘 판매 여부와 상관없이, 해당 브랜드에 등록된 모든 제품명에서
     'N%' 표기를 전부 뽑아 라벨 집합으로 반환한다.
-    (오늘 판매가 0개인 %도 항상 목록에 표시하기 위함)"""
+    (오늘 판매가 0개인 %도 항상 목록에 표시하기 위함)
+    %가 적혀있지 않은 제품이 하나라도 있으면 always_include(기본 없음)로 지정한
+    라벨도 함께 포함시킨다 (예: 엘프바의 '1%')."""
     if not brand_names:
         return set()
     placeholders = ",".join(["%s"] * len(brand_names))
+    params = list(brand_names)
+    cat_filter = ""
+    if category_name:
+        cat_filter = " AND c.name = %s"
+        params.append(category_name)
     cur.execute(f"""
         SELECT p.name as product_name
         FROM products p
         JOIN brands b ON b.id = p.brand_id
+        LEFT JOIN categories c ON c.id = p.category_id
         WHERE b.name IN ({placeholders})
-    """, list(brand_names))
+        {cat_filter}
+    """, params)
     labels = set()
+    has_unlabeled = False
     for r in cur.fetchall():
-        m = re.match(r"^\s*(\d+)\s*%", r["product_name"] or "")
+        n = r["product_name"] or ""
+        m = re.match(r"^\s*(\d+)\s*%", n)
         if m:
             labels.add(f"{m.group(1)}%")
+        else:
+            has_unlabeled = True
+    if has_unlabeled and always_include:
+        labels.update(always_include)
     return labels
 
 
@@ -2332,8 +2366,8 @@ def api_daily_sales_summary():
 
         sections = []
 
-        # ---- 플릭(일회용, DB상 브랜드명은 "플릭 슬림") : 니코틴 %로 그룹화 ----
-        flik_rows = _brand_sales_rows(cur, store_id, date_str, ["플릭 슬림"])
+        # ---- 플릭(카테고리=일회용, 브랜드=플릭 슬림) : 제품명 0%/1%로 그룹화 ----
+        flik_rows = _brand_sales_rows(cur, store_id, date_str, ["플릭 슬림"], category_name="일회용")
         flik_buckets = _bucket_by_percent(flik_rows)
         # 플릭은 0%/1% 두 종류만 존재 → 오늘 판매가 없어도 0개로 항상 표시
         for _pct in ["0%", "1%"]:
@@ -2346,13 +2380,15 @@ def api_daily_sales_summary():
             "total": sum(flik_buckets.values())
         })
 
-        # ---- 엘프바(일회용) : 니코틴 % + 조인원 킷/팟 ----
-        elfbar_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 25K 아이스킹"])
-        elfbar_buckets = _bucket_by_percent(elfbar_rows)
+        # ---- 엘프바(카테고리=일회용, 브랜드=엘프바 25K 아이스킹 / 엘프바 조인원) ----
+        # 25K 아이스킹: 제품명이 1%/2%/5%로 표기, %가 안 적혀 있는 맛은 전부 1%로 집계
+        # 조인원: 제품명이 킷/팟으로 표기
+        elfbar_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 25K 아이스킹"], category_name="일회용")
+        elfbar_buckets = _bucket_elfbar_percent(elfbar_rows)
         # 오늘 판매가 없는 %도(예: 1%) 항상 표시되도록, 제품으로 등록된 % 옵션은 모두 0으로 채워둔다
-        for _pct in _all_percent_labels_for_brand(cur, ["엘프바 25K 아이스킹"]):
+        for _pct in _all_percent_labels_for_brand(cur, ["엘프바 25K 아이스킹"], category_name="일회용", always_include={"1%"}):
             elfbar_buckets.setdefault(_pct, 0)
-        joinone_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 조인원"])
+        joinone_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 조인원"], category_name="일회용")
         joinone_buckets = _bucket_by_prefix(joinone_rows, [("조인원 킷", ["킷"]), ("조인원 팟", ["팟"])])
         sections.append({
             "key": "elfbar",
@@ -2362,9 +2398,9 @@ def api_daily_sales_summary():
             "total": sum(elfbar_buckets.values()) + sum(joinone_buckets.values())
         })
 
-        # ---- 칠렉스 바이브(일회용) : 킷/팟 (브랜드 자체가 분리되어 있음) ----
-        vibe_kit_rows = _brand_sales_rows(cur, store_id, date_str, ["칠렉스 바이브 킷"])
-        vibe_pod_rows = _brand_sales_rows(cur, store_id, date_str, ["칠렉스 바이브 팟"])
+        # ---- 칠렉스 바이브(카테고리=일회용, 브랜드=칠렉스 바이브 킷/팟) : 킷/팟 ----
+        vibe_kit_rows = _brand_sales_rows(cur, store_id, date_str, ["칠렉스 바이브 킷"], category_name="일회용")
+        vibe_pod_rows = _brand_sales_rows(cur, store_id, date_str, ["칠렉스 바이브 팟"], category_name="일회용")
         vibe_kit_qty = sum(q for _, q in vibe_kit_rows)
         vibe_pod_qty = sum(q for _, q in vibe_pod_rows)
         sections.append({
@@ -2375,24 +2411,24 @@ def api_daily_sales_summary():
             "total": vibe_kit_qty + vibe_pod_qty
         })
 
-        # ---- 카오린 전자담배 : 스타터킷 / 카트리지(킷+팟) / 배터리 ----
-        kaorin_rows = _brand_sales_rows(cur, store_id, date_str, ["카오린"])
+        # ---- 카오린 전자담배(카테고리=일회용, 브랜드=카오린) : 킷/팟/배터리 ----
+        # 카오린은 액상 카테고리에도 같은 브랜드명 제품이 있으므로 반드시 카테고리=일회용으로 필터링
+        kaorin_rows = _brand_sales_rows(cur, store_id, date_str, ["카오린"], category_name="일회용")
         kaorin_buckets = _bucket_by_prefix(kaorin_rows, [
+            ("킷", ["킷"]),
+            ("팟", ["팟"]),
             ("배터리", ["배터리"]),
-            ("카트리지", ["킷", "팟"]),
         ])
-        # 접두어가 없는 나머지는 스타터킷으로 처리
-        starter_qty = sum(q for _, q in kaorin_rows) - sum(kaorin_buckets.values())
         sections.append({
             "key": "kaorin",
             "title": f"[{date_label} {store_name} 카오린 전자담배]",
             "lines": [
-                {"label": "스타터킷", "qty": starter_qty},
-                {"label": "카트리지", "qty": kaorin_buckets["카트리지"]},
+                {"label": "킷", "qty": kaorin_buckets["킷"]},
+                {"label": "팟", "qty": kaorin_buckets["팟"]},
                 {"label": "배터리", "qty": kaorin_buckets["배터리"]},
             ],
             "extra_lines": [],
-            "total": starter_qty + kaorin_buckets["카트리지"] + kaorin_buckets["배터리"]
+            "total": kaorin_buckets["킷"] + kaorin_buckets["팟"] + kaorin_buckets["배터리"]
         })
 
         return jsonify({
