@@ -469,6 +469,26 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_pre_orders_customer_id ON pre_orders(customer_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);")
 
+        # 판매 등록 화면의 "퀵 버튼"(재고와 무관하게 바로 담는 가상 상품, 예: 퀵비/공팟)을 위한 플래그.
+        # 이 값이 1인 상품은 재고 체크/차감을 건너뛴다.
+        cur.execute("""
+            ALTER TABLE products
+            ADD COLUMN IF NOT EXISTS unlimited_stock INTEGER DEFAULT 0;
+        """)
+        # 퀵 버튼 기본 상품 시드 (없을 때만 생성)
+        cur.execute("SELECT id FROM products WHERE name=%s AND unlimited_stock=1", ("퀵비",))
+        if not cur.fetchone():
+            cur.execute(
+                "INSERT INTO products (name, cost_price, sale_price, unlimited_stock, is_active) VALUES (%s,%s,%s,1,0)",
+                ("퀵비", 0, 1000)
+            )
+        cur.execute("SELECT id FROM products WHERE name=%s AND unlimited_stock=1", ("공팟",))
+        if not cur.fetchone():
+            cur.execute(
+                "INSERT INTO products (name, cost_price, sale_price, unlimited_stock, is_active) VALUES (%s,%s,%s,1,0)",
+                ("공팟", 3445, 10000)
+            )
+
         # 기본 매장 (ID=1)
         cur.execute("INSERT INTO stores (id, name) VALUES (1, '강남역점') ON CONFLICT (id) DO NOTHING;")
 
@@ -3081,6 +3101,11 @@ def api_sales():
         unit_price_override = item.get("unit_price")
         if qty <= 0:
             return jsonify({"error": "수량은 1 이상이어야 합니다."}), 400
+        cur.execute("SELECT unlimited_stock FROM products WHERE id=%s", (pid,))
+        prod_flag = cur.fetchone()
+        # 재고 무관(퀵 버튼) 상품은 재고 체크를 건너뛴다.
+        if prod_flag and prod_flag.get("unlimited_stock"):
+            continue
         cur.execute("SELECT qty FROM store_stock WHERE store_id=%s AND product_id=%s", (store_id, pid))
         stock = cur.fetchone()
         current_qty = stock["qty"] if stock else 0
@@ -3097,7 +3122,9 @@ def api_sales():
         unit_price_override = item.get("unit_price")
         cur.execute("SELECT * FROM products WHERE id=%s", (pid,))
         product = cur.fetchone()
-        _apply_stock_delta(conn, store_id, pid, "판매출고", qty)
+        # 재고 무관(퀵 버튼) 상품은 재고 차감도 하지 않는다.
+        if not (product and product.get("unlimited_stock")):
+            _apply_stock_delta(conn, store_id, pid, "판매출고", qty)
 
         if unit_price_override is not None and unit_price_override >= 0:
             unit_price = int(unit_price_override)
@@ -3115,6 +3142,18 @@ def api_sales():
         created_ids.append(new_id)
     conn.commit()
     return jsonify({"ok": True, "transaction_ids": created_ids})
+
+
+@app.route("/api/quick_items")
+def api_quick_items():
+    """판매 등록 화면의 퀵 버튼(재고와 무관하게 담는 상품) 목록."""
+    conn = get_db()
+    cur = g.cursor
+    cur.execute(
+        "SELECT id, name, cost_price, sale_price FROM products WHERE unlimited_stock=1 ORDER BY id"
+    )
+    rows = cur.fetchall()
+    return jsonify([dict(r) for r in rows])
 
 
 # ---------------------------------------------------------------------------

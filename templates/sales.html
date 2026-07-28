@@ -33,6 +33,7 @@
       <!-- 상단 고정 영역 -->
       <div class="cart-header">
         <div class="cart-title">🛒 장바구니</div>
+        <div class="quick-btns" id="quickBtns"></div>
         <div class="cart-total-breakdown">
           <div class="ctb-row"><span>상품 합계</span><span id="cartSubtotal">0원</span></div>
           <div class="ctb-row discount-row">
@@ -246,6 +247,61 @@ body.dark-mode .cat-tab.active {
   background: var(--text);
 }
 
+/* 🔥 퀵 버튼 (재고와 무관하게 바로 담는 상품) */
+.quick-btns {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.quick-btn {
+  flex: 1;
+  min-width: 90px;
+  padding: 8px 6px;
+  border-radius: 6px;
+  border: 1px dashed var(--accent);
+  background: var(--card-bg);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+}
+.quick-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.quick-btn .qb-price {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+/* 🔥 장바구니 상품별 단가/할인 수정 */
+.ci-edit-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.ci-edit-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-light);
+}
+.ci-price-input, .ci-discount-input {
+  width: 72px;
+  padding: 3px 5px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+}
+
 /* 🔥 장바구니 전체 할인 입력 필드 */
 .discount-input {
   width: 120px !important;
@@ -332,6 +388,9 @@ let cart = loadCartFromStorage(CART_STORAGE_KEY);
 let normalSearchQuery = '';
 const CART_DISCOUNT_KEY = 'normal_cart_discount';
 let cartDiscount = parseInt(localStorage.getItem(CART_DISCOUNT_KEY)) || 0;
+
+// 🔥 퀵 버튼 (재고와 무관하게 담는 상품: 퀵비/공팟 등)
+let quickItems = [];
 
 const PRE_CART_STORAGE_KEY = 'pre_cart';
 let preCart = loadCartFromStorage(PRE_CART_STORAGE_KEY);
@@ -672,6 +731,58 @@ function renderPreGrid() {
   }).join('');
 }
 
+// ---------- 퀵 버튼 (재고와 무관하게 바로 담는 상품) ----------
+async function loadQuickItems() {
+  try {
+    quickItems = await api('/api/quick_items');
+    renderQuickBtns();
+  } catch (e) {
+    console.error('❌ 퀵 버튼 로드 오류:', e);
+  }
+}
+
+function renderQuickBtns() {
+  const wrap = document.getElementById('quickBtns');
+  if (!wrap) return;
+  if (!quickItems || quickItems.length === 0) {
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.innerHTML = quickItems.map(qi => `
+    <button type="button" class="quick-btn" onclick="addQuickItem(${qi.id})">
+      ⚡ ${escapeHtml(qi.name)}
+      <span class="qb-price">${fmt(qi.sale_price)}원</span>
+    </button>
+  `).join('');
+}
+
+// 재고 체크 없이 바로 장바구니에 담는다 (단가는 이후 장바구니에서 임의로 변경 가능).
+function addQuickItem(pid) {
+  const qi = quickItems.find(p => p.id === pid);
+  if (!qi) return;
+
+  const key = `${pid}_normal`;
+  const existing = cart[key];
+  if (existing) {
+    existing.qty += 1;
+  } else {
+    cart[key] = {
+      product: {
+        id: qi.id,
+        name: qi.name,
+        sale_price: qi.sale_price,
+        cost_price: qi.cost_price,
+        qty: 999999,
+        unlimited: true
+      },
+      qty: 1,
+      type: 'normal'
+    };
+  }
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+}
+
 // ---------- 일반 판매 장바구니 ----------
 function addToCart(pid) {
   const product = products.find(p => p.id === pid);
@@ -699,7 +810,7 @@ function changeQty(key, delta) {
   if (!item) return;
   const newQty = item.qty + delta;
   if (newQty <= 0) { delete cart[key]; saveCartToStorage(CART_STORAGE_KEY, cart); renderCart(); return; }
-  if (newQty > item.product.qty) {
+  if (!item.product.unlimited && newQty > item.product.qty) {
     toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
     renderCart();
     return;
@@ -714,12 +825,32 @@ function setQty(key, value) {
   if (isNaN(qty) || qty < 1) { renderCart(); return; }
   const item = cart[key];
   if (!item) return;
-  if (qty > item.product.qty) {
+  if (!item.product.unlimited && qty > item.product.qty) {
     toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
     renderCart();
     return;
   }
   item.qty = qty;
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+}
+
+// 🔥 상품별 판매가 임의 변경 (그 판매 건에서만 적용, 제품 자체의 판매가는 바뀌지 않음)
+function setPriceOverride(key, value) {
+  const item = cart[key];
+  if (!item) return;
+  const v = parseInt(value);
+  item.priceOverride = (isNaN(v) || v < 0) ? null : v;
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  renderCart();
+}
+
+// 🔥 상품별 할인 금액
+function setDiscount(key, value) {
+  const item = cart[key];
+  if (!item) return;
+  const v = parseInt(value);
+  item.discount = (isNaN(v) || v < 0) ? 0 : v;
   saveCartToStorage(CART_STORAGE_KEY, cart);
   renderCart();
 }
@@ -768,18 +899,29 @@ function renderCart() {
 
   let subtotal = 0;
   list.innerHTML = items.map(([key, item]) => {
-    const unitPrice = item.product.sale_price || 0;
+    // 🔥 이 판매 건에서만 임의로 바꾼 단가(없으면 제품 자체의 판매가 사용). 제품의 판매가 자체는 바뀌지 않는다.
+    const basePrice = item.priceOverride != null ? item.priceOverride : (item.product.sale_price || 0);
     const qty = item.qty;
     const isService = item.type === 'service';
-    const lineTotal = isService ? 0 : (unitPrice * qty);
+    // 🔥 상품별 할인 금액 (한 줄 금액을 넘지 않도록 제한)
+    const lineDiscount = isService ? 0 : Math.min(item.discount || 0, basePrice * qty);
+    const lineTotal = isService ? 0 : Math.max(basePrice * qty - lineDiscount, 0);
     subtotal += lineTotal;
+    const qtyMax = item.product.unlimited ? 999999 : item.product.qty;
 
     return `
       <div class="cart-item">
         <div class="ci-name">
           ${escapeHtml(item.product.name)}
           ${isService ? ' <span style="color:var(--text-light); font-size:11px;">(서비스)</span>' : ''}
-          <div class="ci-sub">${fmt(unitPrice)}원 × ${qty} = ${fmt(lineTotal)}원</div>
+          <div class="ci-sub">${fmt(basePrice)}원 × ${qty}${lineDiscount > 0 ? ` - ${fmt(lineDiscount)}원` : ''} = ${fmt(lineTotal)}원</div>
+          ${!isService ? `
+          <div class="ci-edit-row">
+            <label>단가 <input type="number" class="ci-price-input" value="${basePrice}" min="0"
+                   onchange="setPriceOverride('${key}', this.value)" onfocus="this.select()"></label>
+            <label>할인 <input type="number" class="ci-discount-input" value="${item.discount || ''}" placeholder="0" min="0"
+                   onchange="setDiscount('${key}', this.value)" onfocus="this.select()"></label>
+          </div>` : ''}
         </div>
         <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
           <button onclick="toggleService('${key}')" 
@@ -788,7 +930,7 @@ function renderCart() {
           </button>
           <div class="qty-ctrl">
             <button onclick="changeQty('${key}', -1)">-</button>
-            <input type="number" class="qty-input" value="${qty}" min="1" max="${item.product.qty}" 
+            <input type="number" class="qty-input" value="${qty}" min="1" max="${qtyMax}" 
                    onchange="setQty('${key}', this.value)" onfocus="this.select()">
             <button onclick="changeQty('${key}', 1)">+</button>
           </div>
@@ -798,7 +940,7 @@ function renderCart() {
     `;
   }).join('');
 
-  // 할인은 상품별이 아니라 장바구니 합계 한 곳에서만 적용된다.
+  // 전체 할인은 (상품별 단가/할인이 반영된) 장바구니 합계에서 한 번 더 적용된다.
   const discount = Math.min(cartDiscount, subtotal);
   const grandTotal = Math.max(subtotal - discount, 0);
 
@@ -826,32 +968,35 @@ async function checkout() {
     return;
   }
 
-  // 상품 합계(서비스 제외) 계산
-  const subtotal = entries.reduce((sum, [, item]) => {
-    if (item.type === 'service') return sum;
-    return sum + (item.product.sale_price || 0) * item.qty;
-  }, 0);
-  const discount = Math.min(Math.max(cartDiscount || 0, 0), subtotal);
-
-  // 🔥 할인은 상품 개당 가격을 낱낱이 줄이지 않고, 장바구니에 마지막으로 담긴
-  // 상품 한 줄에서만 전체 금액을 차감한다. 나머지 상품은 정상가 그대로 기록된다.
-  const nonServiceKeys = entries.filter(([, item]) => item.type !== 'service').map(([key]) => key);
-  const discountTargetKey = nonServiceKeys[nonServiceKeys.length - 1];
-
-  const items = entries.map(([key, item]) => {
+  // 🔥 상품별로 임의 변경한 단가와 상품별 할인을 먼저 반영해 각 줄의 금액을 계산한다.
+  const lineData = entries.map(([key, item]) => {
     const qty = item.qty;
     const isService = item.type === 'service';
-    const unitPrice = item.product.sale_price || 0;
+    const basePrice = item.priceOverride != null ? item.priceOverride : (item.product.sale_price || 0);
+    const lineDiscount = isService ? 0 : Math.min(item.discount || 0, basePrice * qty);
+    const lineTotal = isService ? 0 : Math.max(basePrice * qty - lineDiscount, 0);
+    return { key, item, qty, isService, lineTotal };
+  });
 
-    if (isService) {
-      return { product_id: item.product.id, quantity: qty, unit_price: 0 };
+  // 상품 합계(서비스 제외, 상품별 단가/할인 반영)
+  const subtotal = lineData.reduce((sum, l) => l.isService ? sum : sum + l.lineTotal, 0);
+  const discount = Math.min(Math.max(cartDiscount || 0, 0), subtotal);
+
+  // 🔥 전체 할인은 상품 개당 가격을 낱낱이 줄이지 않고, 장바구니에 마지막으로 담긴
+  // 상품 한 줄에서만 한 번 더 차감한다. 나머지 상품은 (상품별 단가/할인이 반영된) 금액 그대로 기록된다.
+  const nonServiceKeys = lineData.filter(l => !l.isService).map(l => l.key);
+  const discountTargetKey = nonServiceKeys[nonServiceKeys.length - 1];
+
+  const items = lineData.map(l => {
+    if (l.isService) {
+      return { product_id: l.item.product.id, quantity: l.qty, unit_price: 0 };
     }
-    if (key === discountTargetKey && discount > 0) {
-      const lineTotal = Math.max((unitPrice * qty) - discount, 0);
-      const finalUnitPrice = qty > 0 ? Math.floor(lineTotal / qty) : 0;
-      return { product_id: item.product.id, quantity: qty, unit_price: finalUnitPrice };
+    let finalLineTotal = l.lineTotal;
+    if (l.key === discountTargetKey && discount > 0) {
+      finalLineTotal = Math.max(l.lineTotal - discount, 0);
     }
-    return { product_id: item.product.id, quantity: qty, unit_price: unitPrice };
+    const finalUnitPrice = l.qty > 0 ? Math.floor(finalLineTotal / l.qty) : 0;
+    return { product_id: l.item.product.id, quantity: l.qty, unit_price: finalUnitPrice };
   });
 
   const payload = {
@@ -1177,6 +1322,7 @@ document.addEventListener('DOMContentLoaded', async function() {
   renderPreCart();
   
   await loadStores();
+  await loadQuickItems();
   console.log('✅ 판매 등록 초기화 완료');
 });
 </script>
