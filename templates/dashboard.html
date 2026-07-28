@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>🏠 대시보드</h1>
+<h1><i class="ti ti-layout-dashboard page-icon"></i>대시보드</h1>
 <div class="subtitle">오늘의 매출, 재고 현황, 최근 활동을 한눈에 확인하세요.</div>
 
 <!-- 매장 선택 드롭다운 -->
 <div class="toolbar">
   <select id="storeSelect" onchange="loadDashboard()" style="width:200px;">
-    <option value="">🏪 전체 매장</option>
+    <option value="">전체 매장</option>
   </select>
   <button onclick="loadDashboard()" class="primary">🔄 새로고침</button>
 </div>
@@ -111,7 +111,7 @@ async function loadStores() {
   try {
     const stores = await api('/api/stores');
     const sel = document.getElementById('storeSelect');
-    sel.innerHTML = '<option value="">🏪 전체 매장</option>' + 
+    sel.innerHTML = '<option value="">전체 매장</option>' + 
       stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
     
     // 🔥 전역 매장 ID 적용
@@ -122,7 +122,7 @@ async function loadStores() {
   } catch (e) {
     console.error('매장 로드 오류:', e);
     const sel = document.getElementById('storeSelect');
-    sel.innerHTML = '<option value="">🏪 전체 매장</option><option value="1">본점</option><option value="2">강남역점</option>';
+    sel.innerHTML = '<option value="">전체 매장</option><option value="1">본점</option><option value="2">강남역점</option>';
   }
 }
 

@@ -49,7 +49,7 @@
     <div class="brand"><span class="brand-mark"><i class="ti ti-box"></i></span>재고·판매관리</div>
     <div class="store-selector" style="padding: 0 2px; margin-bottom: 10px;">
       <select id="globalStoreSelect" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:13px; cursor:pointer;">
-        <option value="">🏪 매장 선택</option>
+        <option value="">매장 선택</option>
       </select>
     </div>
     <div class="nav-search">
@@ -93,7 +93,7 @@
       </div>
     </nav>
     <div class="sidebar-footer">
-      <button class="theme-toggle" onclick="toggleTheme()" id="themeToggle">🌙 다크 모드</button>
+      <button class="theme-toggle theme-toggle-btn" onclick="toggleTheme()"><i class="ti ti-moon"></i> 다크 모드</button>
     </div>
   </aside>
 
@@ -164,39 +164,45 @@ function filterNavItems(query) {
 
 <nav class="mobile-bottom-nav">
   <a href="/dashboard" class="{{ 'active' if active=='dashboard' else '' }}">
-    <span class="nav-icon">🏠</span>
+    <i class="ti ti-layout-dashboard nav-icon"></i>
     <span class="nav-label">홈</span>
   </a>
   <a href="/sales" class="{{ 'active' if active=='sales' else '' }}">
-    <span class="nav-icon">💰</span>
+    <i class="ti ti-cash nav-icon"></i>
     <span class="nav-label">판매</span>
   </a>
   <a href="/" class="{{ 'active' if active=='products' else '' }}">
-    <span class="nav-icon">📦</span>
+    <i class="ti ti-package nav-icon"></i>
     <span class="nav-label">제품</span>
   </a>
   <a href="/transactions" class="{{ 'active' if active=='transactions' else '' }}">
-    <span class="nav-icon">🔄</span>
+    <i class="ti ti-transfer nav-icon"></i>
     <span class="nav-label">입출고</span>
   </a>
   <a href="/forecast" class="{{ 'active' if active=='forecast' else '' }}">
-    <span class="nav-icon">📊</span>
+    <i class="ti ti-trending-up nav-icon"></i>
     <span class="nav-label">예측</span>
   </a>
   <a href="/settings" class="{{ 'active' if active=='settings' else '' }}">
-    <span class="nav-icon">⚙️</span>
+    <i class="ti ti-settings nav-icon"></i>
     <span class="nav-label">설정</span>
   </a>
 </nav>
 
 <script>
+function updateThemeToggleUI() {
+  const isDark = document.body.classList.contains('dark-mode');
+  document.querySelectorAll('.theme-toggle-btn').forEach(btn => {
+    btn.innerHTML = isDark ? '<i class="ti ti-sun"></i> 라이트 모드' : '<i class="ti ti-moon"></i> 다크 모드';
+  });
+}
+
 function toggleTheme() {
   const body = document.body;
-  const btn = document.getElementById('themeToggle');
   body.classList.toggle('dark-mode');
   const isDark = body.classList.contains('dark-mode');
   localStorage.setItem('darkMode', isDark ? 'true' : 'false');
-  btn.textContent = isDark ? '☀️ 라이트 모드' : '🌙 다크 모드';
+  updateThemeToggleUI();
 }
 
 // ==============================================================
@@ -210,7 +216,7 @@ async function loadGlobalStoreSelect() {
     const stores = await api('/api/stores');
     const sel = document.getElementById('globalStoreSelect');
     if (!sel) return;
-    let options = '<option value="">🏪 매장 선택</option>';
+    let options = '<option value="">매장 선택</option>';
     stores.forEach(s => {
       options += `<option value="${s.id}">${escapeHtml(s.name)}</option>`;
     });
@@ -249,9 +255,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  const btn = document.getElementById('themeToggle');
-  const isDark = document.body.classList.contains('dark-mode');
-  btn.textContent = isDark ? '☀️ 라이트 모드' : '🌙 다크 모드';
+  updateThemeToggleUI();
 
   loadFloatingRevenue();
   restoreFloatingPanelState();

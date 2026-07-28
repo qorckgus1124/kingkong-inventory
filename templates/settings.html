@@ -1,7 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>⚙️ 설정</h1>
+<h1><i class="ti ti-settings page-icon"></i>설정</h1>
 <div class="subtitle">프로그램의 기본 설정값을 관리합니다.</div>
+
+<!-- ============================================================ -->
+<!-- 🌙 화면 설정 (모바일에서는 사이드바가 안 보이므로 여기서 다크모드 전환) -->
+<!-- ============================================================ -->
+<div class="card">
+  <h3 style="color:var(--text);">🌙 화면 설정</h3>
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+    <div style="font-size:13px; color:var(--text-light);">라이트 모드와 다크 모드를 전환합니다.</div>
+    <button class="theme-toggle theme-toggle-btn" onclick="toggleTheme()" style="width:auto; padding:8px 16px;"><i class="ti ti-moon"></i> 다크 모드</button>
+  </div>
+</div>
 
 <!-- ============================================================ -->
 <!-- 🎯 월간 목표 매출 (독립 카드 - 디자인 통일) -->
