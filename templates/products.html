@@ -650,10 +650,9 @@ async function applyBatchEdit() {
   
   if (brandNew) {
     try {
-      const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: brandNew }) });
-      updates.brand_id = result.id;
+      updates.brand_id = await getOrCreateBrandId(brandNew);
     } catch (e) {
-      toast('브랜드 추가 실패: ' + e.message, true, '⚠️');
+      toast('브랜드 처리 실패: ' + e.message, true, '⚠️');
       return;
     }
   }
