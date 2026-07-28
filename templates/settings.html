@@ -100,6 +100,63 @@
 </div>
 
 <!-- ============================================================ -->
+<!-- 🔌 API / 웹훅 (카카오톡 채널 · 스마트스토어 연동 대비) -->
+<!-- ============================================================ -->
+<div class="card">
+  <h3 style="color:var(--text);">🔌 API 키 / 웹훅 <span style="font-size:12px; font-weight:400; color:var(--text-light);">(카카오톡 채널 · 스마트스토어 연동 대비)</span></h3>
+  <div style="font-size:12px; color:var(--text-light); margin-bottom:12px; line-height:1.6;">
+    스마트스토어 신규주문 웹훅, 카카오톡 채널 자동화(Make·Zapier 등 연동 도구)에서 이 프로그램으로
+    주문을 자동 전달하려면 여기서 API 키를 발급해 상대 서비스에 등록하세요.<br>
+    발급된 키는 <b>발급 직후 한 번만</b> 화면에 표시되며, 이후에는 앞자리만 확인할 수 있습니다.
+  </div>
+
+  <div style="background:var(--input-bg); border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:14px; font-size:12px; color:var(--text-light);">
+    <div style="font-weight:600; color:var(--text); margin-bottom:6px;">📮 연동 엔드포인트</div>
+    <div>주문 등록(재고 자동 차감): <code>POST /api/webhook/order</code> — 헤더 <code>X-API-Key: 발급받은키</code></div>
+    <div style="margin-top:4px;">연결 테스트(URL 검증용): <code>POST /api/webhook/test</code></div>
+    <div style="margin-top:8px;">요청 예시:</div>
+    <pre style="background:var(--bg); padding:8px; border-radius:6px; overflow:auto; margin:4px 0 0;">{
+  "channel": "smartstore",
+  "external_order_id": "20240730-0001",
+  "store_id": 1,
+  "items": [ { "product_id": 12, "quantity": 2 } ]
+}</pre>
+  </div>
+
+  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;">
+    <div class="form-field" style="flex:1; min-width:160px;">
+      <label>키 이름</label>
+      <input type="text" id="apiKeyName" placeholder="예: 스마트스토어 자동주문">
+    </div>
+    <div class="form-field" style="min-width:140px;">
+      <label>권한</label>
+      <select id="apiKeyScope">
+        <option value="write" selected>write (주문 반영)</option>
+        <option value="read">read (조회만)</option>
+        <option value="admin">admin (전체)</option>
+      </select>
+    </div>
+    <div class="form-field" style="min-width:160px;">
+      <label>대상 매장</label>
+      <select id="apiKeyStore"><option value="">요청마다 지정</option></select>
+    </div>
+    <button class="primary" onclick="createApiKey()" style="padding:8px 16px;">🔑 키 발급</button>
+  </div>
+  <table>
+    <thead><tr><th>이름</th><th>키(앞자리)</th><th>권한</th><th>매장</th><th>마지막 사용</th><th>상태</th><th style="width:130px;"></th></tr></thead>
+    <tbody id="apiKeyList"></tbody>
+  </table>
+
+  <div style="margin-top:16px;">
+    <div style="font-weight:600; color:var(--text); font-size:13px; margin-bottom:6px;">최근 웹훅 수신 로그</div>
+    <table>
+      <thead><tr><th>시간</th><th>채널</th><th>키</th><th>상태</th><th>메시지</th></tr></thead>
+      <tbody id="webhookLogList"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================================================ -->
 <!-- 📦 데이터 백업 -->
 <!-- ============================================================ -->
 <div class="card">
@@ -280,11 +337,97 @@ async function loadShareLinks() {
 }
 
 // ==============================================================
+// 🔌 API 키 / 웹훅 (카카오톡 채널 · 스마트스토어 연동 대비)
+// ==============================================================
+async function loadApiKeyStores() {
+  const stores = await api('/api/stores');
+  const sel = document.getElementById('apiKeyStore');
+  sel.innerHTML = '<option value="">요청마다 지정</option>' +
+    (stores || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+}
+
+async function createApiKey() {
+  const name = document.getElementById('apiKeyName').value.trim();
+  const scope = document.getElementById('apiKeyScope').value;
+  const store_id = document.getElementById('apiKeyStore').value || null;
+  const res = await api('/api/api_keys', {
+    method: 'POST',
+    body: JSON.stringify({ name, scope, store_id }),
+  });
+  if (res && res.ok) {
+    document.getElementById('apiKeyName').value = '';
+    loadApiKeys();
+    // 원문 키는 지금 이 순간에만 볼 수 있으므로 복사할 시간을 넉넉히 준다.
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(res.api_key).catch(() => {});
+    }
+    alert(`API 키가 발급되었습니다. (클립보드에 복사됨)\n\n${res.api_key}\n\n⚠️ 이 키는 지금만 표시됩니다. 안전한 곳에 저장한 뒤, 상대 서비스(스마트스토어/카카오 자동화 도구)에 등록하세요.`);
+  }
+}
+
+async function toggleApiKey(id, active) {
+  await api(`/api/api_keys/${id}`, { method: 'PUT', body: JSON.stringify({ is_active: active }) });
+  loadApiKeys();
+}
+
+async function deleteApiKey(id) {
+  if (!confirm('이 API 키를 삭제하시겠습니까? 삭제하면 이 키를 쓰는 외부 연동이 즉시 끊깁니다.')) return;
+  await api(`/api/api_keys/${id}`, { method: 'DELETE' });
+  toast('삭제했습니다.', false, '✅');
+  loadApiKeys();
+}
+
+async function loadApiKeys() {
+  const keys = await api('/api/api_keys');
+  const tbody = document.getElementById('apiKeyList');
+  if (!keys || keys.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">🔌</span>발급된 API 키가 없습니다.</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = keys.map(k => `
+    <tr>
+      <td>${escapeHtml(k.name)}</td>
+      <td><code>${escapeHtml(k.key_prefix)}…</code></td>
+      <td>${escapeHtml(k.scope)}</td>
+      <td>${escapeHtml(k.store_name || '요청마다 지정')}</td>
+      <td>${k.last_used_at ? fmtDate(k.last_used_at) : '-'}</td>
+      <td><span style="color:${k.is_active ? 'var(--accent)' : 'var(--danger)'}; font-weight:600;">${k.is_active ? '활성' : '비활성'}</span></td>
+      <td style="white-space:nowrap;">
+        <button onclick="toggleApiKey(${k.id}, ${k.is_active ? 0 : 1})" style="padding:4px 8px; font-size:12px;">${k.is_active ? '비활성화' : '활성화'}</button>
+        <button class="danger" onclick="deleteApiKey(${k.id})" style="padding:4px 8px; font-size:12px;">삭제</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function loadWebhookLogs() {
+  const logs = await api('/api/webhook_logs');
+  const tbody = document.getElementById('webhookLogList');
+  if (!logs || logs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5"><div class="empty"><span class="empty-icon">📭</span>아직 수신된 웹훅이 없습니다.</div></td></tr>';
+    return;
+  }
+  const statusColor = { success: 'var(--accent)', partial: '#c99a1e', fail: 'var(--danger)' };
+  tbody.innerHTML = logs.map(l => `
+    <tr>
+      <td>${fmtDate(l.created_at)}</td>
+      <td>${escapeHtml(l.source || '')}</td>
+      <td>${escapeHtml(l.api_key_name || '-')}</td>
+      <td><span style="color:${statusColor[l.status] || 'var(--text)'}; font-weight:600;">${escapeHtml(l.status || '')}</span></td>
+      <td>${escapeHtml(l.message || '-')}</td>
+    </tr>
+  `).join('');
+}
+
+// ==============================================================
 // 초기화
 // ==============================================================
 loadSettings();
 loadBackups();
 loadShareLinkStores();
 loadShareLinks();
+loadApiKeyStores();
+loadApiKeys();
+loadWebhookLogs();
 </script>
 {% endblock %}

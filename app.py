@@ -5657,6 +5657,242 @@ def api_share_stock_data(token):
 
 
 # ---------------------------------------------------------------------------
+# 🔌 외부 연동용 API 키 & 웹훅 (카카오톡 채널 / 스마트스토어 연동 대비)
+# ---------------------------------------------------------------------------
+# 이 앱 자체에는 로그인 세션이 없으므로(내부망 전용 프로그램), 외부 서비스가
+# 네트워크 건너편에서 호출하는 엔드포인트(/api/webhook/*)만 별도로
+# API 키로 보호한다. 키는 원문을 저장하지 않고 SHA-256 해시만 저장하며,
+# 발급 시 원문은 딱 한 번만 화면에 보여준다(재발급 전까지 다시 볼 수 없음).
+
+def _generate_api_key():
+    raw = "kkv_" + secrets.token_urlsafe(32)
+    prefix = raw[:12]
+    key_hash = hashlib.sha256(raw.encode()).hexdigest()
+    return raw, prefix, key_hash
+
+
+def _hash_api_key(raw_key):
+    return hashlib.sha256(raw_key.encode()).hexdigest()
+
+
+def require_api_key(allowed_scopes=None):
+    """/api/webhook/* 보호용 데코레이터.
+    헤더 'X-API-Key' 또는 'Authorization: Bearer <key>' 로 키를 전달받는다.
+    scope 는 'read'(조회) / 'write'(주문·재고 반영) / 'admin'(전체) 중 하나이며,
+    allowed_scopes 에 없으면 거부한다."""
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            raw_key = request.headers.get("X-API-Key")
+            if not raw_key:
+                auth = request.headers.get("Authorization", "")
+                if auth.startswith("Bearer "):
+                    raw_key = auth[7:].strip()
+            if not raw_key:
+                return jsonify({"error": "API 키가 필요합니다. (X-API-Key 헤더)"}), 401
+
+            conn = get_db()
+            cur = g.cursor
+            key_hash = _hash_api_key(raw_key)
+            cur.execute("SELECT * FROM api_keys WHERE key_hash = %s", (key_hash,))
+            key_row = cur.fetchone()
+            if not key_row or not key_row["is_active"]:
+                return jsonify({"error": "유효하지 않거나 비활성화된 API 키입니다."}), 401
+            if allowed_scopes and key_row["scope"] not in allowed_scopes and key_row["scope"] != "admin":
+                return jsonify({"error": f"이 키({key_row['scope']})는 이 작업을 수행할 권한이 없습니다."}), 403
+
+            cur.execute("UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = %s", (key_row["id"],))
+            conn.commit()
+            g.api_key_row = key_row
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def _log_webhook(source, api_key_id, payload, status, message=None):
+    try:
+        conn = get_db()
+        cur = g.cursor
+        cur.execute(
+            """INSERT INTO webhook_logs (source, api_key_id, payload, status, message)
+            VALUES (%s, %s, %s, %s, %s)""",
+            (source, api_key_id, json.dumps(payload, ensure_ascii=False, default=str)[:8000], status, message)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ 웹훅 로그 기록 실패: {e}")
+
+
+@app.route("/api/api_keys", methods=["GET", "POST"])
+def api_api_keys():
+    conn = get_db()
+    cur = g.cursor
+    if request.method == "GET":
+        cur.execute("""
+            SELECT k.id, k.name, k.key_prefix, k.scope, k.store_id, k.is_active,
+                   k.created_at, k.last_used_at, s.name as store_name
+            FROM api_keys k
+            LEFT JOIN stores s ON s.id = k.store_id
+            ORDER BY k.created_at DESC
+        """)
+        return jsonify([dict(r) for r in cur.fetchall()])
+
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip() or "외부 연동 키"
+    scope = data.get("scope") or "read"
+    if scope not in ("read", "write", "admin"):
+        return jsonify({"error": "scope 는 read/write/admin 중 하나여야 합니다."}), 400
+    store_id = data.get("store_id") or None
+
+    raw_key, prefix, key_hash = _generate_api_key()
+    cur.execute(
+        """INSERT INTO api_keys (name, key_prefix, key_hash, scope, store_id)
+        VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+        (name, prefix, key_hash, scope, store_id)
+    )
+    new_id = cur.fetchone()["id"]
+    conn.commit()
+    # 원문 키는 이 응답에서만 전달되고 서버에는 해시만 저장된다.
+    return jsonify({"ok": True, "id": new_id, "api_key": raw_key, "key_prefix": prefix})
+
+
+@app.route("/api/api_keys/<int:key_id>", methods=["PUT", "DELETE"])
+def api_api_key_detail(key_id):
+    conn = get_db()
+    cur = g.cursor
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM api_keys WHERE id = %s", (key_id,))
+        conn.commit()
+        return jsonify({"ok": True})
+
+    data = request.get_json(force=True) or {}
+    if "is_active" in data:
+        cur.execute("UPDATE api_keys SET is_active = %s WHERE id = %s",
+                    (1 if data["is_active"] else 0, key_id))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/webhook_logs")
+def api_webhook_logs():
+    cur = g.cursor
+    cur.execute("""
+        SELECT w.id, w.source, w.status, w.message, w.created_at, k.name as api_key_name
+        FROM webhook_logs w
+        LEFT JOIN api_keys k ON k.id = w.api_key_id
+        ORDER BY w.created_at DESC
+        LIMIT 100
+    """)
+    return jsonify([dict(r) for r in cur.fetchall()])
+
+
+@app.route("/api/webhook/test", methods=["GET", "POST"])
+@require_api_key(allowed_scopes=("read", "write"))
+def api_webhook_test():
+    """카카오톡 채널 자동화 도구나 스마트스토어 연동 설정 화면에서
+    'URL 검증(핑)' 용도로 호출할 수 있는 엔드포인트."""
+    _log_webhook("test", g.api_key_row["id"], dict(request.args) or (request.get_json(silent=True) or {}), "success")
+    return jsonify({"ok": True, "pong": True, "key_name": g.api_key_row["name"], "scope": g.api_key_row["scope"]})
+
+
+@app.route("/api/webhook/order", methods=["POST"])
+@require_api_key(allowed_scopes=("write",))
+def api_webhook_order():
+    """외부 채널(스마트스토어 신규주문 웹훅, 카카오톡 채널 챗봇/자동화 등)에서
+    주문이 들어왔을 때 호출하는 엔드포인트. 매칭되는 상품의 재고를 판매출고 처리한다.
+
+    요청 예시:
+    {
+      "channel": "smartstore",            // "smartstore" | "kakao" | 임의 문자열
+      "external_order_id": "2024073012345",
+      "store_id": 1,                       // 생략 시 API 키에 지정된 매장 사용
+      "memo": "스마트스토어 주문번호 2024073012345",
+      "items": [
+        {"product_id": 12, "quantity": 2},
+        {"product_name": "정확한 상품명", "quantity": 1, "unit_price": 15000}
+      ]
+    }
+    """
+    conn = get_db()
+    cur = g.cursor
+    data = request.get_json(force=True, silent=True) or {}
+    channel = (data.get("channel") or "unknown").strip()
+    external_order_id = data.get("external_order_id") or ""
+    memo_prefix = data.get("memo") or f"[{channel}] 주문 {external_order_id}".strip()
+    store_id = data.get("store_id") or g.api_key_row["store_id"]
+    items = data.get("items") or []
+
+    if not store_id:
+        _log_webhook(channel, g.api_key_row["id"], data, "fail", "store_id 가 필요합니다 (요청 또는 API 키에 매장 미지정).")
+        return jsonify({"error": "store_id 가 필요합니다. 요청에 store_id 를 포함하거나, API 키 발급 시 매장을 지정하세요."}), 400
+    if not items:
+        _log_webhook(channel, g.api_key_row["id"], data, "fail", "items 가 비어 있습니다.")
+        return jsonify({"error": "items 배열이 필요합니다."}), 400
+
+    cur.execute("SELECT id FROM stores WHERE id = %s", (store_id,))
+    if not cur.fetchone():
+        _log_webhook(channel, g.api_key_row["id"], data, "fail", f"매장 없음: {store_id}")
+        return jsonify({"error": "존재하지 않는 매장입니다."}), 404
+
+    created_ids, errors = [], []
+    for idx, item in enumerate(items):
+        product_id = item.get("product_id")
+        product_name = (item.get("product_name") or "").strip()
+        quantity = item.get("quantity")
+        try:
+            quantity = int(quantity)
+            assert quantity > 0
+        except Exception:
+            errors.append(f"{idx+1}번째 항목: 수량이 올바르지 않습니다.")
+            continue
+
+        product = None
+        if product_id:
+            cur.execute("SELECT * FROM products WHERE id = %s AND is_active = 1", (product_id,))
+            product = cur.fetchone()
+        elif product_name:
+            cur.execute("SELECT * FROM products WHERE is_active = 1 AND name = %s LIMIT 1", (product_name,))
+            product = cur.fetchone()
+            if not product:
+                cur.execute("SELECT * FROM products WHERE is_active = 1 AND name ILIKE %s LIMIT 2", (f"%{product_name}%",))
+                matches = cur.fetchall()
+                if len(matches) == 1:
+                    product = matches[0]
+                elif len(matches) > 1:
+                    errors.append(f"{idx+1}번째 항목: '{product_name}' 이름과 일치하는 상품이 여러 개입니다. product_id 로 지정해주세요.")
+                    continue
+
+        if not product:
+            errors.append(f"{idx+1}번째 항목: 상품을 찾을 수 없습니다 ({product_name or product_id}).")
+            continue
+
+        err = _apply_stock_delta(conn, store_id, product["id"], "판매출고", quantity)
+        if err:
+            errors.append(f"{idx+1}번째 항목 ({product['name']}): {err}")
+            continue
+
+        unit_price = item.get("unit_price") or product["sale_price"]
+        item_memo = memo_prefix + (f" / {product_name}" if product_name and not product_id else "")
+        cur.execute(
+            """INSERT INTO stock_transactions
+            (product_id, store_id, type, quantity, unit_cost, unit_price, staff, memo)
+            VALUES (%s, %s, '판매출고', %s, %s, %s, %s, %s) RETURNING id""",
+            (product["id"], store_id, quantity, product["cost_price"], unit_price, f"webhook:{channel}", item_memo)
+        )
+        created_ids.append(cur.fetchone()["id"])
+
+    conn.commit()
+    status = "success" if created_ids and not errors else ("partial" if created_ids else "fail")
+    _log_webhook(channel, g.api_key_row["id"], data, status, "; ".join(errors) if errors else None)
+
+    return jsonify({
+        "ok": bool(created_ids),
+        "created_transaction_ids": created_ids,
+        "errors": errors,
+    }), (200 if created_ids else 400)
+
+
+# ---------------------------------------------------------------------------
 # 실행
 # ---------------------------------------------------------------------------
 
