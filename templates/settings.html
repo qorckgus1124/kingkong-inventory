@@ -401,9 +401,14 @@ async function loadApiKeys() {
 }
 
 async function loadWebhookLogs() {
-  const logs = await api('/api/webhook_logs');
+  let logs;
+  try {
+    logs = await api('/api/webhook_logs');
+  } catch (e) {
+    logs = null;
+  }
   const tbody = document.getElementById('webhookLogList');
-  if (!logs || logs.length === 0) {
+  if (!Array.isArray(logs) || logs.length === 0) {
     tbody.innerHTML = '<tr><td colspan="5"><div class="empty"><span class="empty-icon">📭</span>아직 수신된 웹훅이 없습니다.</div></td></tr>';
     return;
   }

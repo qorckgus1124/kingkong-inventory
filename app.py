@@ -5775,6 +5775,7 @@ def api_api_key_detail(key_id):
 
 @app.route("/api/webhook_logs")
 def api_webhook_logs():
+    conn = get_db()
     cur = g.cursor
     cur.execute("""
         SELECT w.id, w.source, w.status, w.message, w.created_at, k.name as api_key_name
