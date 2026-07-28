@@ -417,6 +417,20 @@ async function loadBrands() {
   }
 }
 
+// 🔥 이미 있는 브랜드명이면 새로 만들지 않고 그 브랜드를 그대로 재사용하고,
+// 없는 이름일 때만 새 브랜드를 생성한다. (제품 수정 시 기존 브랜드명을 그대로
+// 두거나 다른 기존 브랜드명으로 바꿔도 "이미 존재하는 브랜드명입니다" 오류가
+// 나지 않도록 하기 위함)
+async function getOrCreateBrandId(name) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return null;
+  const existing = brands.find(b => b.name === trimmed);
+  if (existing) return existing.id;
+  const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: trimmed }) });
+  brands.push({ id: result.id, name: trimmed });
+  return result.id;
+}
+
 async function loadCategories() {
   const catSelect = document.getElementById('f_category');
   const filterSelect = document.getElementById('filterCategory');
@@ -820,10 +834,9 @@ async function saveProductEdit() {
   const brandNew = document.getElementById('edit_brand_new').value.trim();
   if (brandNew) {
     try {
-      const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: brandNew }) });
-      brand_id = result.id;
+      brand_id = await getOrCreateBrandId(brandNew);
     } catch (e) {
-      toast('브랜드 추가 실패: ' + e.message, true, '⚠️');
+      toast('브랜드 처리 실패: ' + e.message, true, '⚠️');
       return;
     }
   }
@@ -868,10 +881,9 @@ async function addProduct() {
   let brand_id = null;
   if (brandNew) {
     try {
-      const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: brandNew }) });
-      brand_id = result.id;
+      brand_id = await getOrCreateBrandId(brandNew);
     } catch (e) {
-      toast('브랜드 추가 실패: ' + e.message, true, '⚠️');
+      toast('브랜드 처리 실패: ' + e.message, true, '⚠️');
       return;
     }
   }
