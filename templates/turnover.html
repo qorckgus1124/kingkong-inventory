@@ -10,12 +10,13 @@
 </div>
 
 <div class="card">
-  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr;">
     <div class="form-field">
       <label>기준</label>
       <div class="tab-row">
         <button class="tab-btn active" id="tab_category" onclick="switchGroup('category')">카테고리별</button>
         <button class="tab-btn" id="tab_brand" onclick="switchGroup('brand')">브랜드별</button>
+        <button class="tab-btn" id="tab_product" onclick="switchGroup('product')">제품별</button>
       </div>
     </div>
     <div class="form-field"><label>매장</label><select id="storeSelect" onchange="load()"><option value="">전체 매장</option></select></div>
@@ -27,6 +28,13 @@
         <option value="90">최근 90일</option>
       </select>
     </div>
+    <div class="form-field"><label>정렬</label>
+      <select id="sortSelect" onchange="load()">
+        <option value="turnover" selected>회전율 높은 순</option>
+        <option value="revenue">매출 높은 순</option>
+        <option value="profit">순이익 높은 순</option>
+      </select>
+    </div>
   </div>
 </div>
 
@@ -34,7 +42,7 @@
 <table>
   <thead>
     <tr>
-      <th id="groupHeader">카테고리</th><th>현재 재고</th><th>기간 내 판매량</th><th>일평균 판매</th><th style="width:200px;">소진 예상 일수</th><th>회전 횟수</th>
+      <th id="groupHeader">카테고리</th><th>현재 재고</th><th>기간 내 판매량</th><th>일평균 판매</th><th>매출</th><th>순이익</th><th style="width:200px;">소진 예상 일수</th><th>회전 횟수</th>
     </tr>
   </thead>
   <tbody id="tbody"></tbody>
@@ -59,14 +67,16 @@ function switchGroup(g) {
   groupBy = g;
   document.getElementById('tab_category').classList.toggle('active', g === 'category');
   document.getElementById('tab_brand').classList.toggle('active', g === 'brand');
-  document.getElementById('groupHeader').textContent = g === 'category' ? '카테고리' : '브랜드';
+  document.getElementById('tab_product').classList.toggle('active', g === 'product');
+  document.getElementById('groupHeader').textContent = g === 'category' ? '카테고리' : (g === 'brand' ? '브랜드' : '제품명');
   load();
 }
 
 async function load() {
   const storeId = document.getElementById('storeSelect').value;
   const days = document.getElementById('daysSelect').value;
-  const params = new URLSearchParams({ group_by: groupBy, days });
+  const sortBy = document.getElementById('sortSelect').value;
+  const params = new URLSearchParams({ group_by: groupBy, days, sort_by: sortBy });
   if (storeId) params.set('store_id', storeId);
   const rows = await api(`/api/turnover_rate?${params.toString()}`);
   updateStats(rows || []);
@@ -85,7 +95,7 @@ function updateStats(rows) {
 function render(rows) {
   const tbody = document.getElementById('tbody');
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">📊</span>표시할 데이터가 없습니다.</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><span class="empty-icon">📊</span>표시할 데이터가 없습니다.</div></td></tr>';
     return;
   }
   const maxDeplete = Math.max(...rows.map(r => r.days_to_deplete || 0), 30);
@@ -100,12 +110,17 @@ function render(rows) {
       else if (r.days_to_deplete <= 14) depleteColor = '#e07a5f';
       else depleteColor = '#81b29a';
     }
+    const nameCell = groupBy === 'product'
+      ? escapeHtml(r.group_name)
+      : `<span class="chip" style="background:${r.group_color || '#8a8f98'};">${escapeHtml(r.group_name)}</span>`;
     return `
     <tr>
-      <td><span class="chip" style="background:${r.group_color || '#8a8f98'};">${escapeHtml(r.group_name)}</span></td>
+      <td>${nameCell}</td>
       <td>${fmt(r.current_qty)}</td>
       <td>${fmt(r.total_sold)}</td>
       <td>${r.avg_daily_sales}</td>
+      <td>${fmt(r.revenue)}원</td>
+      <td>${fmt(r.profit)}원</td>
       <td>
         <div style="display:flex; align-items:center; gap:8px;">
           <div style="flex:1; background:var(--input-bg); border-radius:4px; height:8px; overflow:hidden;">

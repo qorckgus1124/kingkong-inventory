@@ -24,6 +24,12 @@
   <label style="font-size:12px; color:var(--text-light);">목표 재고일수:
     <input type="number" id="targetDays" value="7" style="width:60px;" onchange="loadRecommend()">
   </label>
+  <select id="sortSelect" onchange="changePage(0)">
+    <option value="recommend_qty" selected>추천 발주량 많은 순</option>
+    <option value="shortage">부족량 큰 순</option>
+    <option value="total_sold">판매량 많은 순</option>
+    <option value="current_qty">재고 적은 순</option>
+  </select>
   <button onclick="loadRecommend()" class="primary">🔄 새로고침</button>
 </div>
 
@@ -147,6 +153,7 @@ async function loadRecommend() {
   const target_days = document.getElementById('targetDays').value || 7;
   const category_id = document.getElementById('categoryFilter').value;
   const brand_id = document.getElementById('brandFilter').value;
+  const sort_by = document.getElementById('sortSelect').value;
   rowsPerPage = parseInt(document.getElementById('rowsPerPage').value) || 20;
   const offset = (currentPage - 1) * rowsPerPage;
 
@@ -154,7 +161,8 @@ async function loadRecommend() {
     days: days,
     target_days: target_days,
     limit: rowsPerPage,
-    offset: offset
+    offset: offset,
+    sort_by: sort_by
   });
   if (store_id) params.append('store_id', store_id);
   if (category_id) params.append('category_id', category_id);

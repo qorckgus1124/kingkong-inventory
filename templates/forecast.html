@@ -22,6 +22,12 @@
     </select>
   </label>
   <input type="text" id="forecastSearch" placeholder="🔍 제품명 검색" autocomplete="off" oninput="loadForecast()" style="width:180px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+  <select id="sortSelect" onchange="changePage(0)">
+    <option value="shortage" selected>부족량 큰 순</option>
+    <option value="recommend_qty">추천 발주량 많은 순</option>
+    <option value="total_sold">판매량 많은 순</option>
+    <option value="current_qty">재고 적은 순</option>
+  </select>
   <button onclick="loadForecast()" class="primary">🔄 새로고침</button>
 </div>
 
@@ -142,6 +148,7 @@ async function loadForecast() {
   const q = document.getElementById('forecastSearch').value.trim();
   const category_id = document.getElementById('categoryFilter').value;
   const brand_id = document.getElementById('brandFilter').value;
+  const sort_by = document.getElementById('sortSelect').value;
   rowsPerPage = parseInt(document.getElementById('rowsPerPage').value) || 20;
   const offset = (currentPage - 1) * rowsPerPage;
 
@@ -149,6 +156,7 @@ async function loadForecast() {
     days: days,
     limit: rowsPerPage,
     offset: offset,
+    sort_by: sort_by,
     _t: Date.now()
   });
   if (store_id) params.append('store_id', store_id);

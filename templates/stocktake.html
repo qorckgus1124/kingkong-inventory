@@ -10,12 +10,20 @@
 </div>
 
 <div class="card">
-  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr;">
+  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr;">
     <div class="form-field"><label>매장</label><select id="storeSelect" onchange="load()"></select></div>
     <div class="form-field"><label>실사 담당자</label><input type="text" id="staffInput" placeholder="이름"></div>
     <div class="form-field">
       <label>🔍 제품 검색</label>
       <input type="text" id="searchInput" placeholder="제품명 또는 브랜드로 검색" oninput="render()">
+    </div>
+    <div class="form-field"><label>정렬</label>
+      <select id="sortSelect" onchange="render()">
+        <option value="default" selected>기본순 (카테고리·브랜드순)</option>
+        <option value="qty_desc">재고 많은 순</option>
+        <option value="revenue_desc">매출 높은 순 (최근 30일)</option>
+        <option value="diff_desc">차이 큰 순</option>
+      </select>
     </div>
     <div class="form-field">
       <label>&nbsp;</label>
@@ -31,8 +39,8 @@
   <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
     <div>
       <strong>📥 실사표 업로드하여 일괄 적용</strong>
-      <div style="font-size:12px; color:var(--text-light);">📌 매장을 돌며 종이나 엑셀에 적어둔 실사 수량을 CSV로 올리면, 제품명이 일치하는 항목의 "실사 수량"만 자동으로 채워집니다. 실제 저장은 아래 💾 실사 결과 저장 버튼을 눌러야 반영됩니다.</div>
-      <div style="font-size:11px; color:var(--text-light);">필수 형식: 카테고리, 브랜드, 제품명, 갯수 (⬇️ 실사표 내보내기로 받은 파일과 동일)</div>
+      <div style="font-size:12px; color:var(--text-light);">📌 매장을 돌며 종이나 엑셀에 적어둔 실사 수량을 CSV로 올리면, ID가 일치하는 항목의 "실사 수량"만 자동으로 채워집니다. 실제 저장은 아래 💾 실사 결과 저장 버튼을 눌러야 반영됩니다.</div>
+      <div style="font-size:11px; color:var(--text-light);">필수 형식: ID, 카테고리, 브랜드, 제품명, 갯수 (⬇️ 실사표 내보내기로 받은 파일과 동일). 이름이 같은 제품이 있어도 ID로 정확히 구분됩니다.</div>
     </div>
     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
       <button onclick="exportCsv()">⬇️ 실사표 내보내기</button>
@@ -47,7 +55,7 @@
 <table>
   <thead>
     <tr>
-      <th>카테고리</th><th>브랜드</th><th>제품명</th><th>시스템 수량</th><th>실사 수량</th><th>차이</th>
+      <th>카테고리</th><th>브랜드</th><th>제품명</th><th>시스템 수량</th><th>최근 30일 매출</th><th>실사 수량</th><th>차이</th>
     </tr>
   </thead>
   <tbody id="tbody"></tbody>
@@ -85,23 +93,35 @@ function updateStats() {
 
 function getFilteredItems() {
   const term = (document.getElementById('searchInput')?.value || '').trim().toLowerCase();
-  if (!term) return items;
-  return items.filter(it =>
-    (it.product_name || '').toLowerCase().includes(term) ||
-    (it.brand_name || '').toLowerCase().includes(term) ||
-    (it.category_name || '').toLowerCase().includes(term)
-  );
+  let list = items;
+  if (term) {
+    list = list.filter(it =>
+      (it.product_name || '').toLowerCase().includes(term) ||
+      (it.brand_name || '').toLowerCase().includes(term) ||
+      (it.category_name || '').toLowerCase().includes(term)
+    );
+  }
+  const sortBy = document.getElementById('sortSelect')?.value || 'default';
+  list = list.slice();
+  if (sortBy === 'qty_desc') {
+    list.sort((a, b) => (b.system_qty || 0) - (a.system_qty || 0));
+  } else if (sortBy === 'revenue_desc') {
+    list.sort((a, b) => (b.recent_revenue || 0) - (a.recent_revenue || 0));
+  } else if (sortBy === 'diff_desc') {
+    list.sort((a, b) => Math.abs(b.actual_qty - b.system_qty) - Math.abs(a.actual_qty - a.system_qty));
+  }
+  return list;
 }
 
 function render() {
   const tbody = document.getElementById('tbody');
   const list = getFilteredItems();
   if (!items || items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">📦</span>실사할 재고가 없습니다.</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">📦</span>실사할 재고가 없습니다.</div></td></tr>';
     return;
   }
   if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div></td></tr>';
     return;
   }
   tbody.innerHTML = list.map((it) => `
@@ -110,6 +130,7 @@ function render() {
       <td>${escapeHtml(it.brand_name || '-')}</td>
       <td>${escapeHtml(it.product_name)}</td>
       <td>${fmt(it.system_qty)}</td>
+      <td>${fmt(it.recent_revenue || 0)}원</td>
       <td><input type="number" value="${it.actual_qty}" style="width:90px;" oninput="updateActual(${it.product_id}, this.value)"></td>
       <td id="diff_${it.product_id}" style="font-weight:600;">${diffLabel(it.actual_qty - it.system_qty)}</td>
     </tr>
@@ -215,30 +236,45 @@ async function uploadCsv(event) {
       return;
     }
 
-    // 헤더 확인: 카테고리, 브랜드, 제품명, 갯수
+    // 헤더 확인: ID, 카테고리, 브랜드, 제품명, 갯수
     let header = rows[0].map(h => h.trim());
+    let idIdx = header.indexOf('ID');
     let nameIdx = header.indexOf('제품명');
     let qtyIdx = header.indexOf('갯수');
     let dataRows = rows.slice(1);
     if (nameIdx === -1 || qtyIdx === -1) {
-      // 헤더가 없는 파일일 경우, 기본 내보내기 형식(카테고리,브랜드,제품명,갯수)으로 간주
-      nameIdx = 2;
-      qtyIdx = 3;
+      // 헤더가 없는 옛날 파일일 경우, 기본 내보내기 형식(ID,카테고리,브랜드,제품명,갯수)으로 간주
+      idIdx = 0;
+      nameIdx = 3;
+      qtyIdx = 4;
       dataRows = rows;
     }
 
+    const qtyById = {};
     const qtyByName = {};
     for (const r of dataRows) {
+      const id = idIdx !== -1 ? parseInt((r[idIdx] || '').trim(), 10) : NaN;
       const name = (r[nameIdx] || '').trim();
       const qty = parseInt((r[qtyIdx] || '0').trim(), 10);
-      if (!name || isNaN(qty)) continue;
-      qtyByName[name] = qty;
+      if (isNaN(qty)) continue;
+      if (!isNaN(id)) qtyById[id] = qty;
+      else if (name) qtyByName[name] = qty;
     }
 
+    // ID로 우선 매칭하고(같은 이름의 제품이 있어도 정확히 구분됨), ID 컬럼이 없는
+    // 옛날 형식의 파일만 예전처럼 제품명으로 매칭한다(하위 호환용, 이름이 겹치면 부정확할 수 있음).
     let matched = 0;
     let unmatched = 0;
+    const hasIdColumn = Object.keys(qtyById).length > 0;
     for (const it of items) {
-      if (Object.prototype.hasOwnProperty.call(qtyByName, it.product_name)) {
+      if (hasIdColumn) {
+        if (Object.prototype.hasOwnProperty.call(qtyById, it.product_id)) {
+          it.actual_qty = qtyById[it.product_id];
+          matched++;
+        } else {
+          unmatched++;
+        }
+      } else if (Object.prototype.hasOwnProperty.call(qtyByName, it.product_name)) {
         it.actual_qty = qtyByName[it.product_name];
         matched++;
       } else {

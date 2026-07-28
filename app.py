@@ -2601,6 +2601,9 @@ def api_recommend_order():
         brand_id = request.args.get("brand_id")
         limit = int(request.args.get("limit", 20))
         offset = int(request.args.get("offset", 0))
+        sort_by = request.args.get("sort_by", "recommend_qty")
+        if sort_by not in ("recommend_qty", "shortage", "total_sold", "current_qty"):
+            sort_by = "recommend_qty"
 
         filters = []
         stock_params = []
@@ -2669,19 +2672,6 @@ def api_recommend_order():
         WHERE p.is_active = 1
         """
 
-        count_sql = f"SELECT COUNT(*) as total FROM ({stock_sql})"
-        cur.execute(count_sql, stock_params)
-        total_row = cur.fetchone()
-        total = total_row["total"] if total_row else 0
-
-        order_sql = " ORDER BY (COALESCE(sales.total_sold, 0) - COALESCE(s.current_qty, 0)) DESC, p.id"
-        pagination_sql = " LIMIT %s OFFSET %s"
-        final_sql = main_sql + order_sql + pagination_sql
-
-        all_params = stock_params + sale_params + [limit, offset]
-        cur.execute(final_sql, all_params)
-        rows = cur.fetchall()
-
         def build_item(d):
             total_sold = d["total_sold"] or 0
             current_qty = d["current_qty"] or 0
@@ -2707,14 +2697,25 @@ def api_recommend_order():
                 "recommend_qty": recommend_order
             }
 
-        result = [build_item(dict(r)) for r in rows]
-
-        # 발주 예산 비교: 현재 페이지가 아니라 필터에 해당하는 전체 목록 기준으로 계산한다.
-        all_sql = main_sql + order_sql
-        all_query_params = stock_params + sale_params
-        cur.execute(all_sql, all_query_params)
+        # 정렬 기준에 따라 파이썬에서 정확히 계산된 값(추천 발주량/부족량 등)으로 정렬해야
+        # target_days 같은 화면 옵션이 그대로 반영된다. 그래서 페이지네이션 전에 전체를 한 번에
+        # 가져와 정렬한 뒤, 필요한 페이지만 잘라서 응답한다.
+        cur.execute(main_sql, stock_params + sale_params)
         all_rows = cur.fetchall()
         all_items = [build_item(dict(r)) for r in all_rows]
+
+        if sort_by == "shortage":
+            all_items.sort(key=lambda x: x["shortage"], reverse=True)
+        elif sort_by == "total_sold":
+            all_items.sort(key=lambda x: x["total_sold"], reverse=True)
+        elif sort_by == "current_qty":
+            all_items.sort(key=lambda x: x["current_qty"])
+        else:  # recommend_qty
+            all_items.sort(key=lambda x: x["recommend_qty"], reverse=True)
+
+        total = len(all_items)
+        result = all_items[offset:offset + limit]
+
         total_recommend_qty = sum(it["recommend_qty"] for it in all_items)
         total_recommend_cost = sum(it["recommend_qty"] * (it["cost_price"] or 0) for it in all_items)
 
@@ -2765,6 +2766,9 @@ def api_forecast():
         brand_id = request.args.get("brand_id")
         limit = int(request.args.get("limit", 20))
         offset = int(request.args.get("offset", 0))
+        sort_by = request.args.get("sort_by", "shortage")
+        if sort_by not in ("shortage", "total_sold", "current_qty", "recommend_qty"):
+            sort_by = "shortage"
 
         stock_where = ["p.is_active = 1"]
         stock_params = []
@@ -2832,19 +2836,12 @@ def api_forecast():
             LEFT JOIN ({stock_sql}) s ON s.product_id = p.id
             LEFT JOIN ({sale_sql}) sales ON sales.product_id = p.id
             WHERE {" AND ".join(main_where)}
-            ORDER BY (COALESCE(sales.total_sold, 0) - COALESCE(s.current_qty, 0)) DESC, p.id
-            LIMIT %s OFFSET %s
         """
 
-        params = main_params + stock_params + sale_params + [limit, offset]
-        count_sql = f"SELECT COUNT(*) as total FROM products p LEFT JOIN brands b ON b.id = p.brand_id WHERE {" AND ".join(main_where)}"
-        cur.execute(count_sql, main_params)
-        total_row = cur.fetchone()
-        total = total_row["total"] if total_row else 0
-
+        params = main_params + stock_params + sale_params
         cur.execute(main_sql, params)
         rows = cur.fetchall()
-        result = []
+        all_items = []
         for r in rows:
             d = dict(r)
             total_sold = d["total_sold"]
@@ -2853,7 +2850,7 @@ def api_forecast():
             shortage = max(0, total_sold - current_qty)
             recommend_order = int(shortage * 1.1) + 1 if shortage > 0 else 0
 
-            result.append({
+            all_items.append({
                 "product_id": d["product_id"],
                 "product_name": d["product_name"],
                 "brand_name": d["brand_name"],
@@ -2868,6 +2865,18 @@ def api_forecast():
                 "shortage": shortage,
                 "recommend_qty": recommend_order
             })
+
+        if sort_by == "total_sold":
+            all_items.sort(key=lambda x: x["total_sold"], reverse=True)
+        elif sort_by == "current_qty":
+            all_items.sort(key=lambda x: x["current_qty"])
+        elif sort_by == "recommend_qty":
+            all_items.sort(key=lambda x: x["recommend_qty"], reverse=True)
+        else:  # shortage
+            all_items.sort(key=lambda x: x["shortage"], reverse=True)
+
+        total = len(all_items)
+        result = all_items[offset:offset + limit]
 
         return jsonify({
             "items": result,
@@ -3080,7 +3089,7 @@ def api_performance():
             params.append(end_date)
         sql += " GROUP BY p.id, p.name, b.name, b.color, c.name, c.color HAVING SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END) != 0"
 
-        sort_col = "profit" if sort == "profit" else "sold_qty"
+        sort_col = "profit" if sort == "profit" else ("revenue" if sort == "revenue" else "sold_qty")
         order_sql = "DESC" if order.lower() == "desc" else "ASC"
         sql += f" ORDER BY {sort_col} {order_sql}"
 
@@ -3704,14 +3713,25 @@ def api_stocktake():
             cur.execute("""
                 SELECT p.id as product_id, p.name as product_name,
                        c.name as category_name, b.name as brand_name,
-                       ss.qty as system_qty, ss.qty as actual_qty, ss.min_qty
+                       ss.qty as system_qty, ss.qty as actual_qty, ss.min_qty,
+                       COALESCE(sales.sold_qty, 0) as recent_sold_qty,
+                       COALESCE(sales.sold_qty, 0) * p.sale_price as recent_revenue
                 FROM products p
                 JOIN store_stock ss ON ss.product_id = p.id
                 LEFT JOIN categories c ON c.id = p.category_id
                 LEFT JOIN brands b ON b.id = p.brand_id
+                LEFT JOIN (
+                    SELECT product_id,
+                           SUM(CASE WHEN type IN ('판매출고', '선결예약') THEN quantity
+                                    WHEN type = '판매취소' THEN -quantity ELSE 0 END) as sold_qty
+                    FROM stock_transactions
+                    WHERE store_id = %s AND type IN ('판매출고', '판매취소', '선결예약')
+                          AND date_time >= CURRENT_DATE - INTERVAL '30 days'
+                    GROUP BY product_id
+                ) sales ON sales.product_id = p.id
                 WHERE p.is_active = 1 AND ss.store_id = %s
                 ORDER BY COALESCE(c.name, ''), COALESCE(b.name, ''), p.name
-            """, (store_id,))
+            """, (store_id, store_id))
             rows = cur.fetchall()
             return jsonify([dict(r) for r in rows])
         except Exception as e:
@@ -3756,7 +3776,7 @@ def api_stocktake_export():
     if not store_id:
         return jsonify({"error": "매장을 선택해주세요."}), 400
     cur.execute("""
-        SELECT c.name as category_name, b.name as brand_name, p.name as product_name, ss.qty as qty
+        SELECT p.id as product_id, c.name as category_name, b.name as brand_name, p.name as product_name, ss.qty as qty
         FROM products p
         JOIN store_stock ss ON ss.product_id = p.id
         LEFT JOIN categories c ON c.id = p.category_id
@@ -3767,9 +3787,13 @@ def api_stocktake_export():
     rows = cur.fetchall()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['카테고리', '브랜드', '제품명', '갯수'])
+    # ID 컬럼을 포함시켜, 같은 이름의 제품이 여러 개 있어도(브랜드가 다르거나 등록 실수로
+    # 이름이 겹치는 경우) 업로드 시 "제품명"이 아니라 "ID"로 정확히 매칭되도록 한다.
+    # (예전에는 제품명만으로 매칭해서, 이름이 겹치는 제품이 있으면 엉뚱한 제품에
+    #  같은 수량이 잘못 채워지는 문제가 있었다.)
+    writer.writerow(['ID', '카테고리', '브랜드', '제품명', '갯수'])
     for r in rows:
-        writer.writerow([r['category_name'] or '', r['brand_name'] or '', r['product_name'], r['qty']])
+        writer.writerow([r['product_id'], r['category_name'] or '', r['brand_name'] or '', r['product_name'], r['qty']])
     output.seek(0)
     resp = send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='실사표.csv')
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
@@ -3786,10 +3810,13 @@ def api_turnover_rate():
     cur = g.cursor
     try:
         group_by = request.args.get("group_by", "category")
-        if group_by not in ("category", "brand"):
+        if group_by not in ("category", "brand", "product"):
             group_by = "category"
         days = int(request.args.get("days", 30))
         store_id = request.args.get("store_id")
+        sort_by = request.args.get("sort_by", "turnover")
+        if sort_by not in ("turnover", "revenue", "profit"):
+            sort_by = "turnover"
 
         stock_where = "p.is_active = 1"
         stock_params = []
@@ -3803,16 +3830,21 @@ def api_turnover_rate():
             sale_where += " AND t.store_id = %s"
             sale_params.append(int(store_id))
 
-        group_col = "c.name" if group_by == "category" else "b.name"
-        group_color = "c.color" if group_by == "category" else "b.color"
+        if group_by == "category":
+            group_col, group_color, group_key = "c.name", "c.color", "stock.category_id"
+        elif group_by == "brand":
+            group_col, group_color, group_key = "b.name", "b.color", "stock.brand_id"
+        else:  # product
+            group_col, group_color, group_key = "stock.product_name", "b.color", "stock.product_id"
 
         sql = f"""
             WITH stock AS (
-                SELECT p.id as product_id, p.category_id, p.brand_id, SUM(ss.qty) as qty
+                SELECT p.id as product_id, p.name as product_name, p.category_id, p.brand_id,
+                       p.sale_price, p.cost_price, SUM(ss.qty) as qty
                 FROM products p
                 JOIN store_stock ss ON ss.product_id = p.id
                 WHERE {stock_where}
-                GROUP BY p.id, p.category_id, p.brand_id
+                GROUP BY p.id, p.name, p.category_id, p.brand_id, p.sale_price, p.cost_price
             ),
             sales AS (
                 SELECT t.product_id,
@@ -3824,12 +3856,14 @@ def api_turnover_rate():
             )
             SELECT {group_col} as group_name, {group_color} as group_color,
                    COALESCE(SUM(stock.qty), 0) as current_qty,
-                   COALESCE(SUM(sales.sold_qty), 0) as total_sold
+                   COALESCE(SUM(sales.sold_qty), 0) as total_sold,
+                   COALESCE(SUM(sales.sold_qty * stock.sale_price), 0) as revenue,
+                   COALESCE(SUM(sales.sold_qty * (stock.sale_price - stock.cost_price)), 0) as profit
             FROM stock
             LEFT JOIN sales ON sales.product_id = stock.product_id
             LEFT JOIN categories c ON c.id = stock.category_id
             LEFT JOIN brands b ON b.id = stock.brand_id
-            GROUP BY {group_col}, {group_color}
+            GROUP BY {group_col}, {group_color}, {group_key}
             HAVING {group_col} IS NOT NULL
         """
         cur.execute(sql, stock_params + sale_params)
@@ -3839,6 +3873,8 @@ def api_turnover_rate():
         for r in rows:
             current_qty = r["current_qty"] or 0
             total_sold = max(r["total_sold"] or 0, 0)
+            revenue = max(r["revenue"] or 0, 0)
+            profit = max(r["profit"] or 0, 0)
             avg_daily = total_sold / days if days > 0 else 0
             days_to_deplete = round(current_qty / avg_daily, 1) if avg_daily > 0 else None
             turnover_count = round(total_sold / current_qty, 2) if current_qty > 0 else None
@@ -3847,11 +3883,19 @@ def api_turnover_rate():
                 "group_color": r["group_color"],
                 "current_qty": current_qty,
                 "total_sold": total_sold,
+                "revenue": revenue,
+                "profit": profit,
                 "avg_daily_sales": round(avg_daily, 2),
                 "days_to_deplete": days_to_deplete,
                 "turnover_count": turnover_count,
             })
-        result.sort(key=lambda x: (x["days_to_deplete"] is None, x["days_to_deplete"] if x["days_to_deplete"] is not None else 0))
+
+        if sort_by == "revenue":
+            result.sort(key=lambda x: x["revenue"], reverse=True)
+        elif sort_by == "profit":
+            result.sort(key=lambda x: x["profit"], reverse=True)
+        else:  # turnover: 회전 횟수 높은 순 (없는 항목은 맨 뒤로)
+            result.sort(key=lambda x: (x["turnover_count"] is None, -(x["turnover_count"] or 0)))
         return jsonify(result)
     except Exception as e:
         print(f"❌ 재고회전율 조회 오류: {e}")
