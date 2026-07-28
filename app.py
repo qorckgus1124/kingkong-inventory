@@ -746,6 +746,16 @@ def _apply_stock_delta(db, store_id, product_id, ttype, quantity):
 # 라우트 (페이지)
 # ---------------------------------------------------------------------------
 
+@app.route("/sw.js")
+def service_worker():
+    # 서비스 워커는 자기가 위치한 경로 아래(/static/ 이하)만 기본적으로 제어할 수 있다.
+    # /dashboard, /sales 같은 실제 페이지 이동까지 오프라인 대응이 되게 하려면
+    # 루트 경로(/)에서 서비스 워커 파일을 내려줘야 한다 (스코프가 /가 됨).
+    resp = send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.route("/api/version")
 def api_version():
     """지금 Render에 실제로 어떤 코드가 떠 있는지 브라우저에서 바로 확인하기 위한 엔드포인트.

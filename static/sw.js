@@ -1,11 +1,16 @@
-// 서비스 워커 - 오프라인 캐싱
-// v2: 캐시 버전을 올리고, 예전 캐시를 자동 정리 + "네트워크 우선" 전략으로 변경.
+// 서비스 워커 - 오프라인 캐싱 + PWA 앱 셸 프리캐시
+// v3: 홈 화면 추가(PWA) 최적화 - 아이콘/매니페스트 프리캐시 + 오프라인 폴백 페이지 추가.
 // (v1은 캐시를 무한정 붙잡고 있어서, 서버를 배포해도 브라우저가 옛날 페이지를
-//  계속 보여주는 문제가 있었음)
-const CACHE_NAME = 'inventory-v2';
+//  계속 보여주는 문제가 있었음. v2에서 네트워크 우선 전략으로 변경했고,
+//  v3에서는 완전히 오프라인일 때 빈 화면 대신 안내 페이지를 보여주도록 개선)
+const CACHE_NAME = 'inventory-v3';
 const urlsToCache = [
   '/static/style.css',
-  '/static/common.js'
+  '/static/common.js',
+  '/static/manifest.json',
+  '/static/icon-192.png',
+  '/static/icon-512.png',
+  '/static/offline.html',
 ];
 
 self.addEventListener('install', function (event) {
@@ -32,6 +37,8 @@ self.addEventListener('activate', function (event) {
 
 // 네트워크 우선: 온라인이면 항상 최신 버전을 받아오고,
 // 오프라인일 때만 캐시된 정적 파일로 대체한다.
+// 페이지 이동(navigation) 요청이고 캐시에도 없으면, 빈 화면 대신
+// 안내용 오프라인 페이지(offline.html)를 보여준다.
 self.addEventListener('fetch', function (event) {
   if (event.request.method !== 'GET') return;
 
@@ -41,7 +48,13 @@ self.addEventListener('fetch', function (event) {
         return response;
       })
       .catch(function () {
-        return caches.match(event.request);
+        return caches.match(event.request).then(function (cached) {
+          if (cached) return cached;
+          if (event.request.mode === 'navigate') {
+            return caches.match('/static/offline.html');
+          }
+          return Response.error();
+        });
       })
   );
 });

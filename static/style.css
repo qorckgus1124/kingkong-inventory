@@ -660,6 +660,53 @@ body.dark-mode .cat-tab.active { background: var(--accent); color: #fff; border-
 #toast.error { background: var(--danger); color: white; }
 #toast .toast-icon { margin-right: 8px; }
 
+/* ---------- PWA 홈 화면 추가 안내 배너 ---------- */
+.pwa-install-banner {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.18);
+  z-index: 2000;
+  max-width: 420px;
+  margin: 0 auto;
+}
+.pwa-install-icon { font-size: 26px; flex-shrink: 0; }
+.pwa-install-text { flex: 1; min-width: 0; }
+.pwa-install-title { font-weight: 700; font-size: 13px; }
+.pwa-install-sub { font-size: 11px; color: var(--text-light); margin-top: 1px; }
+.pwa-install-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.pwa-install-close {
+  background: none;
+  border: none;
+  color: var(--text-light);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px;
+  flex-shrink: 0;
+}
+/* 모바일 하단 탭바가 있는 화면에서는 그 위로 띄운다 */
+@media (max-width: 768px) {
+  .pwa-install-banner { bottom: calc(54px + env(safe-area-inset-bottom) + 10px); }
+}
+
 /* ---------- 모바일 ---------- */
 .mobile-bottom-nav {
   display: none;

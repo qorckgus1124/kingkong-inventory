@@ -1,16 +1,56 @@
 {
+  "id": "/",
   "name": "킹콩재고 관리",
   "short_name": "킹콩재고",
   "description": "킹콩 전자담배 재고관리 사이트",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
   "background_color": "#FBFBFA",
   "theme_color": "#4f8ff7",
+  "lang": "ko",
+  "dir": "ltr",
+  "categories": ["business", "productivity", "shopping"],
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%234f8ff7'/%3E%3Ctext x='256' y='340' font-size='280' text-anchor='middle' fill='white' font-family='sans-serif'%3E📦%3C/text%3E%3C/svg%3E",
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icon-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "빠른 입출고",
+      "short_name": "빠른입출고",
+      "url": "/quick_io?source=pwa_shortcut",
+      "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "판매 등록",
+      "short_name": "판매등록",
+      "url": "/sales?source=pwa_shortcut",
+      "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "대시보드",
+      "short_name": "대시보드",
+      "url": "/dashboard?source=pwa_shortcut",
+      "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }

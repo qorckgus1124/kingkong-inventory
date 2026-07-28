@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>오프라인 - 킹콩재고 관리</title>
+<style>
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Pretendard", sans-serif;
+    background: #FAFAFA;
+    color: #1C1C1F;
+    text-align: center;
+    padding: 24px;
+    box-sizing: border-box;
+  }
+  .wrap { max-width: 320px; }
+  .icon { font-size: 48px; margin-bottom: 16px; }
+  h1 { font-size: 17px; margin: 0 0 8px; }
+  p { font-size: 13px; color: #6B6F76; margin: 0 0 20px; line-height: 1.6; }
+  button {
+    background: #4f8ff7;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="icon">📡</div>
+    <h1>인터넷 연결이 끊겼습니다</h1>
+    <p>네트워크 연결을 확인한 뒤 다시 시도해주세요.<br>연결이 복구되면 자동으로 이어집니다.</p>
+    <button onclick="location.reload()">다시 시도</button>
+  </div>
+</body>
+</html>

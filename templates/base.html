@@ -4,15 +4,21 @@
 <link rel="manifest" href="/static/manifest.json">
 <meta name="theme-color" content="#4f8ff7">
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
 <title>킹콩재고 관리</title>
 
+<!-- PWA: 홈 화면에 추가했을 때 브라우저 주소창 없이 앱처럼 뜨도록 하는 설정 -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="킹콩재고">
+<meta name="format-detection" content="telephone=no">
+
 <!-- 파비콘: 아래 파일들을 static 폴더에 넣으면 자동으로 적용됩니다.
-     - /static/favicon.ico            (기본 파비콘, 여러 크기 포함된 .ico 하나면 충분)
      - /static/favicon-32x32.png      (32x32 PNG, 크롬 등 데스크톱 브라우저용)
      - /static/apple-touch-icon.png   (180x180 PNG, 아이폰 홈화면 추가 아이콘용)
+     - /static/icon-192.png, icon-512.png, icon-maskable-512.png (안드로이드 홈화면/설치 아이콘)
      파일명을 다르게 저장하면 아래 href 경로도 그 이름에 맞게 바꿔주세요. -->
-<link rel="icon" href="/static/favicon.ico.eps" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
 
@@ -163,6 +169,16 @@ function filterNavItems(query) {
 </div>
 
 <div id="toast"></div>
+
+<div id="pwaInstallBanner" class="pwa-install-banner" style="display:none;">
+  <div class="pwa-install-icon">📦</div>
+  <div class="pwa-install-text">
+    <div class="pwa-install-title">킹콩재고 앱으로 설치</div>
+    <div class="pwa-install-sub" id="pwaInstallSub">홈 화면에 추가하면 앱처럼 빠르게 열 수 있어요</div>
+  </div>
+  <button class="pwa-install-btn" id="pwaInstallBtn" onclick="pwaInstallClick()">설치</button>
+  <button class="pwa-install-close" onclick="pwaDismissBanner()">✕</button>
+</div>
 
 <nav class="mobile-bottom-nav">
   <a href="/dashboard" class="{{ 'active' if active=='dashboard' else '' }}">
@@ -529,10 +545,89 @@ document.addEventListener('keydown', function(e) {
 {% block scripts %}{% endblock %}
 <script>
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/static/sw.js')
+  // 예전 버전은 /static/sw.js로 등록되어 스코프가 /static/ 이하로 제한되어 있었다.
+  // 이제 루트(/)에서 서비스 워커를 등록하므로, 남아있는 예전 등록은 정리한다.
+  navigator.serviceWorker.getRegistrations().then(function (regs) {
+    regs.forEach(function (reg) {
+      if (reg.scope.endsWith('/static/')) reg.unregister();
+    });
+  });
+  navigator.serviceWorker.register('/sw.js')
     .then(function() { console.log('✅ 서비스 워커 등록 완료'); })
     .catch(function() { console.log('⚠️ 서비스 워커 등록 실패'); });
 }
+</script>
+
+<script>
+// ==============================================================
+// PWA 홈 화면 추가 유도 배너
+// ==============================================================
+(function () {
+  const DISMISS_KEY = 'pwa_install_dismissed_at';
+  const DISMISS_DAYS = 14;
+  let deferredPrompt = null;
+
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true; // iOS 홈화면 실행 여부
+  }
+
+  function recentlyDismissed() {
+    const t = localStorage.getItem(DISMISS_KEY);
+    if (!t) return false;
+    const days = (Date.now() - Number(t)) / (1000 * 60 * 60 * 24);
+    return days < DISMISS_DAYS;
+  }
+
+  function showBanner(subText) {
+    if (isStandalone() || recentlyDismissed()) return;
+    const banner = document.getElementById('pwaInstallBanner');
+    if (!banner) return;
+    if (subText) document.getElementById('pwaInstallSub').textContent = subText;
+    banner.style.display = 'flex';
+  }
+
+  window.pwaDismissBanner = function () {
+    localStorage.setItem(DISMISS_KEY, String(Date.now()));
+    const banner = document.getElementById('pwaInstallBanner');
+    if (banner) banner.style.display = 'none';
+  };
+
+  window.pwaInstallClick = async function () {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      pwaDismissBanner();
+    } else {
+      // iOS 등 beforeinstallprompt를 지원하지 않는 브라우저: 수동 안내만 하고 닫기
+      pwaDismissBanner();
+    }
+  };
+
+  // Android/Chrome: 브라우저가 설치 가능하다고 판단하면 이 이벤트가 발생한다.
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    deferredPrompt = e;
+    showBanner('홈 화면에 추가하면 앱처럼 빠르게 열 수 있어요');
+  });
+
+  // iOS Safari는 beforeinstallprompt가 없으므로, UA로 감지해서 수동 안내 배너를 보여준다.
+  document.addEventListener('DOMContentLoaded', function () {
+    const ua = window.navigator.userAgent;
+    const isIOS = /iphone|ipad|ipod/i.test(ua);
+    const isSafari = /safari/i.test(ua) && !/crios|fxios|edgios/i.test(ua);
+    if (isIOS && isSafari && !isStandalone()) {
+      const btn = document.getElementById('pwaInstallBtn');
+      if (btn) btn.textContent = '방법 보기';
+      window.pwaInstallClick = function () {
+        toast('공유 버튼 🔗 → "홈 화면에 추가"를 눌러주세요', false, 'ℹ️');
+        pwaDismissBanner();
+      };
+      showBanner('공유 버튼(하단) → "홈 화면에 추가"로 앱처럼 사용하세요');
+    }
+  });
+})();
 </script>
 </body>
 </html>
