@@ -2507,13 +2507,13 @@ def api_daily_report():
         def extract_brand_and_product(full_name, db_brand_name):
             if db_brand_name:
                 remaining = full_name.replace(db_brand_name, "").strip()
-                remaining = re.sub(r'\s*(액상|팟)\s*', ' ', remaining).strip()
+                remaining = re.sub(r'\s*액상\s*', ' ', remaining).strip()
                 remaining = re.sub(r'\s+', ' ', remaining)
                 return db_brand_name, remaining
             for brand in brand_list:
                 if brand in full_name:
                     remaining = full_name.replace(brand, "").strip()
-                    remaining = re.sub(r'\s*(액상|팟)\s*', ' ', remaining).strip()
+                    remaining = re.sub(r'\s*액상\s*', ' ', remaining).strip()
                     remaining = re.sub(r'\s+', ' ', remaining)
                     return brand, remaining
             return None, full_name
