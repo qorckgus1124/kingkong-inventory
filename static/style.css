@@ -239,6 +239,17 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(79, 143, 247, 0.15);
 }
 
+/* 숫자 입력칸: 스크롤/화살표 스피너로 값이 실수로 바뀌는 것을 막기 위해
+   기본 스피너 화살표를 숨긴다. (스크롤 방지 자체는 common.js에서 처리) */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .report-textarea {
   width: 100%;
   height: 200px;
@@ -470,7 +481,33 @@ body.dark-mode .cat-tab.active { background: var(--accent); color: #fff; border-
   flex-wrap: wrap;
 }
 .cart-item .ci-name { flex: 1; min-width: 0; }
-.cart-item .ci-sub { color: var(--text-light); font-size: 11px; }
+.cart-item .ci-sub { color: var(--text-light); font-size: 11px; margin-top: 2px; }
+.ci-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.ci-edit-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-light);
+  white-space: nowrap;
+}
+.ci-edit-row input.ci-price-input,
+.ci-edit-row input.ci-discount-input {
+  width: 72px;
+  padding: 3px 6px;
+  font-size: 12px;
+  text-align: right;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+}
 .qty-ctrl {
   display: flex;
   align-items: center;
@@ -488,6 +525,25 @@ body.dark-mode .cat-tab.active { background: var(--accent); color: #fff; border-
 }
 .qty-ctrl button { padding: 2px 8px; }
 .cart-empty { color: var(--text-light); text-align: center; padding: 30px 0; font-size: 13px; }
+.cart-total-breakdown { margin: 6px 0 12px; }
+.ctb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  font-size: 13px;
+  color: var(--text-light);
+}
+.ctb-row.discount-row input.discount-input {
+  width: 100px;
+  text-align: right;
+  padding: 5px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+}
 .cart-total { display: flex; justify-content: space-between; font-weight: 700; font-size: 16px; margin: 14px 0; }
 .pay-btns { display: flex; gap: 8px; margin-bottom: 12px; }
 .pay-btns button { flex: 1; }
@@ -908,6 +964,12 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
     font-size: 13px;
     padding: 8px 0;
     gap: 6px;
+  }
+  .ci-edit-row input.ci-price-input,
+  .ci-edit-row input.ci-discount-input {
+    width: 64px;
+    font-size: 13px;
+    height: 30px;
   }
   .cart-total { font-size: 16px; margin: 12px 0; }
   .pay-btns button {

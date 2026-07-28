@@ -4019,6 +4019,114 @@ def api_stocktake_export():
 
 
 # ---------------------------------------------------------------------------
+# API - 타임머신 조회 (특정 시점 기준 과거 재고 수량 조회)
+# ---------------------------------------------------------------------------
+# 모든 재고 증감이 stock_transactions에 before_qty/after_qty와 함께 기록되므로,
+# "기준 시각 이전에 발생한 마지막 거래의 after_qty"가 곧 그 시각의 재고 수량이다.
+# 기준 시각 이전에 거래가 하나도 없다면 그 시점엔 재고가 0이었던 것으로 간주한다.
+
+@app.route("/timemachine")
+def timemachine_page():
+    return render_template("timemachine.html", active="timemachine")
+
+
+@app.route("/api/inventory/snapshot")
+def api_inventory_snapshot():
+    get_db()
+    cur = g.cursor
+
+    date_str = request.args.get("date")  # 'YYYY-MM-DD'
+    if not date_str:
+        return jsonify({"error": "date 파라미터(YYYY-MM-DD)가 필요합니다."}), 400
+    try:
+        target_dt = datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        return jsonify({"error": "날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)"}), 400
+
+    store_id = request.args.get("store_id") or None
+    category_id = request.args.get("category_id") or None
+    brand_id = request.args.get("brand_id") or None
+    search = normalize_search(request.args.get("q", ""))
+
+    params_products = []
+    where_clauses = ["p.is_active = 1"]
+    if category_id:
+        where_clauses.append("p.category_id = %s")
+        params_products.append(category_id)
+    if brand_id:
+        where_clauses.append("p.brand_id = %s")
+        params_products.append(brand_id)
+    if search:
+        where_clauses.append("LOWER(REPLACE(p.name, ' ', '')) LIKE %s")
+        params_products.append(f"%{search}%")
+    where_sql = " AND ".join(where_clauses)
+
+    # 대상 매장 목록 (특정 매장 지정 시 하나, 아니면 전체 매장)
+    if store_id:
+        cur.execute("SELECT id, name FROM stores WHERE id = %s", (store_id,))
+    else:
+        cur.execute("SELECT id, name FROM stores ORDER BY name")
+    stores = cur.fetchall()
+    store_ids = [s["id"] for s in stores]
+    if not store_ids:
+        return jsonify({"date": date_str, "stores": [], "items": []})
+
+    # 대상 제품 목록
+    cur.execute(f"""
+        SELECT p.id, p.name, b.name as brand_name, c.name as category_name
+        FROM products p
+        LEFT JOIN brands b ON b.id = p.brand_id
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE {where_sql}
+        ORDER BY COALESCE(c.name, ''), COALESCE(b.name, ''), p.name
+    """, params_products)
+    products = cur.fetchall()
+    if not products:
+        return jsonify({"date": date_str, "stores": [{"id": s["id"], "name": s["name"]} for s in stores], "items": []})
+    product_ids = [p["id"] for p in products]
+
+    # 기준 시각 이전 각 (매장,제품) 조합의 마지막 거래 after_qty 조회
+    cur.execute("""
+        SELECT DISTINCT ON (store_id, product_id) store_id, product_id, after_qty
+        FROM stock_transactions
+        WHERE store_id = ANY(%s) AND product_id = ANY(%s) AND date_time <= %s
+        ORDER BY store_id, product_id, date_time DESC, id DESC
+    """, (store_ids, product_ids, target_dt))
+    snapshot_rows = cur.fetchall()
+    snapshot_map = {(r["store_id"], r["product_id"]): (r["after_qty"] or 0) for r in snapshot_rows}
+
+    # 현재 재고 (비교용)
+    cur.execute("""
+        SELECT store_id, product_id, qty FROM store_stock
+        WHERE store_id = ANY(%s) AND product_id = ANY(%s)
+    """, (store_ids, product_ids))
+    current_map = {(r["store_id"], r["product_id"]): (r["qty"] or 0) for r in cur.fetchall()}
+
+    items = []
+    for p in products:
+        snap_total = 0
+        cur_total = 0
+        for sid in store_ids:
+            snap_total += snapshot_map.get((sid, p["id"]), 0)
+            cur_total += current_map.get((sid, p["id"]), 0)
+        items.append({
+            "product_id": p["id"],
+            "product_name": p["name"],
+            "brand_name": p["brand_name"],
+            "category_name": p["category_name"],
+            "snapshot_qty": snap_total,
+            "current_qty": cur_total,
+            "diff": cur_total - snap_total,
+        })
+
+    return jsonify({
+        "date": date_str,
+        "stores": [{"id": s["id"], "name": s["name"]} for s in stores],
+        "items": items,
+    })
+
+
+# ---------------------------------------------------------------------------
 # API - 카테고리/브랜드별 재고회전율
 # ---------------------------------------------------------------------------
 

@@ -209,3 +209,15 @@ function makeSearchGuard() {
     isCurrent(t) { return t === token; },
   };
 }
+
+// ---------------------------------------------------------------------------
+// 숫자 입력칸(type="number") 위에서 마우스 휠을 굴렸을 때 값이 실수로
+// 증감되는 것을 막는다. 포커스된 number input 위에서 휠 이벤트가 발생하면
+// 즉시 포커스를 풀어(blur) 값 변경 없이 페이지가 정상적으로 스크롤되게 한다.
+// (모든 페이지에서 공통으로 쓰는 common.js에 한 번만 넣으면 전체 적용된다.)
+document.addEventListener('wheel', function (e) {
+  const el = document.activeElement;
+  if (el && el.tagName === 'INPUT' && el.type === 'number') {
+    el.blur();
+  }
+}, { passive: true });

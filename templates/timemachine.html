@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+<h1><i class="ti ti-clock-back page-icon"></i>타임머신 조회</h1>
+<div class="subtitle">특정 날짜를 기준으로 그 시점의 재고 수량을 조회합니다. (입출고 기록을 역추적하여 계산)</div>
+
+<div class="card">
+  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1.4fr auto;">
+    <div class="form-field">
+      <label>기준 날짜</label>
+      <input type="date" id="targetDate">
+    </div>
+    <div class="form-field">
+      <label>매장</label>
+      <select id="storeSelect"><option value="">전체 매장</option></select>
+    </div>
+    <div class="form-field">
+      <label>제품명 검색</label>
+      <input type="text" id="searchInput" placeholder="제품명으로 검색">
+    </div>
+    <div class="form-field" style="justify-content:flex-end;">
+      <label>&nbsp;</label>
+      <button class="primary" onclick="load()"><i class="ti ti-clock-back"></i> 조회</button>
+    </div>
+  </div>
+</div>
+
+<div class="summary-cards">
+  <div class="summary-card"><div class="label">📅 조회 기준일</div><div class="value" id="statDate">-</div></div>
+  <div class="summary-card"><div class="label">📦 조회 시점 총 재고</div><div class="value" id="statSnapTotal">-</div></div>
+  <div class="summary-card"><div class="label">📈 현재 총 재고</div><div class="value" id="statCurTotal">-</div></div>
+</div>
+
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>카테고리</th>
+        <th>브랜드</th>
+        <th>제품명</th>
+        <th style="text-align:right;">기준일(<span id="dateColLabel">-</span>) 재고</th>
+        <th style="text-align:right;">현재 재고</th>
+        <th style="text-align:right;">증감</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="6" style="text-align:center; color:var(--text-light);">기준 날짜를 선택하고 조회 버튼을 눌러주세요.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function loadStores() {
+  const stores = await api('/api/stores');
+  const sel = document.getElementById('storeSelect');
+  sel.innerHTML = '<option value="">전체 매장</option>' + (stores || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+}
+
+function todayStr() {
+  const d = new Date();
+  const tz = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return tz.toISOString().slice(0, 10);
+}
+
+async function load() {
+  const date = document.getElementById('targetDate').value;
+  if (!date) {
+    toast('기준 날짜를 선택해주세요.', true, '⚠️');
+    return;
+  }
+  const storeId = document.getElementById('storeSelect').value;
+  const q = document.getElementById('searchInput').value.trim();
+  const params = new URLSearchParams({ date });
+  if (storeId) params.set('store_id', storeId);
+  if (q) params.set('q', q);
+
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-light);">불러오는 중...</td></tr>';
+
+  const data = await api(`/api/inventory/snapshot?${params.toString()}`);
+  if (!data) return;
+
+  document.getElementById('statDate').textContent = data.date || '-';
+  document.getElementById('dateColLabel').textContent = data.date || '-';
+
+  const items = data.items || [];
+  const snapTotal = items.reduce((s, it) => s + (it.snapshot_qty || 0), 0);
+  const curTotal = items.reduce((s, it) => s + (it.current_qty || 0), 0);
+  document.getElementById('statSnapTotal').textContent = fmt(snapTotal) + '개';
+  document.getElementById('statCurTotal').textContent = fmt(curTotal) + '개';
+
+  render(items);
+}
+
+function render(items) {
+  const tbody = document.getElementById('tbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-light);">조건에 맞는 제품이 없습니다.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(it => {
+    const diff = it.diff || 0;
+    const diffColor = diff > 0 ? 'var(--success)' : (diff < 0 ? 'var(--danger)' : 'var(--text-light)');
+    const diffText = diff > 0 ? `+${fmt(diff)}` : fmt(diff);
+    return `<tr>
+      <td>${escapeHtml(it.category_name || '-')}</td>
+      <td>${escapeHtml(it.brand_name || '-')}</td>
+      <td>${escapeHtml(it.product_name)}</td>
+      <td style="text-align:right; font-weight:600;">${fmt(it.snapshot_qty)}개</td>
+      <td style="text-align:right;">${fmt(it.current_qty)}개</td>
+      <td style="text-align:right; color:${diffColor}; font-weight:600;">${diffText}</td>
+    </tr>`;
+  }).join('');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('targetDate').value = todayStr();
+  loadStores();
+  let debounceTimer;
+  document.getElementById('searchInput').addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(load, 400);
+  });
+  document.getElementById('storeSelect').addEventListener('change', load);
+});
+</script>
+{% endblock %}
