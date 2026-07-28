@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block content %}
+<h1><i class="ti ti-file-analytics page-icon"></i>커스텀 리포트 빌더</h1>
+<div class="subtitle">원하는 항목과 조건만 골라서 나만의 리포트를 만들고 CSV로 내려받을 수 있습니다.</div>
+
+<div class="card">
+  <h3>1️⃣ 데이터 소스</h3>
+  <div class="qio-type-tabs" id="rbSourceTabs">
+    <button type="button" class="qio-type-btn active" data-source="products">📦 제품 / 재고</button>
+    <button type="button" class="qio-type-btn" data-source="transactions">🔁 입출고 내역</button>
+  </div>
+</div>
+
+<div class="card">
+  <h3>2️⃣ 표시할 항목 선택</h3>
+  <div id="rbColumnList" style="display:flex; flex-wrap:wrap; gap:10px;"></div>
+</div>
+
+<div class="card">
+  <h3>3️⃣ 필터 조건</h3>
+  <div class="form-grid" style="grid-template-columns: repeat(4, 1fr);" id="rbFilterGrid">
+    <div class="form-field">
+      <label>매장</label>
+      <select id="rbFilterStore"><option value="">전체</option></select>
+    </div>
+    <div class="form-field">
+      <label>카테고리</label>
+      <select id="rbFilterCategory"><option value="">전체</option></select>
+    </div>
+    <div class="form-field">
+      <label>브랜드</label>
+      <select id="rbFilterBrand"><option value="">전체</option></select>
+    </div>
+    <div class="form-field rb-products-only">
+      <label>재고 상태</label>
+      <select id="rbFilterLowStock">
+        <option value="">전체</option>
+        <option value="1">최소재고 이하만</option>
+      </select>
+    </div>
+    <div class="form-field rb-tx-only" style="display:none;">
+      <label>시작일</label>
+      <input type="date" id="rbFilterDateFrom">
+    </div>
+    <div class="form-field rb-tx-only" style="display:none;">
+      <label>종료일</label>
+      <input type="date" id="rbFilterDateTo">
+    </div>
+    <div class="form-field rb-tx-only" style="display:none;">
+      <label>유형</label>
+      <select id="rbFilterType">
+        <option value="">전체</option>
+        <option value="입고">입고</option>
+        <option value="판매출고">판매출고</option>
+        <option value="반품">반품</option>
+        <option value="폐기">폐기</option>
+        <option value="판매취소">판매취소</option>
+      </select>
+    </div>
+    <div class="form-field rb-products-only">
+      <label>비활성 제품</label>
+      <select id="rbFilterInactive">
+        <option value="">제외 (기본)</option>
+        <option value="1">포함</option>
+      </select>
+    </div>
+  </div>
+  <div style="display:flex; gap:10px; margin-top:12px;">
+    <button class="primary" onclick="runReport()" style="padding:8px 20px;">📊 리포트 생성</button>
+    <button onclick="exportReport()" style="padding:8px 20px;">⬇️ CSV 다운로드</button>
+  </div>
+</div>
+
+<div class="card">
+  <h3>결과 <span id="rbResultCount" style="font-size:12px; color:var(--text-light); font-weight:400;"></span></h3>
+  <div style="overflow-x:auto;">
+    <table id="rbResultTable">
+      <thead><tr id="rbResultHead"></tr></thead>
+      <tbody id="rbResultBody"><tr><td class="empty">조건을 선택하고 '리포트 생성'을 눌러주세요.</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let rbSource = 'products';
+let rbSourcesMeta = {};
+let rbSelectedColumns = {};
+
+document.getElementById('rbSourceTabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.qio-type-btn');
+  if (!btn) return;
+  rbSource = btn.dataset.source;
+  document.querySelectorAll('#rbSourceTabs .qio-type-btn').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('.rb-products-only').forEach(el => el.style.display = rbSource === 'products' ? '' : 'none');
+  document.querySelectorAll('.rb-tx-only').forEach(el => el.style.display = rbSource === 'transactions' ? '' : 'none');
+  renderColumnPicker();
+});
+
+async function loadSourcesMeta() {
+  rbSourcesMeta = await api('/api/report_builder/sources');
+  // 기본 선택 컬럼 (소스별 처음 몇 개)
+  Object.keys(rbSourcesMeta).forEach(key => {
+    rbSelectedColumns[key] = rbSourcesMeta[key].columns.slice(0, key === 'products' ? 5 : 6).map(c => c.key);
+  });
+  renderColumnPicker();
+}
+
+function renderColumnPicker() {
+  const meta = rbSourcesMeta[rbSource];
+  if (!meta) return;
+  const box = document.getElementById('rbColumnList');
+  const selected = rbSelectedColumns[rbSource] || [];
+  box.innerHTML = meta.columns.map(c => `
+    <label style="display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--border); border-radius:8px; cursor:pointer; font-size:13px;">
+      <input type="checkbox" value="${c.key}" ${selected.includes(c.key) ? 'checked' : ''} onchange="toggleColumn('${c.key}', this.checked)">
+      ${escapeHtml(c.label)}
+    </label>
+  `).join('');
+}
+
+function toggleColumn(key, checked) {
+  const list = rbSelectedColumns[rbSource] || [];
+  if (checked && !list.includes(key)) list.push(key);
+  if (!checked) rbSelectedColumns[rbSource] = list.filter(k => k !== key);
+  else rbSelectedColumns[rbSource] = list;
+}
+
+function collectFilters() {
+  const filters = {
+    store_id: document.getElementById('rbFilterStore').value || null,
+    category_id: document.getElementById('rbFilterCategory').value || null,
+    brand_id: document.getElementById('rbFilterBrand').value || null,
+  };
+  if (rbSource === 'products') {
+    filters.low_stock_only = document.getElementById('rbFilterLowStock').value === '1';
+    filters.include_inactive = document.getElementById('rbFilterInactive').value === '1';
+  } else {
+    filters.date_from = document.getElementById('rbFilterDateFrom').value || null;
+    filters.date_to = document.getElementById('rbFilterDateTo').value || null;
+    filters.type = document.getElementById('rbFilterType').value || null;
+  }
+  return filters;
+}
+
+async function runReport() {
+  const columns = rbSelectedColumns[rbSource] || [];
+  if (columns.length === 0) { toast('표시할 항목을 하나 이상 선택해주세요.', true, '⚠️'); return; }
+  const res = await api('/api/report_builder', {
+    method: 'POST',
+    body: JSON.stringify({ source: rbSource, columns, filters: collectFilters() }),
+  });
+  if (!res || res.error) return;
+  renderResult(res);
+}
+
+function renderResult(res) {
+  document.getElementById('rbResultCount').textContent = `(${fmt(res.count)}건)`;
+  document.getElementById('rbResultHead').innerHTML = res.labels.map(l => `<th>${escapeHtml(l)}</th>`).join('');
+  const body = document.getElementById('rbResultBody');
+  if (!res.rows.length) {
+    body.innerHTML = '<tr><td class="empty" colspan="' + res.labels.length + '">조건에 맞는 데이터가 없습니다.</td></tr>';
+    return;
+  }
+  body.innerHTML = res.rows.map(row => `
+    <tr>${res.columns.map(c => `<td>${escapeHtml(row[c] === null || row[c] === undefined ? '-' : row[c])}</td>`).join('')}</tr>
+  `).join('');
+}
+
+async function exportReport() {
+  const columns = rbSelectedColumns[rbSource] || [];
+  if (columns.length === 0) { toast('표시할 항목을 하나 이상 선택해주세요.', true, '⚠️'); return; }
+  try {
+    const res = await fetch('/api/report_builder/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: rbSource, columns, filters: collectFilters() }),
+    });
+    if (!res.ok) { toast('내보내기에 실패했습니다.', true, '⚠️'); return; }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? decodeURIComponent(match[1]) : `커스텀리포트.csv`;
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    window.URL.revokeObjectURL(url);
+    toast('CSV 파일을 내려받았습니다.', false, '✅');
+  } catch (e) {
+    console.error(e);
+    toast('내보내기 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+async function loadFilterOptions() {
+  const [stores, categories, brands] = await Promise.all([
+    api('/api/stores'), api('/api/categories'), api('/api/brands'),
+  ]);
+  document.getElementById('rbFilterStore').innerHTML = '<option value="">전체</option>' +
+    (stores || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  document.getElementById('rbFilterCategory').innerHTML = '<option value="">전체</option>' +
+    (categories || []).map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  document.getElementById('rbFilterBrand').innerHTML = '<option value="">전체</option>' +
+    (brands || []).map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadSourcesMeta();
+  loadFilterOptions();
+});
+</script>
+{% endblock %}

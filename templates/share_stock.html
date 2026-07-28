@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ link_name or '재고 현황' }} - 공유 링크</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Pretendard', sans-serif;
+    background: #f7f7f8;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 16px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  h1 { font-size: 20px; margin: 0; }
+  .meta { font-size: 12px; color: #888; }
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    background: #eef2ff;
+    color: #4f46e5;
+    padding: 3px 8px;
+    border-radius: 999px;
+    margin-bottom: 8px;
+  }
+  .search {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    margin-bottom: 12px;
+    font-size: 14px;
+  }
+  .cat-group {
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .cat-header {
+    padding: 10px 14px;
+    font-weight: 600;
+    font-size: 14px;
+    border-left: 4px solid #ccc;
+    background: #fafafa;
+  }
+  .item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    border-top: 1px solid #f1f1f1;
+    font-size: 14px;
+  }
+  .item-name { flex: 1; }
+  .item-brand { font-size: 11px; color: #999; margin-left: 6px; }
+  .item-qty { font-weight: 700; min-width: 70px; text-align: right; }
+  .qty-low { color: #e07a5f; }
+  .qty-ok { color: #2a9d5c; }
+  .empty { text-align: center; padding: 40px 0; color: #999; }
+  .error-box { text-align: center; padding: 60px 20px; color: #666; }
+  .refresh-btn {
+    border: none;
+    background: #4f8ff7;
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  footer { text-align: center; font-size: 11px; color: #bbb; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+{% if not valid %}
+  <div class="error-box">
+    <div style="font-size:40px; margin-bottom:12px;">🔒</div>
+    <h2>{{ error }}</h2>
+    <p>공유 링크 발급자에게 새 링크를 요청해 주세요.</p>
+  </div>
+{% else %}
+  <header>
+    <div>
+      <span class="badge">읽기 전용 공유</span>
+      <h1>📦 {{ link_name }}{% if store_name %} · {{ store_name }}{% else %} · 전체 매장{% endif %}</h1>
+      <div class="meta" id="updatedMeta">기준시각: {{ updated_at }}</div>
+    </div>
+    <button class="refresh-btn" onclick="loadData()">🔄 새로고침</button>
+  </header>
+  <input type="text" class="search" id="searchInput" placeholder="상품명 검색" oninput="renderData()">
+  <div id="content"><div class="empty">불러오는 중...</div></div>
+  <footer>이 링크는 재고 수량만 볼 수 있는 읽기 전용 링크입니다. 원가/판매가 등 민감 정보는 표시되지 않습니다.</footer>
+{% endif %}
+</div>
+
+{% if valid %}
+<script>
+const TOKEN = {{ token|tojson }};
+let allItems = [];
+
+function fmt(n) { return Number(n || 0).toLocaleString('ko-KR'); }
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function loadData() {
+  document.getElementById('content').innerHTML = '<div class="empty">불러오는 중...</div>';
+  try {
+    const res = await fetch(`/api/share/${TOKEN}/data`, { cache: 'no-store' });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('content').innerHTML = `<div class="empty">⚠️ ${escapeHtml(data.error || '오류가 발생했습니다.')}</div>`;
+      return;
+    }
+    allItems = data.items || [];
+    document.getElementById('updatedMeta').textContent = '기준시각: ' + data.generated_at;
+    renderData();
+  } catch (e) {
+    document.getElementById('content').innerHTML = '<div class="empty">⚠️ 데이터를 불러오지 못했습니다.</div>';
+  }
+}
+
+function renderData() {
+  const q = (document.getElementById('searchInput').value || '').trim().toLowerCase();
+  const filtered = allItems.filter(i => !q || (i.name || '').toLowerCase().includes(q));
+  const groups = {};
+  filtered.forEach(i => {
+    const key = i.category_name || '미분류';
+    if (!groups[key]) groups[key] = { color: i.category_color || '#ccc', items: [] };
+    groups[key].items.push(i);
+  });
+  const keys = Object.keys(groups);
+  const content = document.getElementById('content');
+  if (keys.length === 0) {
+    content.innerHTML = '<div class="empty">표시할 상품이 없습니다.</div>';
+    return;
+  }
+  content.innerHTML = keys.map(k => {
+    const g = groups[k];
+    const rows = g.items.map(i => {
+      const low = i.min_qty > 0 && i.qty <= i.min_qty;
+      return `
+        <div class="item-row">
+          <span class="item-name">${escapeHtml(i.name)}${i.brand_name ? `<span class="item-brand">${escapeHtml(i.brand_name)}</span>` : ''}</span>
+          <span class="item-qty ${low ? 'qty-low' : 'qty-ok'}">${fmt(i.qty)}개</span>
+        </div>
+      `;
+    }).join('');
+    return `
+      <div class="cat-group">
+        <div class="cat-header" style="border-left-color:${g.color};">${escapeHtml(k)} (${g.items.length})</div>
+        ${rows}
+      </div>
+    `;
+  }).join('');
+}
+
+loadData();
+setInterval(loadData, 60000);
+</script>
+{% endif %}
+</body>
+</html>

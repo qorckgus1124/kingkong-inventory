@@ -71,7 +71,43 @@
 
 <div class="card">
   <h3>📊 카테고리별 매출 비중 (이번달)</h3>
-  <div id="categoryChart" style="display:flex; gap:20px; flex-wrap:wrap; padding:10px 0;"></div>
+  <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
+    <div style="position:relative; width:220px; height:220px; flex-shrink:0;">
+      <canvas id="categoryDoughnutChart"></canvas>
+    </div>
+    <div id="categoryChart" style="flex:1; min-width:200px; display:flex; gap:20px; flex-wrap:wrap; padding:10px 0;"></div>
+  </div>
+</div>
+
+<!-- 재고 구성 시각화 -->
+<div class="card">
+  <h3>🧮 카테고리별 재고 구성</h3>
+  <div class="qio-type-tabs" style="margin-bottom:10px;">
+    <button type="button" class="qio-type-btn stockview-btn active" data-view="value" onclick="changeStockChartView('value')">재고 금액 기준</button>
+    <button type="button" class="qio-type-btn stockview-btn" data-view="qty" onclick="changeStockChartView('qty')">보유 수량 기준</button>
+  </div>
+  <div style="position:relative; height:260px;">
+    <canvas id="stockCompositionChart"></canvas>
+  </div>
+</div>
+
+<!-- 재고회전율 TOP5 / 저조 상품 -->
+<div class="card">
+  <h3>🔄 재고회전율 TOP5 (최근 30일, 상품 기준)</h3>
+  <div style="display:flex; gap:20px; flex-wrap:wrap;">
+    <div style="flex:1; min-width:260px;">
+      <div style="font-size:12px; color:var(--text-light); margin-bottom:6px;">🔥 회전 빠른 상품 TOP5</div>
+      <div style="position:relative; height:220px;">
+        <canvas id="turnoverTopChart"></canvas>
+      </div>
+    </div>
+    <div style="flex:1; min-width:260px;">
+      <div style="font-size:12px; color:var(--text-light); margin-bottom:6px;">🐢 재고 소진일수 임박 TOP5 (재고 대비 판매 저조)</div>
+      <div style="position:relative; height:220px;">
+        <canvas id="turnoverBottomChart"></canvas>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- 카테고리 트렌드 (전월 대비) -->
@@ -105,6 +141,13 @@
 <script>
 let trendChart = null;
 let currentPeriod = 'day';
+let categoryDoughnutChart = null;
+let stockCompositionChart = null;
+let turnoverTopChart = null;
+let turnoverBottomChart = null;
+let currentStockView = 'value';
+
+const CHART_PALETTE = ['#4f8ff7', '#e07a5f', '#81b29a', '#f2cc8f', '#9b5de5', '#00bbf9', '#f15bb5', '#fee440'];
 
 // 매장 목록 로드
 async function loadStores() {
@@ -226,6 +269,9 @@ async function loadDashboard() {
       `).join('');
     }
 
+    // 카테고리별 매출 비중 도넛 차트
+    renderCategoryDoughnut(catSales);
+
     // 카테고리 트렌드
     try {
       const trend = await api('/api/category_trend');
@@ -254,6 +300,8 @@ async function loadDashboard() {
 
     // 그래프
     loadChart(currentPeriod);
+    loadStockComposition();
+    loadTurnoverCharts();
   } catch (e) {
     console.error('❌ 대시보드 로딩 오류:', e);
     toast('대시보드 데이터를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
@@ -375,6 +423,139 @@ async function loadChart(period) {
       }
     });
   }
+}
+
+// ---------- 카테고리별 매출 비중 도넛 차트 ----------
+function renderCategoryDoughnut(catSales) {
+  const ctx = document.getElementById('categoryDoughnutChart').getContext('2d');
+  if (categoryDoughnutChart) categoryDoughnutChart.destroy();
+  const list = (catSales || []).filter(c => (c.revenue || 0) > 0);
+  const labels = list.length ? list.map(c => c.category_name || '미분류') : ['데이터 없음'];
+  const data = list.length ? list.map(c => c.revenue || 0) : [1];
+  const colors = list.length ? list.map((c, i) => c.category_color || CHART_PALETTE[i % CHART_PALETTE.length]) : ['#e5e7eb'];
+  categoryDoughnutChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 2, borderColor: 'var(--card-bg, #fff)' }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => list.length ? `${item.label}: ${fmt(item.raw)}원` : '매출 데이터가 없습니다'
+          }
+        }
+      },
+      cutout: '65%'
+    }
+  });
+}
+
+// ---------- 카테고리별 재고 구성 (금액/수량 토글) ----------
+async function loadStockComposition() {
+  try {
+    const data = await api('/api/category_stats');
+    window.__stockCompositionData = data || [];
+    renderStockComposition();
+  } catch (e) {
+    console.error('재고 구성 로드 오류:', e);
+  }
+}
+
+function changeStockChartView(view) {
+  currentStockView = view;
+  document.querySelectorAll('.stockview-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  renderStockComposition();
+}
+
+function renderStockComposition() {
+  const data = window.__stockCompositionData || [];
+  const ctx = document.getElementById('stockCompositionChart').getContext('2d');
+  if (stockCompositionChart) stockCompositionChart.destroy();
+
+  const labels = data.map(c => c.name);
+  const values = currentStockView === 'value'
+    ? data.map(c => c.stock_value || 0)
+    : data.map(c => c.product_count || 0);
+  const colors = data.map((c, i) => c.color || CHART_PALETTE[i % CHART_PALETTE.length]);
+
+  stockCompositionChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels.length ? labels : ['데이터 없음'],
+      datasets: [{
+        label: currentStockView === 'value' ? '재고 금액(원가 기준)' : '취급 상품 수',
+        data: values.length ? values : [0],
+        backgroundColor: colors.length ? colors : ['#e5e7eb'],
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => currentStockView === 'value' ? `${fmt(item.raw)}원` : `${fmt(item.raw)}개 상품`
+          }
+        }
+      },
+      scales: {
+        x: { beginAtZero: true, ticks: { callback: (v) => currentStockView === 'value' ? fmt(v) + '원' : fmt(v) } }
+      }
+    }
+  });
+}
+
+// ---------- 재고회전율 TOP5 / 소진임박 TOP5 ----------
+async function loadTurnoverCharts() {
+  try {
+    const data = await api('/api/turnover_rate?group_by=product&days=30&sort_by=turnover');
+    const rows = (data || []).filter(r => r.current_qty > 0);
+
+    // 회전 빠른 TOP5 (turnover_count 높은 순)
+    const top = rows.filter(r => r.turnover_count !== null).slice(0, 5);
+    renderHorizontalBar('turnoverTopChart', turnoverTopChart,
+      top.map(r => r.group_name), top.map(r => r.turnover_count),
+      '회전 횟수', '#81b29a', (v) => `${v}회전`,
+      (chart) => { turnoverTopChart = chart; });
+
+    // 소진 임박 TOP5 (days_to_deplete 짧은 순, 판매 이력 있는 것만)
+    const bottom = rows.filter(r => r.days_to_deplete !== null)
+      .sort((a, b) => a.days_to_deplete - b.days_to_deplete).slice(0, 5);
+    renderHorizontalBar('turnoverBottomChart', turnoverBottomChart,
+      bottom.map(r => r.group_name), bottom.map(r => r.days_to_deplete),
+      '예상 소진일', '#e07a5f', (v) => `${v}일`,
+      (chart) => { turnoverBottomChart = chart; });
+  } catch (e) {
+    console.error('재고회전율 차트 로드 오류:', e);
+  }
+}
+
+function renderHorizontalBar(canvasId, existing, labels, data, label, color, tooltipFmt, setter) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  if (existing) existing.destroy();
+  const chart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels.length ? labels : ['데이터 없음'],
+      datasets: [{ label, data: data.length ? data : [0], backgroundColor: color, borderRadius: 4 }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (item) => tooltipFmt(item.raw) } }
+      },
+      scales: { x: { beginAtZero: true } }
+    }
+  });
+  setter(chart);
 }
 
 function changeChartPeriod(period) {

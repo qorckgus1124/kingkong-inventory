@@ -196,18 +196,20 @@ async function qioSubmit() {
   const btn = document.getElementById('qioSubmitBtn');
   btn.disabled = true;
   try {
-    const res = await api('/api/transactions', {
-      method: 'POST',
-      body: JSON.stringify({
-        product_id: qioSelectedProduct.id,
-        store_id: storeId,
-        type: qioType,
-        quantity: qty,
-      }),
-    });
-    if (res && res.ok) {
-      toast(`${qioType} ${fmt(qty)}개 등록완료`, false, '✅');
-      qioRecent.unshift({ name: qioSelectedProduct.name, type: qioType, qty });
+    const res = await apiOrQueue('/api/transactions', 'POST', {
+      product_id: qioSelectedProduct.id,
+      store_id: storeId,
+      type: qioType,
+      quantity: qty,
+    }, `${qioType} ${qioSelectedProduct.name} ${qty}개`);
+
+    if (res && (res.ok || res.queued)) {
+      if (res.queued) {
+        toast(`${qioType} ${fmt(qty)}개 - 오프라인 임시 저장됨`, false, '📴');
+      } else {
+        toast(`${qioType} ${fmt(qty)}개 등록완료`, false, '✅');
+      }
+      qioRecent.unshift({ name: qioSelectedProduct.name, type: qioType, qty, queued: !!res.queued });
       qioRecent = qioRecent.slice(0, 8);
       qioRenderRecent();
       // 다음 제품을 빠르게 이어서 등록할 수 있도록 제품/수량만 초기화 (매장·유형은 유지)
@@ -223,6 +225,13 @@ async function qioSubmit() {
   }
 }
 
+// 오프라인 큐 동기화가 끝나면 방금 등록 목록의 "대기중" 표시를 정리하고 현재 재고를 새로고침
+function onOfflineSyncDone() {
+  qioRecent = qioRecent.map(r => ({ ...r, queued: false }));
+  qioRenderRecent();
+  qioRefreshSelectedProductStock();
+}
+
 function qioRenderRecent() {
   const card = document.getElementById('qioRecentCard');
   const list = document.getElementById('qioRecentList');
@@ -231,7 +240,7 @@ function qioRenderRecent() {
   list.innerHTML = qioRecent.map(r => `
     <div class="qio-recent-item">
       <span>${escapeHtml(r.name)}</span>
-      <span class="qio-recent-tag">${escapeHtml(r.type)} ${fmt(r.qty)}개</span>
+      <span class="qio-recent-tag" ${r.queued ? 'style="background:#fff3cd; color:#7a5b00;"' : ''}>${r.queued ? '📴 대기중 · ' : ''}${escapeHtml(r.type)} ${fmt(r.qty)}개</span>
     </div>
   `).join('');
 }

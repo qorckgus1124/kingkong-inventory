@@ -221,3 +221,151 @@ document.addEventListener('wheel', function (e) {
     el.blur();
   }
 }, { passive: true });
+
+// ---------------------------------------------------------------------------
+// 오프라인 임시 입력 → 온라인 동기화
+// 네트워크가 끊긴 상태(또는 요청 실패 시)에도 입력을 잃어버리지 않도록
+// localStorage에 임시 큐로 쌓아두고, 온라인 복귀 시(또는 수동 버튼으로) 서버에 순차 전송한다.
+// ---------------------------------------------------------------------------
+const OFFLINE_QUEUE_KEY = 'offline_action_queue';
+let __offlineSyncing = false;
+
+function genClientUuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'off_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+}
+
+function getOfflineQueue() {
+  try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); } catch (e) { return []; }
+}
+
+function setOfflineQueue(list) {
+  try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(list)); } catch (e) { console.warn('오프라인 큐 저장 실패:', e); }
+  updateOfflineBanner();
+}
+
+function queueOfflineAction(endpoint, method, body, label) {
+  const list = getOfflineQueue();
+  const payload = Object.assign({}, body || {}, { client_uuid: (body && body.client_uuid) || genClientUuid() });
+  const item = {
+    id: payload.client_uuid,
+    endpoint, method: method || 'POST', body: payload,
+    label: label || '', created_at: new Date().toISOString(),
+  };
+  list.push(item);
+  setOfflineQueue(list);
+  return item;
+}
+
+// 일반 api() 대신 이 함수를 쓰면, 오프라인이거나 네트워크 오류가 나는 순간
+// 자동으로 로컬 큐에 임시 저장하고 { queued: true }를 반환한다.
+// 서버가 정상 응답하면 평소처럼 결과 데이터를 반환한다.
+async function apiOrQueue(endpoint, method, body, label) {
+  const payload = Object.assign({}, body || {});
+  if (!navigator.onLine) {
+    queueOfflineAction(endpoint, method, payload, label);
+    toast('오프라인 상태입니다. 온라인이 되면 자동으로 등록됩니다.', false, '📴');
+    return { queued: true };
+  }
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(endpoint, {
+      method: method || 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    clearTimeout(timeoutId);
+    let data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) {
+      const msg = (data && data.error) ? data.error : '오류가 발생했습니다.';
+      toast(msg, true, '❌');
+      return { error: msg };
+    }
+    return data || {};
+  } catch (e) {
+    // 네트워크 자체가 끊긴 것으로 보이는 경우에만 큐에 저장 (서버 오류와 구분)
+    queueOfflineAction(endpoint, method, payload, label);
+    toast('네트워크가 불안정합니다. 임시 저장했어요. 온라인이 되면 자동 등록됩니다.', false, '📴');
+    return { queued: true };
+  }
+}
+
+async function syncOfflineQueue(silent) {
+  if (__offlineSyncing) return;
+  const list = getOfflineQueue();
+  if (!list.length) {
+    if (!silent) toast('동기화할 대기 항목이 없습니다.', false, 'ℹ️');
+    return;
+  }
+  if (!navigator.onLine) {
+    if (!silent) toast('오프라인 상태에서는 동기화할 수 없습니다.', true, '⚠️');
+    return;
+  }
+  __offlineSyncing = true;
+  updateOfflineBanner(true);
+  let success = 0, fail = 0;
+  const remaining = [];
+  for (const item of list) {
+    try {
+      const res = await fetch(item.endpoint, {
+        method: item.method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item.body),
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        success++;
+      } else {
+        fail++;
+        remaining.push(item);
+      }
+    } catch (e) {
+      // 여전히 오프라인/네트워크 오류 -> 다음 기회에 재시도
+      remaining.push(item);
+    }
+  }
+  __offlineSyncing = false;
+  setOfflineQueue(remaining);
+  if (success > 0 || fail > 0) {
+    toast(`오프라인 동기화: ${success}건 완료${fail ? `, ${fail}건 재시도 대기` : ''}`, fail > success, fail > 0 ? '⚠️' : '✅');
+  }
+  if (typeof onOfflineSyncDone === 'function') {
+    try { onOfflineSyncDone(); } catch (e) {}
+  }
+}
+
+function updateOfflineBanner(syncing) {
+  const banner = document.getElementById('offlineQueueBanner');
+  if (!banner) return;
+  const list = getOfflineQueue();
+  const countEl = document.getElementById('offlineQueueCount');
+  const btn = document.getElementById('offlineQueueSyncBtn');
+  if (list.length === 0) {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'flex';
+  if (countEl) countEl.textContent = list.length;
+  if (btn) {
+    btn.disabled = !!syncing || !navigator.onLine;
+    btn.textContent = syncing ? '동기화 중...' : (navigator.onLine ? '지금 동기화' : '오프라인');
+  }
+}
+
+window.addEventListener('online', () => {
+  toast('온라인 상태로 전환되었습니다. 대기 중인 항목을 동기화합니다.', false, '📶');
+  updateOfflineBanner();
+  syncOfflineQueue(true);
+});
+window.addEventListener('offline', () => {
+  toast('오프라인 상태입니다. 입력한 내용은 임시 저장되며, 온라인이 되면 자동 등록됩니다.', true, '📴');
+  updateOfflineBanner();
+});
+document.addEventListener('DOMContentLoaded', () => {
+  updateOfflineBanner();
+  if (navigator.onLine) syncOfflineQueue(true);
+});

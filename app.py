@@ -8,6 +8,9 @@ import shutil
 import io
 import csv
 import re
+import secrets
+import hashlib
+from functools import wraps
 from collections import defaultdict
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
@@ -518,6 +521,66 @@ def init_db():
         cur.execute("INSERT INTO settings (key, value) VALUES ('card_fee_rate', '2.5') ON CONFLICT (key) DO NOTHING;")
         cur.execute("INSERT INTO settings (key, value) VALUES ('target_stock_days', '7') ON CONFLICT (key) DO NOTHING;")
         cur.execute("INSERT INTO settings (key, value) VALUES ('monthly_target_revenue', '0') ON CONFLICT (key) DO NOTHING;")
+
+        # ---------------------------------------------------------------
+        # 읽기 전용 재고 현황 공유 링크
+        # ---------------------------------------------------------------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS share_links (
+                id SERIAL PRIMARY KEY,
+                token TEXT NOT NULL UNIQUE,
+                name TEXT,
+                store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                view_count INTEGER DEFAULT 0,
+                last_viewed_at TIMESTAMP
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_share_links_token ON share_links(token);")
+
+        # ---------------------------------------------------------------
+        # 외부 연동용 API 키 (카카오톡 채널 / 스마트스토어 등)
+        # ---------------------------------------------------------------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                key_prefix TEXT NOT NULL,
+                key_hash TEXT NOT NULL,
+                scope TEXT DEFAULT 'read',
+                store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS webhook_logs (
+                id SERIAL PRIMARY KEY,
+                source TEXT NOT NULL,
+                api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+                payload TEXT,
+                status TEXT,
+                message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_created ON webhook_logs(created_at);")
+
+        # ---------------------------------------------------------------
+        # 오프라인 임시 입력 동기화 로그 (감사/중복방지용)
+        # ---------------------------------------------------------------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS offline_sync_log (
+                id SERIAL PRIMARY KEY,
+                client_uuid TEXT NOT NULL UNIQUE,
+                synced_transaction_id INTEGER REFERENCES stock_transactions(id) ON DELETE SET NULL,
+                device_label TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
 
         conn.commit()
         create_indexes()
@@ -1750,6 +1813,7 @@ def api_transactions_post():
     memo = data.get("memo") or None
     date_time = data.get("date_time") or None
     supplier_id = data.get("supplier_id") or None
+    client_uuid = data.get("client_uuid") or None
 
     if not product_id or not store_id or not ttype:
         return jsonify({"error": "제품, 매장, 유형은 필수입니다."}), 400
@@ -1760,6 +1824,14 @@ def api_transactions_post():
         assert quantity > 0
     except:
         return jsonify({"error": "수량은 1 이상의 숫자여야 합니다."}), 400
+
+    # 오프라인 큐에서 재전송된 요청이 이미 처리된 적이 있으면 중복 등록을 막고
+    # 앞서 생성된 거래를 그대로 반환한다 (네트워크 응답 유실 → 재시도 시나리오 대비).
+    if client_uuid:
+        cur.execute("SELECT synced_transaction_id FROM offline_sync_log WHERE client_uuid = %s", (client_uuid,))
+        existing = cur.fetchone()
+        if existing and existing["synced_transaction_id"]:
+            return jsonify({"id": existing["synced_transaction_id"], "ok": True, "deduplicated": True})
 
     cur.execute("SELECT * FROM products WHERE id=%s", (product_id,))
     product = cur.fetchone()
@@ -1781,6 +1853,12 @@ def api_transactions_post():
             (product_id, store_id, supplier_id, ttype, quantity, unit_cost, unit_price, staff, memo, date_time)
         )
         new_id = cur.fetchone()["id"]
+        if client_uuid:
+            cur.execute(
+                """INSERT INTO offline_sync_log (client_uuid, synced_transaction_id, device_label)
+                VALUES (%s, %s, %s) ON CONFLICT (client_uuid) DO NOTHING""",
+                (client_uuid, new_id, request.headers.get("User-Agent", "")[:200])
+            )
         conn.commit()
         return jsonify({"id": new_id, "ok": True})
     except Exception as e:
@@ -5260,6 +5338,322 @@ def api_bestsellers():
     except Exception as e:
         print(f"❌ 베스트셀러 오류: {e}")
         return jsonify([])
+
+
+# ---------------------------------------------------------------------------
+# API - 커스텀 리포트 빌더
+# ---------------------------------------------------------------------------
+
+REPORT_SOURCES = {
+    "products": {
+        "label": "제품/재고",
+        "from_sql": """
+            FROM products p
+            LEFT JOIN brands b ON b.id = p.brand_id
+            LEFT JOIN categories c ON c.id = p.category_id
+            LEFT JOIN store_stock ss ON ss.product_id = p.id
+        """,
+        "group_key": "p.id",
+        "columns": {
+            "name":        {"label": "제품명", "expr": "p.name", "agg": False},
+            "brand":       {"label": "브랜드", "expr": "b.name", "agg": False},
+            "category":    {"label": "카테고리", "expr": "c.name", "agg": False},
+            "cost_price":  {"label": "원가", "expr": "p.cost_price", "agg": False},
+            "sale_price":  {"label": "판매가", "expr": "p.sale_price", "agg": False},
+            "qty":         {"label": "현재고(전체매장 합계)", "expr": "COALESCE(SUM(ss.qty), 0)", "agg": True},
+            "min_qty":     {"label": "최소재고", "expr": "COALESCE(MAX(ss.min_qty), 0)", "agg": True},
+            "stock_value": {"label": "재고금액(원가기준)", "expr": "COALESCE(SUM(ss.qty * p.cost_price), 0)", "agg": True},
+        },
+    },
+    "transactions": {
+        "label": "입출고 내역",
+        "from_sql": """
+            FROM stock_transactions t
+            LEFT JOIN products p ON p.id = t.product_id
+            LEFT JOIN stores s ON s.id = t.store_id
+            LEFT JOIN categories c ON c.id = p.category_id
+            LEFT JOIN brands b ON b.id = p.brand_id
+        """,
+        "group_key": None,
+        "columns": {
+            "date_time":    {"label": "일시", "expr": "t.date_time", "agg": False},
+            "type":         {"label": "유형", "expr": "t.type", "agg": False},
+            "product_name": {"label": "제품명", "expr": "p.name", "agg": False},
+            "brand":        {"label": "브랜드", "expr": "b.name", "agg": False},
+            "category":     {"label": "카테고리", "expr": "c.name", "agg": False},
+            "store_name":   {"label": "매장", "expr": "s.name", "agg": False},
+            "quantity":     {"label": "수량", "expr": "t.quantity", "agg": False},
+            "unit_price":   {"label": "판매단가", "expr": "t.unit_price", "agg": False},
+            "unit_cost":    {"label": "원가단가", "expr": "t.unit_cost", "agg": False},
+            "staff":        {"label": "담당자", "expr": "t.staff", "agg": False},
+            "memo":         {"label": "메모", "expr": "t.memo", "agg": False},
+        },
+    },
+}
+
+
+def _build_report_query(source_key, columns, filters):
+    """리포트 빌더의 소스/컬럼/필터를 받아 안전한(화이트리스트 기반) SQL과 파라미터를 만든다."""
+    source = REPORT_SOURCES.get(source_key)
+    if not source:
+        raise ValueError("알 수 없는 데이터 소스입니다.")
+    valid_cols = [c for c in columns if c in source["columns"]]
+    if not valid_cols:
+        valid_cols = list(source["columns"].keys())[:4]
+
+    select_parts = []
+    group_parts = []
+    for key in valid_cols:
+        col = source["columns"][key]
+        select_parts.append(f'{col["expr"]} AS {key}')
+        if not col["agg"]:
+            group_parts.append(col["expr"])
+
+    where = ["1=1"]
+    params = []
+
+    if source_key == "products":
+        where.append("p.is_active = 1" if not filters.get("include_inactive") else "1=1")
+        if filters.get("store_id"):
+            where.append("(ss.store_id = %s OR ss.store_id IS NULL)")
+            params.append(filters["store_id"])
+        if filters.get("category_id"):
+            where.append("p.category_id = %s")
+            params.append(filters["category_id"])
+        if filters.get("brand_id"):
+            where.append("p.brand_id = %s")
+            params.append(filters["brand_id"])
+    else:  # transactions
+        if filters.get("date_from"):
+            where.append("t.date_time >= %s")
+            params.append(filters["date_from"])
+        if filters.get("date_to"):
+            where.append("t.date_time < (%s::date + INTERVAL '1 day')")
+            params.append(filters["date_to"])
+        if filters.get("store_id"):
+            where.append("t.store_id = %s")
+            params.append(filters["store_id"])
+        if filters.get("type"):
+            where.append("t.type = %s")
+            params.append(filters["type"])
+        if filters.get("category_id"):
+            where.append("p.category_id = %s")
+            params.append(filters["category_id"])
+        if filters.get("brand_id"):
+            where.append("p.brand_id = %s")
+            params.append(filters["brand_id"])
+
+    sql = f'SELECT {", ".join(select_parts)} {source["from_sql"]} WHERE {" AND ".join(where)}'
+
+    has_agg = any(source["columns"][k]["agg"] for k in valid_cols)
+    if has_agg:
+        group_cols = list(group_parts)
+        if source.get("group_key"):
+            group_cols.append(source["group_key"])
+        if group_cols:
+            sql += f' GROUP BY {", ".join(group_cols)}'
+
+    if source_key == "products" and filters.get("low_stock_only") and "qty" in valid_cols:
+        having_col = "COALESCE(SUM(ss.qty), 0)"
+        sql += f' HAVING {having_col} <= COALESCE(MAX(ss.min_qty), 0)' if has_agg else ""
+
+    order_col = valid_cols[0]
+    sql += f" ORDER BY {order_col} DESC" if source_key == "transactions" and order_col == "date_time" else f" ORDER BY {order_col}"
+    sql += " LIMIT 5000"
+    return sql, params, valid_cols, [source["columns"][k]["label"] for k in valid_cols]
+
+
+@app.route("/api/report_builder/sources")
+def api_report_builder_sources():
+    return jsonify({
+        key: {"label": s["label"], "columns": [{"key": k, "label": v["label"]} for k, v in s["columns"].items()]}
+        for key, s in REPORT_SOURCES.items()
+    })
+
+
+@app.route("/api/report_builder", methods=["POST"])
+def api_report_builder_run():
+    conn = get_db()
+    cur = g.cursor
+    data = request.get_json(force=True) or {}
+    source_key = data.get("source", "products")
+    columns = data.get("columns") or []
+    filters = data.get("filters") or {}
+    try:
+        sql, params, valid_cols, labels = _build_report_query(source_key, columns, filters)
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+        out_rows = []
+        for r in rows:
+            d = dict(r)
+            for k, v in d.items():
+                if isinstance(v, (datetime,)):
+                    d[k] = v.strftime("%Y-%m-%d %H:%M")
+            out_rows.append(d)
+        return jsonify({"columns": valid_cols, "labels": labels, "rows": out_rows, "count": len(out_rows)})
+    except Exception as e:
+        print(f"❌ 리포트 빌더 조회 오류: {e}")
+        return jsonify({"error": "리포트를 생성하지 못했습니다. 조건을 확인해주세요."}), 400
+
+
+@app.route("/api/report_builder/export", methods=["POST"])
+def api_report_builder_export():
+    conn = get_db()
+    cur = g.cursor
+    data = request.get_json(force=True) or {}
+    source_key = data.get("source", "products")
+    columns = data.get("columns") or []
+    filters = data.get("filters") or {}
+    try:
+        sql, params, valid_cols, labels = _build_report_query(source_key, columns, filters)
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(labels)
+        for r in rows:
+            writer.writerow([r[c] for c in valid_cols])
+        filename = f"커스텀리포트_{now_kst().strftime('%Y%m%d_%H%M')}.csv"
+        return send_file(
+            io.BytesIO(output.getvalue().encode("utf-8-sig")),
+            mimetype="text/csv", as_attachment=True, download_name=filename,
+        )
+    except Exception as e:
+        print(f"❌ 리포트 빌더 내보내기 오류: {e}")
+        return jsonify({"error": "내보내기에 실패했습니다."}), 400
+
+
+@app.route("/report_builder")
+def report_builder_page():
+    return render_template("report_builder.html", active="report_builder")
+
+
+# ---------------------------------------------------------------------------
+# API - 읽기 전용 재고 현황 공유 링크
+# ---------------------------------------------------------------------------
+
+@app.route("/api/share_links", methods=["GET", "POST"])
+def api_share_links():
+    conn = get_db()
+    cur = g.cursor
+    if request.method == "GET":
+        cur.execute("""
+            SELECT sl.*, s.name as store_name
+            FROM share_links sl
+            LEFT JOIN stores s ON s.id = sl.store_id
+            ORDER BY sl.created_at DESC
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            r["is_expired"] = bool(r["expires_at"] and r["expires_at"] < now_kst().replace(tzinfo=None))
+        return jsonify(rows)
+
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip() or "재고 현황 공유"
+    store_id = data.get("store_id") or None
+    expires_days = data.get("expires_days")
+    token = secrets.token_urlsafe(20)
+    expires_at = None
+    if expires_days:
+        try:
+            expires_at = now_kst().replace(tzinfo=None) + timedelta(days=int(expires_days))
+        except (TypeError, ValueError):
+            expires_at = None
+    cur.execute("""
+        INSERT INTO share_links (token, name, store_id, expires_at)
+        VALUES (%s, %s, %s, %s) RETURNING id, token
+    """, (token, name, store_id, expires_at))
+    row = cur.fetchone()
+    conn.commit()
+    return jsonify({"ok": True, "id": row["id"], "token": row["token"]})
+
+
+@app.route("/api/share_links/<int:link_id>", methods=["PUT", "DELETE"])
+def api_share_link_detail(link_id):
+    conn = get_db()
+    cur = g.cursor
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM share_links WHERE id = %s", (link_id,))
+        conn.commit()
+        return jsonify({"ok": True})
+
+    data = request.get_json(force=True) or {}
+    if "is_active" in data:
+        cur.execute("UPDATE share_links SET is_active = %s WHERE id = %s",
+                    (1 if data["is_active"] else 0, link_id))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+def _validate_share_link(cur, token):
+    cur.execute("SELECT * FROM share_links WHERE token = %s", (token,))
+    link = cur.fetchone()
+    if not link:
+        return None, "존재하지 않는 링크입니다."
+    if not link["is_active"]:
+        return None, "비활성화된 링크입니다."
+    if link["expires_at"] and link["expires_at"] < now_kst().replace(tzinfo=None):
+        return None, "만료된 링크입니다."
+    return link, None
+
+
+@app.route("/share/<token>")
+def share_stock_page(token):
+    conn = get_db()
+    cur = g.cursor
+    link, error = _validate_share_link(cur, token)
+    if error:
+        return render_template("share_stock.html", valid=False, error=error), 404
+    cur.execute("""
+        UPDATE share_links SET view_count = view_count + 1, last_viewed_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+    """, (link["id"],))
+    conn.commit()
+    store_name = None
+    if link["store_id"]:
+        cur.execute("SELECT name FROM stores WHERE id = %s", (link["store_id"],))
+        s = cur.fetchone()
+        store_name = s["name"] if s else None
+    return render_template(
+        "share_stock.html", valid=True, token=token,
+        link_name=link["name"], store_name=store_name,
+        updated_at=now_kst().strftime("%Y-%m-%d %H:%M"),
+    )
+
+
+@app.route("/api/share/<token>/data")
+def api_share_stock_data(token):
+    conn = get_db()
+    cur = g.cursor
+    link, error = _validate_share_link(cur, token)
+    if error:
+        return jsonify({"error": error}), 404
+
+    where = "p.is_active = 1"
+    params = []
+    if link["store_id"]:
+        where += " AND ss.store_id = %s"
+        params.append(link["store_id"])
+    cur.execute(f"""
+        SELECT p.id, p.name,
+               c.name as category_name, c.color as category_color,
+               b.name as brand_name,
+               COALESCE(SUM(ss.qty), 0) as qty,
+               COALESCE(MAX(ss.min_qty), 0) as min_qty
+        FROM products p
+        LEFT JOIN store_stock ss ON ss.product_id = p.id
+        LEFT JOIN categories c ON c.id = p.category_id
+        LEFT JOIN brands b ON b.id = p.brand_id
+        WHERE {where}
+        GROUP BY p.id, p.name, c.name, c.color, b.name
+        ORDER BY c.name NULLS LAST, p.name
+    """, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    return jsonify({
+        "link_name": link["name"],
+        "generated_at": now_kst().strftime("%Y-%m-%d %H:%M"),
+        "items": rows,
+    })
 
 
 # ---------------------------------------------------------------------------

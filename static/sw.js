@@ -3,7 +3,7 @@
 // (v1은 캐시를 무한정 붙잡고 있어서, 서버를 배포해도 브라우저가 옛날 페이지를
 //  계속 보여주는 문제가 있었음. v2에서 네트워크 우선 전략으로 변경했고,
 //  v3에서는 완전히 오프라인일 때 빈 화면 대신 안내 페이지를 보여주도록 개선)
-const CACHE_NAME = 'inventory-v3';
+const CACHE_NAME = 'inventory-v4';
 const urlsToCache = [
   '/static/style.css',
   '/static/common.js',
@@ -11,6 +11,7 @@ const urlsToCache = [
   '/static/icon-192.png',
   '/static/icon-512.png',
   '/static/offline.html',
+  '/quick_io',
 ];
 
 self.addEventListener('install', function (event) {
@@ -45,6 +46,12 @@ self.addEventListener('fetch', function (event) {
   event.respondWith(
     fetch(event.request)
       .then(function (response) {
+        // 오프라인 임시 입력을 위해, 정상적으로 불러온 페이지는 동적으로 캐시해둔다.
+        // (한 번이라도 온라인 상태에서 방문한 페이지는 이후 오프라인에서도 열 수 있게 됨)
+        if (event.request.mode === 'navigate' && response && response.status === 200) {
+          const cloned = response.clone();
+          caches.open(CACHE_NAME).then(function (cache) { cache.put(event.request, cloned); });
+        }
         return response;
       })
       .catch(function () {

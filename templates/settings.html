@@ -65,6 +65,41 @@
 </div>
 
 <!-- ============================================================ -->
+<!-- 🔗 재고 현황 공유 링크 -->
+<!-- ============================================================ -->
+<div class="card">
+  <h3 style="color:var(--text);">🔗 읽기 전용 재고 현황 공유 링크</h3>
+  <div style="font-size:12px; color:var(--text-light); margin-bottom:12px;">
+    로그인 없이도 재고 수량만 볼 수 있는 링크를 만들어 거래처·직원과 공유할 수 있습니다. 원가/판매가는 노출되지 않습니다.
+  </div>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;">
+    <div class="form-field" style="flex:1; min-width:160px;">
+      <label>링크 이름</label>
+      <input type="text" id="shareLinkName" placeholder="예: 강남역점 재고 공유">
+    </div>
+    <div class="form-field" style="min-width:160px;">
+      <label>대상 매장</label>
+      <select id="shareLinkStore"><option value="">전체 매장</option></select>
+    </div>
+    <div class="form-field" style="min-width:140px;">
+      <label>유효기간</label>
+      <select id="shareLinkExpires">
+        <option value="">무제한</option>
+        <option value="1">1일</option>
+        <option value="7" selected>7일</option>
+        <option value="30">30일</option>
+        <option value="90">90일</option>
+      </select>
+    </div>
+    <button class="primary" onclick="createShareLink()" style="padding:8px 16px;">🔗 링크 생성</button>
+  </div>
+  <table>
+    <thead><tr><th>이름</th><th>매장</th><th>조회수</th><th>만료</th><th>상태</th><th style="width:170px;"></th></tr></thead>
+    <tbody id="shareLinkList"></tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
 <!-- 📦 데이터 백업 -->
 <!-- ============================================================ -->
 <div class="card">
@@ -169,9 +204,87 @@ async function deleteBackup(name) {
 }
 
 // ==============================================================
+// 🔗 재고 현황 공유 링크
+// ==============================================================
+async function loadShareLinkStores() {
+  const stores = await api('/api/stores');
+  const sel = document.getElementById('shareLinkStore');
+  sel.innerHTML = '<option value="">전체 매장</option>' +
+    (stores || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+}
+
+async function createShareLink() {
+  const name = document.getElementById('shareLinkName').value.trim();
+  const store_id = document.getElementById('shareLinkStore').value || null;
+  const expires_days = document.getElementById('shareLinkExpires').value || null;
+  const res = await api('/api/share_links', {
+    method: 'POST',
+    body: JSON.stringify({ name, store_id, expires_days }),
+  });
+  if (res && res.ok) {
+    toast('공유 링크가 생성되었습니다.', false, '✅');
+    document.getElementById('shareLinkName').value = '';
+    loadShareLinks();
+    copyShareUrl(res.token, true);
+  }
+}
+
+function copyShareUrl(token, silent) {
+  const url = `${window.location.origin}/share/${token}`;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(url).then(() => {
+      toast(silent ? '링크가 생성되어 클립보드에 복사되었습니다.' : '링크를 복사했습니다.', false, '📋');
+    }).catch(() => toast(url, false, '🔗'));
+  } else {
+    toast(url, false, '🔗');
+  }
+}
+
+async function toggleShareLink(id, active) {
+  await api(`/api/share_links/${id}`, { method: 'PUT', body: JSON.stringify({ is_active: active }) });
+  loadShareLinks();
+}
+
+async function deleteShareLink(id) {
+  if (!confirm('이 공유 링크를 삭제하시겠습니까? 삭제하면 기존 링크 접속이 즉시 차단됩니다.')) return;
+  await api(`/api/share_links/${id}`, { method: 'DELETE' });
+  toast('삭제했습니다.', false, '✅');
+  loadShareLinks();
+}
+
+async function loadShareLinks() {
+  const links = await api('/api/share_links');
+  const tbody = document.getElementById('shareLinkList');
+  if (!links || links.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon">🔗</span>생성된 공유 링크가 없습니다.</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = links.map(l => {
+    const statusText = l.is_expired ? '만료됨' : (l.is_active ? '활성' : '비활성');
+    const statusColor = l.is_expired ? 'var(--text-light)' : (l.is_active ? 'var(--accent)' : 'var(--danger)');
+    return `
+      <tr>
+        <td>${escapeHtml(l.name)}</td>
+        <td>${escapeHtml(l.store_name || '전체 매장')}</td>
+        <td>${fmt(l.view_count)}</td>
+        <td>${l.expires_at ? fmtDate(l.expires_at) : '무제한'}</td>
+        <td><span style="color:${statusColor}; font-weight:600;">${statusText}</span></td>
+        <td style="white-space:nowrap;">
+          <button onclick="copyShareUrl('${l.token}')" style="padding:4px 8px; font-size:12px;">복사</button>
+          <button onclick="toggleShareLink(${l.id}, ${l.is_active ? 0 : 1})" style="padding:4px 8px; font-size:12px;">${l.is_active ? '비활성화' : '활성화'}</button>
+          <button class="danger" onclick="deleteShareLink(${l.id})" style="padding:4px 8px; font-size:12px;">삭제</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// ==============================================================
 // 초기화
 // ==============================================================
 loadSettings();
 loadBackups();
+loadShareLinkStores();
+loadShareLinks();
 </script>
 {% endblock %}

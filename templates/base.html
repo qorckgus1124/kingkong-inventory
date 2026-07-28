@@ -91,6 +91,7 @@
         <a class="nav-item {{ 'active' if active=='turnover' else '' }}" href="/turnover" data-label="재고회전율"><i class="ti ti-refresh nav-ic"></i>재고회전율</a>
         <a class="nav-item {{ 'active' if active=='recommend_order' else '' }}" href="/recommend_order" data-label="발주 추천"><i class="ti ti-bulb nav-ic"></i>발주 추천</a>
         <a class="nav-item {{ 'active' if active=='forecast' else '' }}" href="/forecast" data-label="출고 예측"><i class="ti ti-trending-up nav-ic"></i>출고 예측</a>
+        <a class="nav-item {{ 'active' if active=='report_builder' else '' }}" href="/report_builder" data-label="커스텀 리포트"><i class="ti ti-file-analytics nav-ic"></i>커스텀 리포트</a>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">관리</div>
@@ -128,6 +129,12 @@ function filterNavItems(query) {
 </script>
 
 <!-- 플로팅 패널 -->
+<!-- 오프라인 임시 입력 대기 배너 (모든 페이지 공통) -->
+<div id="offlineQueueBanner" style="display:none; position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:1000; align-items:center; gap:10px; background:#fff3cd; color:#7a5b00; border:1px solid #ffe08a; padding:8px 10px 8px 14px; border-radius:999px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,0.15);">
+  <span>📴 오프라인 대기 <strong id="offlineQueueCount">0</strong>건</span>
+  <button id="offlineQueueSyncBtn" onclick="syncOfflineQueue()" style="padding:5px 12px; font-size:12px; border-radius:999px; border:none; background:#7a5b00; color:#fff; cursor:pointer;">지금 동기화</button>
+</div>
+
 <div class="floating-panel" id="floatingPanel">
   <div class="floating-panel-header" onclick="toggleFloatingPanel()">
     <span class="fp-title">📊 오늘의 매출</span>
