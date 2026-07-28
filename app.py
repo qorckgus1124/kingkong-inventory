@@ -2118,7 +2118,8 @@ def api_movements():
         store_id = request.args.get("store_id")
 
         sql = """
-            SELECT m.*, p.name as product_name,
+            SELECT m.*, p.name as product_name, p.cost_price as unit_cost,
+                   (m.quantity * p.cost_price) as total_cost,
                    fs.name as from_store_name, ts.name as to_store_name
             FROM stock_movements m
             JOIN products p ON p.id = m.product_id

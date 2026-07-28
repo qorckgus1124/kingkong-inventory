@@ -138,6 +138,7 @@
         </div>
         <div class="cart-footer" style="border-top:1px solid var(--border); padding-top:12px; margin-top:8px;">
           <div class="cart-total"><span>총 이동 수량</span><span id="transferTotalQty">0개</span></div>
+          <div class="cart-total"><span>총 원가</span><span id="transferTotalCost">0원</span></div>
           <button class="primary" style="width:100%;" onclick="doBatchTransfer()">🚚 이동 실행</button>
         </div>
       </div>
@@ -171,6 +172,8 @@
           <th>도착 매장</th>
           <th>제품명</th>
           <th>수량</th>
+          <th>원가(개당)</th>
+          <th>원가 합계</th>
           <th>담당자</th>
           <th>메모</th>
           <th>상태</th>
@@ -179,7 +182,7 @@
         </tr>
       </thead>
       <tbody id="movementTbody">
-        <tr><td colspan="10"><div class="empty"><span class="empty-icon">📭</span>이동 내역이 없습니다.</div></td></tr>
+        <tr><td colspan="12"><div class="empty"><span class="empty-icon">📭</span>이동 내역이 없습니다.</div></td></tr>
       </tbody>
     </table>
   </div>
@@ -910,6 +913,7 @@ function renderTransferGrid() {
           <span class="chip" style="background:${p.brand_color || '#8a8f98'}; font-size:10px; padding:2px 8px;">${escapeHtml(p.brand_name || '미분류')}</span>
           <span class="pprice">재고 ${fmt(p.qty)}</span>
         </div>
+        <div class="pqty">원가 ${fmt(p.cost_price || 0)}원</div>
         ${inCart > 0 ? `<div style="font-size:12px; color:var(--accent);">📦 ${inCart}개 선택</div>` : ''}
       </div>
     `;
@@ -996,13 +1000,16 @@ function renderTransferCart() {
   }
 
   let totalQty = 0;
+  let totalCost = 0;
   list.innerHTML = items.map(([pid, item]) => {
     totalQty += item.qty;
+    const itemCost = (item.product.cost_price || 0) * item.qty;
+    totalCost += itemCost;
     return `
       <div class="cart-item">
         <div class="ci-name">
           ${escapeHtml(item.product.name)}
-          <div class="ci-sub">${fmt(item.product.sale_price)}원 × ${item.qty}</div>
+          <div class="ci-sub">원가 ${fmt(item.product.cost_price || 0)}원 × ${item.qty} = ${fmt(itemCost)}원</div>
         </div>
         <div style="display:flex; flex-direction:column; gap:2px; align-items:flex-end;">
           <div class="qty-ctrl">
@@ -1018,6 +1025,8 @@ function renderTransferCart() {
   }).join('');
 
   document.getElementById('transferTotalQty').textContent = fmt(totalQty) + '개';
+  const totalCostEl = document.getElementById('transferTotalCost');
+  if (totalCostEl) totalCostEl.textContent = fmt(totalCost) + '원';
   document.getElementById('batchTransferBtn').disabled = items.length === 0;
 }
 
@@ -1103,7 +1112,7 @@ async function loadMovements() {
     const rows = await api('/api/movements?' + params.toString());
     const tbody = document.getElementById('movementTbody');
     if (rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10"><div class="empty"><span class="empty-icon">📭</span>이동 내역이 없습니다.</div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">📭</span>이동 내역이 없습니다.</div></td></tr>';
       return;
     }
     tbody.innerHTML = rows.map((m, idx) => {
@@ -1115,6 +1124,8 @@ async function loadMovements() {
           <td>${escapeHtml(m.to_store_name)}</td>
           <td>${escapeHtml(m.product_name)}</td>
           <td>${fmt(m.quantity)}</td>
+          <td>${fmt(m.unit_cost || 0)}원</td>
+          <td style="font-weight:600;">${fmt(m.total_cost || 0)}원</td>
           <td>${escapeHtml(m.staff || '-')}</td>
           <td>${escapeHtml(m.memo || '-')}</td>
           <td><span class="chip ${statusClass}">${m.status}</span></td>
