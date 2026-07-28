@@ -182,6 +182,7 @@ body {
 .badge-warning { background: var(--warning-light); color: var(--warning); }
 .badge-danger { background: var(--danger-light); color: var(--danger); }
 .badge-neutral { background: var(--hover-bg); color: var(--text-light); }
+.badge-accent { background: var(--accent-light); color: var(--accent); }
 
 /* ---------- 공통: 일괄 작업 바 ---------- */
 .bulk-bar {

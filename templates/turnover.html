@@ -49,9 +49,9 @@
 </table>
 </div>
 <div style="display:flex; gap:16px; margin-top:12px; font-size:12px; color:var(--text-light); align-items:center;">
-  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:#c44536; margin-right:4px;"></span>7일 이하 - 재고 부족 위험</span>
-  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:#e07a5f; margin-right:4px;"></span>14일 이하 - 주의</span>
-  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:#81b29a; margin-right:4px;"></span>여유</span>
+  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:var(--danger); margin-right:4px;"></span>7일 이하 - 재고 부족 위험</span>
+  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:var(--warning); margin-right:4px;"></span>14일 이하 - 주의</span>
+  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:var(--success); margin-right:4px;"></span>여유</span>
 </div>
 
 <script>
@@ -101,14 +101,14 @@ function render(rows) {
   const maxDeplete = Math.max(...rows.map(r => r.days_to_deplete || 0), 30);
   tbody.innerHTML = rows.map(r => {
     let depleteLabel = '재고 소진 없음';
-    let depleteColor = '#81b29a';
+    let depleteColor = 'var(--success)';
     let barPercent = 100;
     if (r.days_to_deplete !== null && r.days_to_deplete !== undefined) {
       depleteLabel = `${r.days_to_deplete}일`;
       barPercent = Math.min(100, Math.round((r.days_to_deplete / maxDeplete) * 100));
-      if (r.days_to_deplete <= 7) depleteColor = '#c44536';
-      else if (r.days_to_deplete <= 14) depleteColor = '#e07a5f';
-      else depleteColor = '#81b29a';
+      if (r.days_to_deplete <= 7) depleteColor = 'var(--danger)';
+      else if (r.days_to_deplete <= 14) depleteColor = 'var(--warning)';
+      else depleteColor = 'var(--success)';
     }
     const nameCell = groupBy === 'product'
       ? escapeHtml(r.group_name)

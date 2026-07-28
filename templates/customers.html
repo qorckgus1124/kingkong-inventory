@@ -93,7 +93,7 @@ function render() {
         </div>
       </td>
       <td>${escapeHtml(c.phone || '-')}</td>
-      <td>${c.is_vip ? '<span class="chip" style="background:#e07a5f;">⭐ VIP</span>' : (c.is_regular ? '<span class="chip" style="background:#4f8ff7;">🔁 단골</span>' : '<span style="color:var(--text-light);">-</span>')}</td>
+      <td>${c.is_vip ? '<span class="badge badge-warning">⭐ VIP</span>' : (c.is_regular ? '<span class="badge badge-accent">🔁 단골</span>' : '<span style="color:var(--text-light);">-</span>')}</td>
       <td>${fmt(c.order_count)}회</td>
       <td style="font-weight:600;">${fmt(c.total_spent)}원</td>
       <td>${fmtDate(c.last_order_at)}</td>
@@ -118,11 +118,11 @@ async function openCustomer(id) {
   const predictionsHtml = (c.repurchase_predictions || []).length === 0
     ? '<div class="empty-hint">재구매 주기를 예측하려면 같은 카테고리 상품을 2회 이상 주문해야 합니다.</div>'
     : c.repurchase_predictions.map(p => {
-        const statusColor = p.status === '임박' ? '#e07a5f' : (p.status === '지남' ? '#c44536' : '#81b29a');
+        const statusBadgeClass = p.status === '임박' ? 'badge-warning' : (p.status === '지남' ? 'badge-danger' : 'badge-success');
         return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border);">
           <div><strong>${escapeHtml(p.category_name)}</strong><div style="font-size:12px; color:var(--text-light); margin-top:2px;">평균 ${p.avg_interval_days}일 주기 · 최근 구매 ${p.last_order_date}</div></div>
           <div style="text-align:right;">
-            <span class="chip" style="background:${statusColor};">${p.status}</span>
+            <span class="badge ${statusBadgeClass}">${p.status}</span>
             <div style="font-size:12px; color:var(--text-light); margin-top:4px;">예상: ${p.predicted_next_date}</div>
           </div>
         </div>`;
