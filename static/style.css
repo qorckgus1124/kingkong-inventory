@@ -892,15 +892,7 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
   .floating-panel { display: none !important; }
   .mobile-bottom-nav { display: flex; }
 
-  .memo-widget {
-    left: 10px;
-    right: 10px;
-    bottom: 70px; /* 하단 네비게이션과 겹치지 않도록 */
-    width: auto;
-    max-width: none;
-  }
-  .memo-widget.memo-widget-open { resize: none; height: 160px; }
-  .memo-widget.memo-widget-open.memo-widget-large { height: 320px; }
+  .memo-widget { display: none !important; }
 
   .empty { padding: 40px 16px; font-size: 14px; }
   .empty .empty-icon { font-size: 40px; }

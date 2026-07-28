@@ -48,50 +48,20 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- 3. 개별 등록 영역 -->
+<!-- 3. 개별 등록 영역 (여러 제품 한번에 등록 가능) -->
 <!-- ============================================================ -->
 <div class="card">
-  <div class="form-grid">
-    <div class="form-field autocomplete-wrap">
-      <label>제품명 *</label>
-      <input type="text" id="f_product" placeholder="제품명을 입력하세요" autocomplete="off" oninput="onProductInput()">
-      <div class="autocomplete-list" id="acList"></div>
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:6px;">
+    <div>
+      <strong>📝 개별 등록</strong>
+      <div style="font-size:12px; color:var(--text-light);">제품명을 입력하면 브랜드가 자동으로 표시됩니다. 카드를 추가해 여러 제품을 한 번에 접수할 수 있어요.</div>
     </div>
-    <div class="form-field">
-      <label>매장</label>
-      <select id="f_store"></select>
-    </div>
-    <div class="form-field">
-      <label>유형 *</label>
-      <select id="f_type">
-        <option value="입고">입고</option>
-        <option value="판매출고">판매출고</option>
-        <option value="반품">반품</option>
-        <option value="폐기">폐기</option>
-        <option value="조정">조정</option>
-      </select>
-    </div>
-    <div class="form-field">
-      <label>수량 *</label>
-      <input type="number" id="f_qty" placeholder="0" min="1">
-    </div>
-    <div class="form-field">
-      <label>담당자</label>
-      <input type="text" id="f_staff" placeholder="이름">
-    </div>
-    <div class="form-field">
-      <label>일시 (선택, 비우면 현재시각)</label>
-      <input type="datetime-local" id="f_datetime">
-    </div>
-    <div class="form-field" style="grid-column: span 2;">
-      <label>메모</label>
-      <input type="text" id="f_memo" placeholder="선택 입력">
-    </div>
-    <div class="form-field">
-      <button class="primary" onclick="registerTransaction()" style="width:100%">등록</button>
-    </div>
+    <button onclick="addTxnRow()">➕ 카드 추가</button>
   </div>
-  <div id="selectedInfo" style="margin-top:10px; font-size:12px; color:var(--text-light);"></div>
+  <div id="txnRows"></div>
+  <div style="display:flex; justify-content:flex-end; margin-top:6px;">
+    <button class="primary" onclick="registerAllTransactions()" id="registerAllBtn">전체 등록 (<span id="txnRowCount">1</span>건)</button>
+  </div>
 </div>
 
 <!-- ============================================================ -->
@@ -256,8 +226,6 @@
 <!-- ============================================================ -->
 <script>
 let stores = [];
-let selectedProduct = null;
-let acItems = [];
 const STORE_KEY = 'selected_store_id';
 let currentPage = 1;
 let totalPages = 1;
@@ -272,23 +240,20 @@ const TYPE_CLASS = {
 
 // ---------- 매장 로드 ----------
 async function loadStores() {
-  const storeSelect = document.getElementById('f_store');
-  storeSelect.innerHTML = '<option value="">로딩 중...</option>';
-
   try {
     stores = await api('/api/stores');
     const opts = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
-    storeSelect.innerHTML = opts;
     document.getElementById('filterStore').innerHTML = '<option value="">전체 매장</option>' + opts;
+
+    // 이미 만들어진 등록 카드가 있다면 매장 목록을 채워준다.
+    document.querySelectorAll('.f_store').forEach(sel => fillStoreSelect(sel));
 
     // 🔥 전역 매장 ID 적용
     const globalStoreId = localStorage.getItem('global_store_id');
     if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
-      storeSelect.value = globalStoreId;
       document.getElementById('filterStore').value = globalStoreId;
       localStorage.setItem(STORE_KEY, globalStoreId); // 기존 키도 함께 업데이트
     } else if (stores.length > 0) {
-      storeSelect.value = stores[0].id;
       document.getElementById('filterStore').value = stores[0].id;
       localStorage.setItem(STORE_KEY, stores[0].id);
       localStorage.setItem('global_store_id', stores[0].id);
@@ -296,7 +261,21 @@ async function loadStores() {
   } catch (e) {
     console.error('매장 로드 오류:', e);
     toast('매장 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
-    storeSelect.innerHTML = '<option value="">매장 없음 (오류)</option>';
+  }
+}
+
+// 개별 등록 카드의 매장 select 채우기
+function fillStoreSelect(selectEl) {
+  if (!stores || stores.length === 0) {
+    selectEl.innerHTML = '<option value="">매장 없음</option>';
+    return;
+  }
+  selectEl.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  const globalStoreId = localStorage.getItem('global_store_id') || localStorage.getItem(STORE_KEY);
+  if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
+    selectEl.value = globalStoreId;
+  } else {
+    selectEl.value = stores[0].id;
   }
 }
 
@@ -313,101 +292,256 @@ async function loadStoreSelects() {
 }
 
 document.addEventListener('change', function(e) {
-  if (e.target.id === 'f_store') {
+  if (e.target.classList && e.target.classList.contains('f_store')) {
     localStorage.setItem('global_store_id', e.target.value);
     localStorage.setItem(STORE_KEY, e.target.value);
   }
 });
 
-// ---------- 제품 자동완성 ----------
-let acTimer;
-const productAcGuard = makeSearchGuard();
-function onProductInput() {
-  selectedProduct = null;
-  document.getElementById('selectedInfo').textContent = '';
-  clearTimeout(acTimer);
-  const q = document.getElementById('f_product').value.trim();
-  if (!q) { hideAc(); return; }
-  acTimer = setTimeout(async () => {
-    const myToken = productAcGuard.next();
+// ================================================================
+// 📝 개별 등록 카드 (여러 제품 한번에 접수)
+// ================================================================
+let txnRowSeq = 0;
+
+function txnRowTemplate() {
+  return `
+    <div class="txn-row">
+      <button type="button" class="txn-remove-btn" onclick="removeTxnRow(this)" title="이 카드 삭제">✕</button>
+      <div class="form-grid">
+        <div class="form-field autocomplete-wrap">
+          <label>제품명 *</label>
+          <input type="text" class="f_product" placeholder="제품명을 입력하세요" autocomplete="off" oninput="onProductInput(this)">
+          <div class="autocomplete-list"></div>
+        </div>
+        <div class="form-field">
+          <label>브랜드</label>
+          <div class="f_brand_display">-</div>
+        </div>
+        <div class="form-field">
+          <label>매장</label>
+          <select class="f_store"></select>
+        </div>
+        <div class="form-field">
+          <label>유형 *</label>
+          <select class="f_type">
+            <option value="입고">입고</option>
+            <option value="판매출고">판매출고</option>
+            <option value="반품">반품</option>
+            <option value="폐기">폐기</option>
+            <option value="조정">조정</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>수량 *</label>
+          <input type="number" class="f_qty" placeholder="0" min="1">
+        </div>
+        <div class="form-field">
+          <label>담당자</label>
+          <input type="text" class="f_staff" placeholder="이름">
+        </div>
+        <div class="form-field">
+          <label>일시 (선택, 비우면 현재시각)</label>
+          <input type="datetime-local" class="f_datetime">
+        </div>
+        <div class="form-field" style="grid-column: span 2;">
+          <label>메모</label>
+          <input type="text" class="f_memo" placeholder="선택 입력">
+        </div>
+      </div>
+      <div class="selectedInfo"></div>
+    </div>
+  `;
+}
+
+function addTxnRow() {
+  const container = document.getElementById('txnRows');
+  const wrap = document.createElement('div');
+  wrap.innerHTML = txnRowTemplate().trim();
+  const rowEl = wrap.firstElementChild;
+  rowEl.dataset.idx = txnRowSeq++;
+  container.appendChild(rowEl);
+  fillStoreSelect(rowEl.querySelector('.f_store'));
+  updateTxnRowUI();
+  return rowEl;
+}
+
+function removeTxnRow(btn) {
+  const rows = document.querySelectorAll('.txn-row');
+  if (rows.length <= 1) { toast('최소 1개의 카드는 남아있어야 합니다.', true, '⚠️'); return; }
+  btn.closest('.txn-row').remove();
+  updateTxnRowUI();
+}
+
+function updateTxnRowUI() {
+  const rows = document.querySelectorAll('.txn-row');
+  rows.forEach(r => {
+    const btn = r.querySelector('.txn-remove-btn');
+    if (btn) btn.style.display = rows.length > 1 ? '' : 'none';
+  });
+  const countEl = document.getElementById('txnRowCount');
+  if (countEl) countEl.textContent = rows.length;
+}
+
+// ---------- 제품 자동완성 (제품명을 입력하면 브랜드가 자동으로 표시됨) ----------
+function onProductInput(inputEl) {
+  const row = inputEl.closest('.txn-row');
+  const listEl = row.querySelector('.autocomplete-list');
+  const brandEl = row.querySelector('.f_brand_display');
+  const infoEl = row.querySelector('.selectedInfo');
+
+  row._selectedProduct = null;
+  infoEl.textContent = '';
+  brandEl.innerHTML = '-';
+
+  clearTimeout(inputEl._acTimer);
+  const q = inputEl.value.trim();
+  if (!q) { listEl.classList.remove('show'); return; }
+
+  if (!inputEl._acGuard) inputEl._acGuard = makeSearchGuard();
+  inputEl._acTimer = setTimeout(async () => {
+    const myToken = inputEl._acGuard.next();
     try {
       const response = await api('/api/products/search?q=' + encodeURIComponent(q));
-      if (!productAcGuard.isCurrent(myToken)) return;
-      if (response && Array.isArray(response)) {
-        acItems = response;
-        renderAc();
+      if (!inputEl._acGuard.isCurrent(myToken)) return;
+      if (response && Array.isArray(response) && response.length > 0) {
+        row._acItems = response;
+        renderAc(row);
       } else {
-        acItems = [];
-        hideAc();
+        row._acItems = [];
+        listEl.classList.remove('show');
       }
     } catch (e) {
-      if (!productAcGuard.isCurrent(myToken)) return;
+      if (!inputEl._acGuard.isCurrent(myToken)) return;
       console.error('제품 검색 오류:', e);
-      acItems = [];
-      hideAc();
+      row._acItems = [];
+      listEl.classList.remove('show');
     }
   }, 200);
 }
 
-function renderAc() {
-  const list = document.getElementById('acList');
-  if (!acItems || acItems.length === 0) { hideAc(); return; }
-  list.innerHTML = acItems.map((p, i) => `
-    <div class="autocomplete-item" onclick="pickProduct(${i})">
+function renderAc(row) {
+  const listEl = row.querySelector('.autocomplete-list');
+  const items = row._acItems || [];
+  if (items.length === 0) { listEl.classList.remove('show'); return; }
+  listEl.innerHTML = items.map((p, i) => `
+    <div class="autocomplete-item" onclick="pickProduct(this, ${i})">
       ${escapeHtml(p.name)}
+      ${p.brand_name ? `<span class="brand-tag" style="background:${p.brand_color || '#8a8f98'}; margin-left:6px;">${escapeHtml(p.brand_name)}</span>` : ''}
       <div class="meta">원가 ${fmt(p.cost_price)} · 판매가 ${fmt(p.sale_price)} · 전체재고 ${fmt(p.qty)}</div>
     </div>
   `).join('');
-  list.classList.add('show');
+  listEl.classList.add('show');
 }
 
-function hideAc() {
-  document.getElementById('acList').classList.remove('show');
-}
+function pickProduct(el, i) {
+  const row = el.closest('.txn-row');
+  const items = row._acItems || [];
+  const p = items[i];
+  if (!p) return;
+  row._selectedProduct = p;
 
-function pickProduct(i) {
-  if (!acItems || !acItems[i]) return;
-  selectedProduct = acItems[i];
-  document.getElementById('f_product').value = selectedProduct.name;
-  document.getElementById('selectedInfo').textContent =
-    `선택됨: ${selectedProduct.name} (원가 ${fmt(selectedProduct.cost_price)} / 판매가 ${fmt(selectedProduct.sale_price)} / 전체재고 ${fmt(selectedProduct.qty)})`;
-  hideAc();
+  row.querySelector('.f_product').value = p.name;
+
+  const brandEl = row.querySelector('.f_brand_display');
+  brandEl.innerHTML = p.brand_name
+    ? `<span class="brand-tag" style="background:${p.brand_color || '#8a8f98'};">${escapeHtml(p.brand_name)}</span>`
+    : '<span style="color:var(--text-light);">브랜드 없음</span>';
+
+  row.querySelector('.selectedInfo').textContent =
+    `선택됨: ${p.name} (원가 ${fmt(p.cost_price)} / 판매가 ${fmt(p.sale_price)} / 전체재고 ${fmt(p.qty)})`;
+
+  row.querySelector('.autocomplete-list').classList.remove('show');
 }
 
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('.autocomplete-wrap')) hideAc();
+  if (!e.target.closest('.autocomplete-wrap')) {
+    document.querySelectorAll('.autocomplete-list.show').forEach(el => el.classList.remove('show'));
+  }
 });
 
-// ---------- 개별 등록 ----------
-async function registerTransaction() {
-  if (!selectedProduct) { toast('자동완성 목록에서 제품을 선택해주세요.', true, '⚠️'); return; }
-  const qty = parseInt(document.getElementById('f_qty').value, 10);
-  if (!qty || qty <= 0) { toast('수량을 올바르게 입력해주세요.', true, '⚠️'); return; }
-  const storeId = document.getElementById('f_store').value;
-  if (!storeId) { toast('매장을 선택해주세요.', true, '⚠️'); return; }
+// ---------- 전체 등록 (카드에 입력된 여러 제품을 한번에 접수) ----------
+async function registerAllTransactions() {
+  const rows = Array.from(document.querySelectorAll('.txn-row'));
+  const jobs = [];
+  const problems = [];
 
-  const dtVal = document.getElementById('f_datetime').value;
-  const payload = {
-    product_id: selectedProduct.id,
-    store_id: storeId,
-    type: document.getElementById('f_type').value,
-    quantity: qty,
-    staff: document.getElementById('f_staff').value || null,
-    memo: document.getElementById('f_memo').value || null,
-    date_time: dtVal ? dtVal.replace('T', ' ') + ':00' : null,
-  };
-  try {
-    await api('/api/transactions', { method: 'POST', body: JSON.stringify(payload) });
-    toast('입출고를 등록했습니다.', false, '✅');
-    document.getElementById('f_product').value = '';
-    document.getElementById('f_qty').value = '';
-    document.getElementById('f_memo').value = '';
-    document.getElementById('f_datetime').value = '';
-    selectedProduct = null;
-    document.getElementById('selectedInfo').textContent = '';
+  rows.forEach(row => {
+    const product = row._selectedProduct;
+    const productInput = row.querySelector('.f_product');
+    const qtyVal = row.querySelector('.f_qty').value;
+    const qty = parseInt(qtyVal, 10);
+    const storeId = row.querySelector('.f_store').value;
+
+    const isBlank = !product && !productInput.value.trim() && !qtyVal;
+    if (isBlank && rows.length > 1) return; // 완전히 빈 카드는 여러 장일 때 건너뜀
+
+    if (!product) {
+      problems.push(`"${productInput.value || '(제품 미입력)'}" : 자동완성 목록에서 제품을 선택해주세요.`);
+      row.style.outline = '1px solid var(--danger)';
+      return;
+    }
+    if (!qty || qty <= 0) {
+      problems.push(`${product.name} : 수량을 올바르게 입력해주세요.`);
+      row.style.outline = '1px solid var(--danger)';
+      return;
+    }
+    if (!storeId) {
+      problems.push(`${product.name} : 매장을 선택해주세요.`);
+      row.style.outline = '1px solid var(--danger)';
+      return;
+    }
+
+    row.style.outline = '';
+    const dtVal = row.querySelector('.f_datetime').value;
+    jobs.push({
+      row,
+      payload: {
+        product_id: product.id,
+        store_id: storeId,
+        type: row.querySelector('.f_type').value,
+        quantity: qty,
+        staff: row.querySelector('.f_staff').value || null,
+        memo: row.querySelector('.f_memo').value || null,
+        date_time: dtVal ? dtVal.replace('T', ' ') + ':00' : null,
+      }
+    });
+  });
+
+  if (jobs.length === 0) {
+    toast(problems[0] || '등록할 내용을 입력해주세요.', true, '⚠️');
+    return;
+  }
+
+  const btn = document.getElementById('registerAllBtn');
+  btn.disabled = true;
+
+  let successCount = 0;
+  const doneRows = [];
+  for (const job of jobs) {
+    try {
+      await api('/api/transactions', { method: 'POST', body: JSON.stringify(job.payload) });
+      successCount++;
+      doneRows.push(job.row);
+    } catch (e) {
+      console.error('등록 오류:', e);
+      problems.push(`${job.payload.product_id} 등록 실패`);
+      job.row.style.outline = '1px solid var(--danger)';
+    }
+  }
+
+  // 등록 성공한 카드는 제거하고, 실패/미입력 카드는 남겨서 바로 수정할 수 있게 한다.
+  doneRows.forEach(r => r.remove());
+  if (document.querySelectorAll('.txn-row').length === 0) {
+    addTxnRow();
+  }
+  updateTxnRowUI();
+  btn.disabled = false;
+
+  if (successCount > 0) {
+    toast(`✅ ${successCount}건 등록 완료` + (problems.length ? ` (확인 필요 ${problems.length}건)` : ''), problems.length > 0, problems.length ? '⚠️' : '✅');
     load();
-  } catch (e) {
-    console.error('등록 오류:', e);
+  } else {
+    toast(problems[0] || '등록 중 오류가 발생했습니다.', true, '⚠️');
   }
 }
 
@@ -811,9 +945,10 @@ function downloadTemplate(adjust) {
 }
 
 // ---------- 초기화 ----------
-document.addEventListener('DOMContentLoaded', function() {
-  loadStores();
+document.addEventListener('DOMContentLoaded', async function() {
+  await loadStores();
   loadStoreSelects();
+  addTxnRow();
   currentPage = 1;
   load();
 });
@@ -855,5 +990,43 @@ body.dark-mode .type-in { background: #1a3a2a; color: #7fcf8f; }
 body.dark-mode .type-out { background: #3a1a1a; color: #ff6b6b; }
 .type-etc { background: #f1f1f0; color: #6b6b6b; }
 body.dark-mode .type-etc { background: #333; color: #aaa; }
+
+.txn-row {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 14px 10px;
+  margin-bottom: 12px;
+  background: var(--card-bg);
+}
+.txn-row:last-child { margin-bottom: 0; }
+.txn-remove-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card-bg);
+  color: var(--text-light);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+.txn-remove-btn:hover { background: var(--danger-light); color: var(--danger); border-color: var(--danger); }
+.f_brand_display {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-light);
+}
+.txn-row .selectedInfo {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-light);
+}
 </style>
 {% endblock %}

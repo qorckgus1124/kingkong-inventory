@@ -33,7 +33,14 @@
       <!-- 상단 고정 영역 -->
       <div class="cart-header">
         <div class="cart-title">🛒 장바구니</div>
-        <div class="cart-total"><span>합계</span><span id="cartTotal">0원</span></div>
+        <div class="cart-total-breakdown">
+          <div class="ctb-row"><span>상품 합계</span><span id="cartSubtotal">0원</span></div>
+          <div class="ctb-row discount-row">
+            <span>전체 할인</span>
+            <input type="number" id="cartDiscountInput" class="discount-input" placeholder="0" min="0" onchange="updateCartDiscount(this.value)">
+          </div>
+          <div class="cart-total"><span>결제 금액</span><span id="cartTotal">0원</span></div>
+        </div>
         <div class="pay-btns">
           <button id="pay-현금" onclick="selectPayment('현금')">현금</button>
           <button id="pay-카드" onclick="selectPayment('카드')">카드</button>
@@ -92,7 +99,14 @@
           </div>
         </div>
         <div class="cart-title" style="margin-top:4px;">🛒 장바구니</div>
-        <div class="cart-total"><span>합계</span><span id="pre_cartTotal">0원</span></div>
+        <div class="cart-total-breakdown">
+          <div class="ctb-row"><span>상품 합계</span><span id="pre_cartSubtotal">0원</span></div>
+          <div class="ctb-row discount-row">
+            <span>전체 할인</span>
+            <input type="number" id="preCartDiscountInput" class="discount-input" placeholder="0" min="0" onchange="updatePreCartDiscount(this.value)">
+          </div>
+          <div class="cart-total"><span>결제 금액</span><span id="pre_cartTotal">0원</span></div>
+        </div>
         <div class="pay-btns">
           <button id="pre_pay-현금" onclick="selectPrePayment('현금')">현금</button>
           <button id="pre_pay-카드" onclick="selectPrePayment('카드')">카드</button>
@@ -232,7 +246,7 @@ body.dark-mode .cat-tab.active {
   background: var(--text);
 }
 
-/* 🔥 서비스 버튼 & 할인 입력 필드 크기 증가 */
+/* 🔥 장바구니 전체 할인 입력 필드 */
 .discount-input {
   width: 120px !important;
   padding: 6px 8px !important;
@@ -245,6 +259,28 @@ body.dark-mode .cat-tab.active {
 .discount-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 🔥 장바구니 전체 할인 & 합계 영역 */
+.cart-total-breakdown {
+  margin: 10px 0 4px;
+}
+.ctb-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-light);
+  margin-bottom: 6px;
+  gap: 8px;
+}
+.ctb-row.discount-row .discount-input {
+  width: 140px !important;
+  text-align: right;
+}
+.cart-total {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
 
 /* 🔥 모바일 반응형 */
@@ -294,6 +330,8 @@ let payment = null;
 const CART_STORAGE_KEY = 'normal_cart';
 let cart = loadCartFromStorage(CART_STORAGE_KEY);
 let normalSearchQuery = '';
+const CART_DISCOUNT_KEY = 'normal_cart_discount';
+let cartDiscount = parseInt(localStorage.getItem(CART_DISCOUNT_KEY)) || 0;
 
 const PRE_CART_STORAGE_KEY = 'pre_cart';
 let preCart = loadCartFromStorage(PRE_CART_STORAGE_KEY);
@@ -301,6 +339,8 @@ let prePayment = null;
 let preSelectedCategory = 'all';
 let preSearchQuery = '';
 let preProducts = [];
+const PRE_CART_DISCOUNT_KEY = 'pre_cart_discount';
+let preCartDiscount = parseInt(localStorage.getItem(PRE_CART_DISCOUNT_KEY)) || 0;
 
 // ---------- 매장/카테고리/제품 로드 ----------
 async function loadStores() {
@@ -648,7 +688,7 @@ function addToCart(pid) {
   if (existing) {
     existing.qty += 1;
   } else {
-    cart[key] = { product, qty: 1, type: 'normal', discountAmount: 0 };
+    cart[key] = { product, qty: 1, type: 'normal' };
   }
   saveCartToStorage(CART_STORAGE_KEY, cart);
   renderCart();
@@ -697,17 +737,16 @@ function toggleService(key) {
   const newType = item.type === 'service' ? 'normal' : 'service';
   const newKey = `${item.product.id}_${newType}`;
   delete cart[key];
-  cart[newKey] = { product: item.product, qty: item.qty, type: newType, discountAmount: 0 };
+  cart[newKey] = { product: item.product, qty: item.qty, type: newType };
   saveCartToStorage(CART_STORAGE_KEY, cart);
   renderCart();
 }
 
-function updateDiscount(key, value) {
-  const item = cart[key];
-  if (!item || item.type === 'service') return;
+// 🔥 개별 상품 가격이 아니라, 장바구니 전체 금액에서 딱 한 번만 할인을 뺀다.
+function updateCartDiscount(value) {
   const discount = parseInt(value);
-  item.discountAmount = (isNaN(discount) || discount < 0) ? 0 : discount;
-  saveCartToStorage(CART_STORAGE_KEY, cart);
+  cartDiscount = (isNaN(discount) || discount < 0) ? 0 : discount;
+  localStorage.setItem(CART_DISCOUNT_KEY, String(cartDiscount));
   renderCart();
 }
 
@@ -722,37 +761,31 @@ function renderCart() {
   items = validItems;
   if (items.length === 0) {
     list.innerHTML = '<div class="cart-empty">담긴 제품이 없습니다</div>';
+    document.getElementById('cartSubtotal').textContent = '0원';
     document.getElementById('cartTotal').textContent = '0원';
     return;
   }
 
-  let total = 0;
+  let subtotal = 0;
   list.innerHTML = items.map(([key, item]) => {
     const unitPrice = item.product.sale_price || 0;
     const qty = item.qty;
     const isService = item.type === 'service';
-    const discount = isService ? 0 : (item.discountAmount || 0);
-    const subtotal = isService ? 0 : ((unitPrice * qty) - discount);
-    total += subtotal;
+    const lineTotal = isService ? 0 : (unitPrice * qty);
+    subtotal += lineTotal;
 
     return `
       <div class="cart-item">
         <div class="ci-name">
           ${escapeHtml(item.product.name)}
           ${isService ? ' <span style="color:var(--text-light); font-size:11px;">(서비스)</span>' : ''}
-          <div class="ci-sub">${fmt(unitPrice)}원 × ${qty} = ${isService ? '0원' : fmt(unitPrice * qty) + '원' + (discount > 0 ? ` - ${fmt(discount)}원` : '')}</div>
+          <div class="ci-sub">${fmt(unitPrice)}원 × ${qty} = ${fmt(lineTotal)}원</div>
         </div>
         <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-            <button onclick="toggleService('${key}')" 
-                    style="padding:4px 12px; font-size:13px; border-radius:4px; border:1px solid ${isService ? 'var(--accent)' : 'var(--border)'}; background:${isService ? 'var(--accent)' : 'var(--card-bg)'}; color:${isService ? '#fff' : 'var(--text)'}; cursor:pointer; min-width:60px;">
-              ${isService ? '✅ 서비스' : '서비스'}
-            </button>
-            <input type="number" class="discount-input" placeholder="할인금액" 
-                   value="${discount > 0 ? discount : ''}" 
-                   onchange="updateDiscount('${key}', this.value)" 
-                   ${isService ? 'disabled' : ''}>
-          </div>
+          <button onclick="toggleService('${key}')" 
+                  style="padding:4px 12px; font-size:13px; border-radius:4px; border:1px solid ${isService ? 'var(--accent)' : 'var(--border)'}; background:${isService ? 'var(--accent)' : 'var(--card-bg)'}; color:${isService ? '#fff' : 'var(--text)'}; cursor:pointer; min-width:60px;">
+            ${isService ? '✅ 서비스' : '서비스'}
+          </button>
           <div class="qty-ctrl">
             <button onclick="changeQty('${key}', -1)">-</button>
             <input type="number" class="qty-input" value="${qty}" min="1" max="${item.product.qty}" 
@@ -765,7 +798,16 @@ function renderCart() {
     `;
   }).join('');
 
-  document.getElementById('cartTotal').textContent = fmt(total) + '원';
+  // 할인은 상품별이 아니라 장바구니 합계 한 곳에서만 적용된다.
+  const discount = Math.min(cartDiscount, subtotal);
+  const grandTotal = Math.max(subtotal - discount, 0);
+
+  document.getElementById('cartSubtotal').textContent = fmt(subtotal) + '원';
+  const discountInput = document.getElementById('cartDiscountInput');
+  if (document.activeElement !== discountInput) {
+    discountInput.value = discount > 0 ? discount : '';
+  }
+  document.getElementById('cartTotal').textContent = fmt(grandTotal) + '원';
 }
 
 function selectPayment(method) {
@@ -775,23 +817,42 @@ function selectPayment(method) {
 }
 
 async function checkout() {
-  const items = Object.values(cart).map(item => {
-    const unitPrice = item.product.sale_price || 0;
-    const qty = item.qty;
-    const isService = item.type === 'service';
-    const discount = isService ? 0 : (item.discountAmount || 0);
-    const totalAmount = isService ? 0 : ((unitPrice * qty) - discount);
-    const finalUnitPrice = qty > 0 ? Math.floor(totalAmount / qty) : 0;
-    return { product_id: item.product.id, quantity: qty, unit_price: finalUnitPrice };
-  });
-
-  if (items.length === 0) { toast('장바구니가 비어있습니다.', true, '⚠️'); return; }
+  const entries = Object.entries(cart).filter(([, item]) => item && item.product);
+  if (entries.length === 0) { toast('장바구니가 비어있습니다.', true, '⚠️'); return; }
   if (!payment) { toast('결제수단을 선택해주세요.', true, '⚠️'); return; }
   const storeId = document.getElementById('f_store').value;
   if (!storeId) {
     toast('유효한 매장을 선택해주세요.', true, '⚠️');
     return;
   }
+
+  // 상품 합계(서비스 제외) 계산
+  const subtotal = entries.reduce((sum, [, item]) => {
+    if (item.type === 'service') return sum;
+    return sum + (item.product.sale_price || 0) * item.qty;
+  }, 0);
+  const discount = Math.min(Math.max(cartDiscount || 0, 0), subtotal);
+
+  // 🔥 할인은 상품 개당 가격을 낱낱이 줄이지 않고, 장바구니에 마지막으로 담긴
+  // 상품 한 줄에서만 전체 금액을 차감한다. 나머지 상품은 정상가 그대로 기록된다.
+  const nonServiceKeys = entries.filter(([, item]) => item.type !== 'service').map(([key]) => key);
+  const discountTargetKey = nonServiceKeys[nonServiceKeys.length - 1];
+
+  const items = entries.map(([key, item]) => {
+    const qty = item.qty;
+    const isService = item.type === 'service';
+    const unitPrice = item.product.sale_price || 0;
+
+    if (isService) {
+      return { product_id: item.product.id, quantity: qty, unit_price: 0 };
+    }
+    if (key === discountTargetKey && discount > 0) {
+      const lineTotal = Math.max((unitPrice * qty) - discount, 0);
+      const finalUnitPrice = qty > 0 ? Math.floor(lineTotal / qty) : 0;
+      return { product_id: item.product.id, quantity: qty, unit_price: finalUnitPrice };
+    }
+    return { product_id: item.product.id, quantity: qty, unit_price: unitPrice };
+  });
 
   const payload = {
     store_id: parseInt(storeId, 10),
@@ -804,6 +865,8 @@ async function checkout() {
     toast('판매가 등록되었습니다.', false, '✅');
     cart = {};
     saveCartToStorage(CART_STORAGE_KEY, cart);
+    cartDiscount = 0;
+    localStorage.removeItem(CART_DISCOUNT_KEY);
     renderCart();
     const q = document.getElementById('searchBox').value.trim();
     if (q) {
@@ -826,7 +889,7 @@ function addToPreCart(pid) {
   if (existing) {
     existing.qty += 1;
   } else {
-    preCart[key] = { product, qty: 1, type: 'normal', discountAmount: 0 };
+    preCart[key] = { product, qty: 1, type: 'normal' };
   }
   saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
   renderPreCart();
@@ -858,16 +921,15 @@ function removeFromPreCart(key) {
   renderPreCart();
 }
 
-function updatePreDiscount(key, value) {
-  const item = preCart[key];
-  if (!item) return;
+// 🔥 개별 상품 가격이 아니라, 선결제 장바구니 전체 금액에서 딱 한 번만 할인을 뺀다.
+function updatePreCartDiscount(value) {
   const discount = parseInt(value);
-  item.discountAmount = (isNaN(discount) || discount < 0) ? 0 : discount;
-  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  preCartDiscount = (isNaN(discount) || discount < 0) ? 0 : discount;
+  localStorage.setItem(PRE_CART_DISCOUNT_KEY, String(preCartDiscount));
   renderPreCart();
 }
 
-// 선결제 장바구니 렌더링 (서비스 버튼 + 할인 입력 동일)
+// 선결제 장바구니 렌더링 (전체 할인 한 번만 적용)
 function renderPreCart() {
   const list = document.getElementById('pre_cartList');
   let items = Object.entries(preCart);
@@ -879,30 +941,25 @@ function renderPreCart() {
   items = validItems;
   if (items.length === 0) {
     list.innerHTML = '<div class="cart-empty">담긴 제품이 없습니다</div>';
+    document.getElementById('pre_cartSubtotal').textContent = '0원';
     document.getElementById('pre_cartTotal').textContent = '0원';
     return;
   }
 
-  let total = 0;
+  let subtotal = 0;
   list.innerHTML = items.map(([key, item]) => {
     const unitPrice = item.product.sale_price || 0;
     const qty = item.qty;
-    const discount = item.discountAmount || 0;
-    const subtotal = (unitPrice * qty) - discount;
-    total += subtotal;
+    const lineTotal = unitPrice * qty;
+    subtotal += lineTotal;
 
     return `
       <div class="cart-item">
         <div class="ci-name">
           ${escapeHtml(item.product.name)}
-          <div class="ci-sub">${fmt(unitPrice)}원 × ${qty} = ${fmt(unitPrice * qty)}원${discount > 0 ? ` - ${fmt(discount)}원` : ''}</div>
+          <div class="ci-sub">${fmt(unitPrice)}원 × ${qty} = ${fmt(lineTotal)}원</div>
         </div>
         <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-            <input type="number" class="discount-input" placeholder="할인금액" 
-                   value="${discount > 0 ? discount : ''}" 
-                   onchange="updatePreDiscount('${key}', this.value)">
-          </div>
           <div class="qty-ctrl">
             <button onclick="changePreQty('${key}', -1)">-</button>
             <input type="number" class="qty-input" value="${qty}" min="1" 
@@ -915,7 +972,15 @@ function renderPreCart() {
     `;
   }).join('');
 
-  document.getElementById('pre_cartTotal').textContent = fmt(total) + '원';
+  const discount = Math.min(preCartDiscount, subtotal);
+  const grandTotal = Math.max(subtotal - discount, 0);
+
+  document.getElementById('pre_cartSubtotal').textContent = fmt(subtotal) + '원';
+  const discountInput = document.getElementById('preCartDiscountInput');
+  if (document.activeElement !== discountInput) {
+    discountInput.value = discount > 0 ? discount : '';
+  }
+  document.getElementById('pre_cartTotal').textContent = fmt(grandTotal) + '원';
 }
 
 function selectPrePayment(method) {
@@ -925,21 +990,8 @@ function selectPrePayment(method) {
 }
 
 async function checkoutPreOrder() {
-  const items = Object.values(preCart).map(item => {
-    const unitPrice = item.product.sale_price || 0;
-    const qty = item.qty;
-    const discount = item.discountAmount || 0;
-    const totalAmount = (unitPrice * qty) - discount;
-    const finalUnitPrice = qty > 0 ? Math.floor(totalAmount / qty) : 0;
-    return {
-      product_id: item.product.id,
-      quantity: qty,
-      unit_price: finalUnitPrice,
-      discount_amount: discount
-    };
-  });
-
-  if (items.length === 0) {
+  const entries = Object.entries(preCart).filter(([, item]) => item && item.product);
+  if (entries.length === 0) {
     toast('장바구니가 비어있습니다.', true, '⚠️');
     return;
   }
@@ -952,6 +1004,25 @@ async function checkoutPreOrder() {
     toast('유효한 매장을 선택해주세요.', true, '⚠️');
     return;
   }
+
+  // 상품 합계 계산 후, 할인은 장바구니 마지막 상품 한 줄에만 적용한다.
+  // (이때도 unit_price는 정상가 그대로 보내고, discount_amount로만 할인을 따로 기록하므로
+  //  서버에 저장되는 '개당 가격'은 줄어들지 않는다.)
+  const subtotal = entries.reduce((sum, [, item]) => sum + (item.product.sale_price || 0) * item.qty, 0);
+  const discount = Math.min(Math.max(preCartDiscount || 0, 0), subtotal);
+  const discountTargetKey = entries.length > 0 ? entries[entries.length - 1][0] : null;
+
+  const items = entries.map(([key, item]) => {
+    const unitPrice = item.product.sale_price || 0;
+    const qty = item.qty;
+    const itemDiscount = (key === discountTargetKey) ? discount : 0;
+    return {
+      product_id: item.product.id,
+      quantity: qty,
+      unit_price: unitPrice,
+      discount_amount: itemDiscount
+    };
+  });
 
   const customer_name = document.getElementById('pre_customer_name').value.trim();
   const customer_phone = document.getElementById('pre_customer_phone').value.trim();
@@ -974,6 +1045,8 @@ async function checkoutPreOrder() {
     toast('선결제 주문이 등록되었습니다.', false, '✅');
     preCart = {};
     saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+    preCartDiscount = 0;
+    localStorage.removeItem(PRE_CART_DISCOUNT_KEY);
     renderPreCart();
     document.getElementById('pre_customer_name').value = '';
     document.getElementById('pre_customer_phone').value = '';
