@@ -2438,12 +2438,25 @@ def api_transfer_cancel(movement_id):
         if err2:
             return jsonify({"error": f"도착 매장 재고 복구 실패: {err2}"}), 400
 
+        # ⚠️ 버그 수정: 이동 취소는 출발 매장(from_store)의 재고를 늘리고 도착 매장
+        # (to_store)의 재고를 줄이는 두 가지 실제 변화를 store_stock에 모두 반영하면서도,
+        # stock_transactions 기록은 출발 매장 쪽만 남기고 있었다. 그 결과 도착 매장은
+        # 실제로는 재고가 줄었는데도 그 내역이 거래 목록/타임머신 등 어디에도 남지 않아
+        # 감사(audit) 추적이 끊기고, 과거 시점 재고 역산도 그 매장에서만 어긋나는
+        # 문제가 있었다. 도착 매장 쪽에도 반출(이동출고와 동일한 방향)로 기록을 남긴다.
         cur.execute(
             """INSERT INTO stock_transactions
             (product_id, store_id, type, quantity, staff, memo)
             VALUES (%s, %s, '이동취소', %s, %s, %s)""",
             (movement["product_id"], movement["from_store_id"], movement["quantity"],
              movement["staff"], f"이동 취소 (ID: {movement_id})")
+        )
+        cur.execute(
+            """INSERT INTO stock_transactions
+            (product_id, store_id, type, quantity, staff, memo)
+            VALUES (%s, %s, '이동출고', %s, %s, %s)""",
+            (movement["product_id"], movement["to_store_id"], movement["quantity"],
+             movement["staff"], f"이동 취소로 인한 반출 (ID: {movement_id})")
         )
 
         cur.execute(
@@ -2506,6 +2519,15 @@ def api_movements_cancel_batch():
                 VALUES (%s, %s, '이동취소', %s, %s, %s)""",
                 (movement["product_id"], movement["from_store_id"], movement["quantity"],
                  movement["staff"], f"이동 취소 (ID: {movement_id})")
+            )
+            # ⚠️ 버그 수정: 단건 취소(/api/transfer/<id>/cancel)와 동일하게, 도착 매장
+            # 쪽 재고 감소도 거래 기록으로 남겨야 감사 추적/타임머신 역산이 정확해진다.
+            cur.execute(
+                """INSERT INTO stock_transactions
+                (product_id, store_id, type, quantity, staff, memo)
+                VALUES (%s, %s, '이동출고', %s, %s, %s)""",
+                (movement["product_id"], movement["to_store_id"], movement["quantity"],
+                 movement["staff"], f"이동 취소로 인한 반출 (ID: {movement_id})")
             )
             cur.execute(
                 "UPDATE stock_movements SET status = '취소', cancelled_at = CURRENT_TIMESTAMP WHERE id = %s",
@@ -4311,9 +4333,9 @@ def api_stocktake_export():
 # ---------------------------------------------------------------------------
 # API - 타임머신 조회 (특정 시점 기준 과거 재고 수량 조회)
 # ---------------------------------------------------------------------------
-# 모든 재고 증감이 stock_transactions에 before_qty/after_qty와 함께 기록되므로,
-# "기준 시각 이전에 발생한 마지막 거래의 after_qty"가 곧 그 시각의 재고 수량이다.
-# 기준 시각 이전에 거래가 하나도 없다면 그 시점엔 재고가 0이었던 것으로 간주한다.
+# before_qty/after_qty가 실제로 채워지는 거래는 실사조정뿐이라(다른 유형은 NULL),
+# "현재 재고 - 기준 시각 이후 거래들의 순증감"으로 역산해서 그 시각의 재고 수량을
+# 구한다. 자세한 이유는 아래 api_inventory_snapshot 내부 주석 참고.
 
 @app.route("/timemachine")
 def timemachine_page():
@@ -4375,17 +4397,33 @@ def api_inventory_snapshot():
         return jsonify({"date": date_str, "stores": [{"id": s["id"], "name": s["name"]} for s in stores], "items": []})
     product_ids = [p["id"] for p in products]
 
-    # 기준 시각 이전 각 (매장,제품) 조합의 마지막 거래 after_qty 조회
+    # ⚠️ 버그 수정: 기존에는 "기준 시각 이전 마지막 거래의 after_qty"를 그대로 썼는데,
+    # 실제로는 before_qty/after_qty가 채워지는 거래는 실사조정(재고실사) 뿐이고
+    # 입고/판매출고/판매취소/이동출고/이동입고/조정/입고취소 등 나머지 대부분의 거래는
+    # 이 두 컬럼을 아예 채우지 않아 NULL이다. 그래서 기준 시각 직전 마지막 거래가
+    # 실사조정이 아니면 after_qty가 NULL → `or 0` 처리로 스냅샷 수량이 항상 0으로
+    # 나오는 심각한 버그였다 (사실상 타임머신 기능이 거의 항상 0을 보여주고 있었음).
+    #
+    # 대신 "지금 남아있는 실제 재고(store_stock.qty)에서, 기준 시각 이후에 일어난
+    # 거래들의 순증감을 역산해서 빼는" 방식으로 계산한다. store_stock.qty는 항상
+    # 실시간으로 정확하게 유지되므로 이 값을 기준점으로 삼는 게 훨씬 안전하다.
+    # (선결예약은 실제 재고를 건드리지 않으므로 0으로, 실사조정은 quantity가 부호 없는
+    #  절대값이라 before/after 차이로, 나머지는 입출고 방향에 따른 부호로 계산한다.)
     cur.execute("""
-        SELECT DISTINCT ON (store_id, product_id) store_id, product_id, after_qty
+        SELECT store_id, product_id,
+               SUM(CASE
+                     WHEN type = '실사조정' THEN COALESCE(after_qty, 0) - COALESCE(before_qty, 0)
+                     WHEN type = '선결예약' THEN 0
+                     WHEN type IN ('판매출고', '반품', '폐기', '이동출고', '조정', '입고취소', '선결출고') THEN -quantity
+                     ELSE quantity
+                   END) AS future_delta
         FROM stock_transactions
-        WHERE store_id = ANY(%s) AND product_id = ANY(%s) AND date_time <= %s
-        ORDER BY store_id, product_id, date_time DESC, id DESC
+        WHERE store_id = ANY(%s) AND product_id = ANY(%s) AND date_time > %s
+        GROUP BY store_id, product_id
     """, (store_ids, product_ids, target_dt))
-    snapshot_rows = cur.fetchall()
-    snapshot_map = {(r["store_id"], r["product_id"]): (r["after_qty"] or 0) for r in snapshot_rows}
+    future_delta_map = {(r["store_id"], r["product_id"]): (r["future_delta"] or 0) for r in cur.fetchall()}
 
-    # 현재 재고 (비교용)
+    # 현재 재고 (스냅샷 역산의 기준점이자 비교용)
     cur.execute("""
         SELECT store_id, product_id, qty FROM store_stock
         WHERE store_id = ANY(%s) AND product_id = ANY(%s)
@@ -4397,8 +4435,10 @@ def api_inventory_snapshot():
         snap_total = 0
         cur_total = 0
         for sid in store_ids:
-            snap_total += snapshot_map.get((sid, p["id"]), 0)
-            cur_total += current_map.get((sid, p["id"]), 0)
+            cur_qty = current_map.get((sid, p["id"]), 0)
+            future_delta = future_delta_map.get((sid, p["id"]), 0)
+            snap_total += cur_qty - future_delta
+            cur_total += cur_qty
         items.append({
             "product_id": p["id"],
             "product_name": p["name"],
@@ -5400,9 +5440,23 @@ def api_pre_order_confirm(order_id):
         if err:
             return jsonify({"error": f"재고 부족: {err}"}), 400
 
+        # ⚠️ 버그 수정: 여기서 실제로 store_stock을 차감하면서도 stock_transactions에는
+        # 아무 기록도 남기지 않고 있었다. 이 주문의 매출/수량은 이미 예약 시점에 생성된
+        # '선결예약' 거래로 리포트에 반영되고 있으므로(같은 항목을 또 매출로 잡으면
+        # 이중 집계가 된다), 매출 집계용 유형('판매출고'/'판매취소'/'선결예약')과는
+        # 다른 '선결출고' 유형으로 "실제로 언제 재고가 빠져나갔는지"만 감사 기록을
+        # 남긴다. 거래 목록/타임머신에서 이 시점의 재고 변화를 확인할 수 있게 된다.
+        cur.execute(
+            """INSERT INTO stock_transactions
+            (product_id, store_id, type, quantity, memo)
+            VALUES (%s, %s, '선결출고', %s, %s)""",
+            (product_id, store_id, quantity, f"선결제 확정 출고 (주문 #{order_id})")
+        )
+
     cur.execute("UPDATE pre_orders SET status = '출고완료', updated_at = CURRENT_TIMESTAMP WHERE id = %s", (order_id,))
     conn.commit()
     return jsonify({"ok": True, "order_id": order_id})
+
 
 @app.route("/api/pre_orders/<int:order_id>", methods=["DELETE"])
 def api_pre_order_delete(order_id):
