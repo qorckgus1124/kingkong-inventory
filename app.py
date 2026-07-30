@@ -110,6 +110,11 @@ app.json = _ISODateJSONProvider(app)
 
 _DB_POOL = None
 
+# 연결별 마지막 헬스체크 시각 (backend_pid -> monotonic 시간).
+# 이 시간이 지난 연결만 SELECT 1로 살아있는지 확인한다.
+_CONN_LAST_CHECKED = {}
+CONN_HEALTHCHECK_IDLE_SEC = float(os.environ.get("DB_HEALTHCHECK_IDLE_SEC", "45"))
+
 
 def _get_database_url():
     database_url = os.environ.get("DATABASE_URL")
