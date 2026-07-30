@@ -841,80 +841,109 @@ def auto_assign_brand_and_category(product_name, user_brand_id=None, user_catego
             category_id = auto_cat_id
     return brand_id, category_id
 
-def product_row_to_dict(db, row, store_id=None):
-    if row is None:
-        return None
-    d = dict(row)
+# ---------------------------------------------------------------------------
+# 제품 행 가공 (재고/브랜드/카테고리/옵션 정보 붙이기)
+# ---------------------------------------------------------------------------
+# ⚡ 성능: 예전에는 제품 1건마다 재고·브랜드·카테고리·옵션수·상위제품명을 각각
+# 따로 조회해서, 제품이 500개면 2,500번 넘게 DB를 왕복했다(N+1 문제). 원격 DB는
+# 한 번 왕복에 수십 ms가 걸리므로 목록 한 번 여는 데 수십 초가 걸렸다.
+# 이제 몇 건이든 "묶어서 5번"만 조회한다. 반환하는 항목(키)은 예전과 완전히 동일하다.
+
+def enrich_product_rows(rows, store_id=None):
+    """제품 행 목록에 부가 정보를 한꺼번에 붙여서 dict 리스트로 돌려준다."""
+    if not rows:
+        return []
+
     cur = g.cursor
+    items = [dict(r) for r in rows]
+    product_ids = [it["id"] for it in items]
+
+    # ---------- 1) 재고 (매장 지정 시 그 매장만, 없으면 전체 매장 합계) ----------
+    stock_map = {}
     try:
         if store_id:
-            cur.execute("SELECT qty, min_qty FROM store_stock WHERE store_id=%s AND product_id=%s", (store_id, row["id"]))
-            stock = cur.fetchone()
-            d["qty"] = stock["qty"] if stock else 0
-            d["min_qty"] = stock["min_qty"] if stock else 0
+            cur.execute(
+                """SELECT product_id, SUM(qty) AS qty, SUM(min_qty) AS min_qty
+                   FROM store_stock WHERE product_id = ANY(%s) AND store_id = %s
+                   GROUP BY product_id""",
+                (product_ids, store_id),
+            )
         else:
-            cur.execute("SELECT COALESCE(SUM(qty),0) as total FROM store_stock WHERE product_id=%s", (row["id"],))
-            total = cur.fetchone()
-            d["qty"] = total["total"] if total else 0
-            cur.execute("SELECT COALESCE(SUM(min_qty),0) as total_min FROM store_stock WHERE product_id=%s", (row["id"],))
-            min_sum = cur.fetchone()
-            d["min_qty"] = min_sum["total_min"] if min_sum else 0
+            cur.execute(
+                """SELECT product_id, SUM(qty) AS qty, SUM(min_qty) AS min_qty
+                   FROM store_stock WHERE product_id = ANY(%s)
+                   GROUP BY product_id""",
+                (product_ids,),
+            )
+        for r in cur.fetchall():
+            stock_map[r["product_id"]] = (r["qty"] or 0, r["min_qty"] or 0)
     except Exception as e:
-        print(f"⚠️ 재고 조회 오류 (product_id={row['id']}): {e}")
-        d["qty"] = 0
-        d["min_qty"] = 0
+        print(f"⚠️ 재고 일괄 조회 오류: {e}")
 
-    sale = row["sale_price"] or 0
-    cost = row["cost_price"] or 0
-    d["margin_rate"] = round((sale - cost) / sale * 100, 1) if sale > 0 else None
+    # ---------- 2) 브랜드 / 3) 카테고리 ----------
+    brand_ids = [it["brand_id"] for it in items if it.get("brand_id")]
+    category_ids = [it["category_id"] for it in items if it.get("category_id")]
+    brand_map = {}
+    category_map = {}
+    try:
+        if brand_ids:
+            cur.execute("SELECT id, name, color FROM brands WHERE id = ANY(%s)", (list(set(brand_ids)),))
+            brand_map = {r["id"]: (r["name"], r["color"]) for r in cur.fetchall()}
+        if category_ids:
+            cur.execute("SELECT id, name, color FROM categories WHERE id = ANY(%s)", (list(set(category_ids)),))
+            category_map = {r["id"]: (r["name"], r.get("color")) for r in cur.fetchall()}
+    except Exception as e:
+        print(f"⚠️ 브랜드/카테고리 일괄 조회 오류: {e}")
 
-    if d.get("brand_id"):
-        cur.execute("SELECT name, color FROM brands WHERE id = %s", (d["brand_id"],))
-        brand = cur.fetchone()
-        if brand:
-            d["brand_name"] = brand["name"]
-            d["brand_color"] = brand["color"]
-        else:
-            d["brand_name"] = None
-            d["brand_color"] = None
-    else:
-        d["brand_name"] = None
-        d["brand_color"] = None
-
-    if d.get("category_id"):
-        cur.execute("SELECT name, color FROM categories WHERE id = %s", (d["category_id"],))
-        category = cur.fetchone()
-        if category:
-            d["category_name"] = category["name"]
-            d["category_color"] = category["color"] if "color" in category.keys() else None
-        else:
-            d["category_name"] = None
-            d["category_color"] = None
-    else:
-        d["category_name"] = None
-        d["category_color"] = None
-
-    # 🔥 옵션별 재고 관리 ("묶어보기"): 이 제품이 옵션(변형)을 몇 개 갖고 있는지 / 자신이 옵션인지
+    # ---------- 4) 옵션(변형) 개수 / 5) 상위 제품명 ----------
+    variant_map = {}
+    parent_name_map = {}
+    parent_ids = [it["parent_product_id"] for it in items if it.get("parent_product_id")]
     try:
         cur.execute(
-            "SELECT COUNT(*) as cnt FROM products WHERE parent_product_id=%s AND is_active=1",
-            (row["id"],)
+            """SELECT parent_product_id, COUNT(*) AS cnt FROM products
+               WHERE parent_product_id = ANY(%s) AND is_active = 1
+               GROUP BY parent_product_id""",
+            (product_ids,),
         )
-        d["variant_count"] = cur.fetchone()["cnt"] or 0
-    except Exception:
-        d["variant_count"] = 0
-    d["is_variant"] = bool(d.get("parent_product_id"))
-    if d["is_variant"]:
-        try:
-            cur.execute("SELECT name FROM products WHERE id=%s", (d["parent_product_id"],))
-            parent = cur.fetchone()
-            d["parent_name"] = parent["name"] if parent else None
-        except Exception:
-            d["parent_name"] = None
-    else:
-        d["parent_name"] = None
+        variant_map = {r["parent_product_id"]: (r["cnt"] or 0) for r in cur.fetchall()}
+        if parent_ids:
+            cur.execute("SELECT id, name FROM products WHERE id = ANY(%s)", (list(set(parent_ids)),))
+            parent_name_map = {r["id"]: r["name"] for r in cur.fetchall()}
+    except Exception as e:
+        print(f"⚠️ 옵션 정보 일괄 조회 오류: {e}")
 
-    return d
+    # ---------- 조합 ----------
+    for d in items:
+        qty, min_qty = stock_map.get(d["id"], (0, 0))
+        d["qty"] = qty
+        d["min_qty"] = min_qty
+
+        sale = d.get("sale_price") or 0
+        cost = d.get("cost_price") or 0
+        d["margin_rate"] = round((sale - cost) / sale * 100, 1) if sale > 0 else None
+
+        brand = brand_map.get(d.get("brand_id"))
+        d["brand_name"] = brand[0] if brand else None
+        d["brand_color"] = brand[1] if brand else None
+
+        category = category_map.get(d.get("category_id"))
+        d["category_name"] = category[0] if category else None
+        d["category_color"] = category[1] if category else None
+
+        # 🔥 옵션별 재고 관리 ("묶어보기"): 옵션을 몇 개 갖고 있는지 / 자신이 옵션인지
+        d["variant_count"] = variant_map.get(d["id"], 0)
+        d["is_variant"] = bool(d.get("parent_product_id"))
+        d["parent_name"] = parent_name_map.get(d.get("parent_product_id")) if d["is_variant"] else None
+
+    return items
+
+
+def product_row_to_dict(db, row, store_id=None):
+    """단일 제품 행용 (내부적으로 enrich_product_rows를 사용하므로 결과 형식이 동일하다)."""
+    if row is None:
+        return None
+    return enrich_product_rows([row], store_id)[0]
 
 def _apply_stock_delta(db, store_id, product_id, ttype, quantity):
     # 선결예약(예약주문)은 실제 재고 이동이 아니라 "나중에 출고하기로 한 매출 기록"일
