@@ -549,13 +549,13 @@ function loadAll() {
 }
 
 function categoryChip(id) {
-  const c = categories.find(c => c.id === id);
+  const c = categoryMap.get(id);
   if (!c) return '<span style="color:var(--text-light)">미분류</span>';
   return `<span class="chip" style="background:${c.color}">${escapeHtml(c.name)}</span>`;
 }
 
 function brandTag(id) {
-  const b = brands.find(b => b.id === id);
+  const b = brandMap.get(id);
   if (!b) return '<span style="color:var(--text-light)">-</span>';
   return `<span class="brand-tag" style="background:${b.color || '#8a8f98'};">${escapeHtml(b.name)}</span>`;
 }
