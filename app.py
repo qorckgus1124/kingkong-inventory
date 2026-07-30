@@ -204,19 +204,9 @@ def get_db():
             for k, t in list(_CONN_LAST_CHECKED.items()):
                 if now - t > 600:
                     _CONN_LAST_CHECKED.pop(k, None)
-        # 참고: 새로 만들어진 연결은 원래 autocommit이 기본값 False라서
-        # 여기서 다시 설정할 필요가 없다. 오히려 방금 위 헬스체크(SELECT 1)로
-        # 트랜잭션이 열린 상태에서 이 값을 다시 대입하면
-        # "set_session cannot be used inside a transaction" 에러가 난다.
-        # (예전에는 Aiven 연결이 자주 끊겨서 매번 새 연결을 받아왔고,
-        #  그 새 연결엔 헬스체크를 안 태워서 우연히 안 터졌을 뿐이다.)
-        # 커넥션 풀에서 재사용되는 연결이라도 세션 타임존을 한국시간(KST)으로 맞춰준다.
-        # (psycopg2 connection 객체는 임의 속성을 못 붙이는 타입이라 "한 번만 설정" 캐싱은
-        #  AttributeError를 일으킨다. SET TIME ZONE 자체는 매우 가벼운 명령이라 매 요청마다
-        #  실행해도 성능에 문제가 없다.)
-        with conn.cursor() as tz_cur:
-            tz_cur.execute("SET TIME ZONE 'Asia/Seoul'")
-        conn.commit()
+        # 참고: 연결의 세션 타임존(Asia/Seoul)은 _create_pool()의 options로 이미 지정되어
+        # 있으므로 매 요청마다 SET TIME ZONE을 보낼 필요가 없다. autocommit도 기본값
+        # (False)이라 따로 만질 필요가 없다.
         g.db = conn
         g.cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         g._db_pool_ref = pool
