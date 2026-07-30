@@ -130,10 +130,14 @@
   </div>
 </div>
 
-<!-- 인수인계 메모 (읽기 전용, 플로팅 위젯의 내용과 동일) -->
+<!-- 인수인계 메모 (대시보드에서만 수정 가능) -->
 <div class="card">
   <h3>📝 인수인계 메모</h3>
-  <div id="dashboardMemoContent" style="white-space:pre-wrap; font-size:13px; color:var(--text); line-height:1.6; min-height:24px;">불러오는 중...</div>
+  <textarea id="dashboardMemoContent" placeholder="인수인계 내용을 입력하세요..." style="width:100%; min-height:120px; font-size:13px; color:var(--text); line-height:1.6; background:var(--textarea-bg); border:1px solid var(--border); border-radius:6px; padding:10px; resize:vertical; font-family:'Pretendard', monospace;"></textarea>
+  <div style="display:flex; gap:6px; justify-content:flex-end; margin-top:6px;">
+    <button onclick="saveHandoverMemo()" style="padding:4px 12px; font-size:12px;">💾 저장</button>
+    <span id="handoverSaveStatus" style="font-size:11px; color:var(--text-light); align-self:center;"></span>
+  </div>
 </div>
 
 <!-- Chart.js CDN -->

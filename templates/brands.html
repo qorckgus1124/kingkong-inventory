@@ -311,9 +311,13 @@ async function saveBrandEdit() {
   };
   
   try {
-    await api(`/api/brands/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    const result = await api(`/api/brands/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
     closeEditBrandModal();
-    toast('브랜드가 수정되었습니다.', false, '✅');
+    if (result && result.merged) {
+      toast(`'${result.merged_into_name}' 브랜드로 편입되어 제품 ${result.merged_product_count}개가 일괄 이동되었습니다.`, false, '🔀');
+    } else {
+      toast('브랜드가 수정되었습니다.', false, '✅');
+    }
     loadBrands();
   } catch (e) {
     console.error('수정 오류:', e);

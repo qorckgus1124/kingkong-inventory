@@ -422,6 +422,7 @@ function renderAc(row) {
   listEl.innerHTML = items.map((p, i) => `
     <div class="autocomplete-item" onclick="pickProduct(this, ${i})">
       ${escapeHtml(p.name)}
+      ${p.category_name ? `<span class="brand-tag" style="background:${p.category_color || '#8a8f98'}; margin-left:6px;">${escapeHtml(p.category_name)}</span>` : ''}
       ${p.brand_name ? `<span class="brand-tag" style="background:${p.brand_color || '#8a8f98'}; margin-left:6px;">${escapeHtml(p.brand_name)}</span>` : ''}
       <div class="meta">원가 ${fmt(p.cost_price)} · 판매가 ${fmt(p.sale_price)} · 전체재고 ${fmt(p.qty)}</div>
     </div>

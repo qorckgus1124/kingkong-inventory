@@ -18,6 +18,7 @@
       <option value="">매장 선택</option>
     </select>
     <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="onSearchInput()" style="width:220px;">
+    <input type="text" id="brandSearchBox" placeholder="🏷️ 브랜드명 검색" autocomplete="off" oninput="onBrandSearchInput()" style="width:160px;">
     <button onclick="loadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
   </div>
 
@@ -67,6 +68,7 @@
       <option value="">매장 선택</option>
     </select>
     <input type="text" id="pre_searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="onPreSearchInput()" style="width:220px;">
+    <input type="text" id="pre_brandSearchBox" placeholder="🏷️ 브랜드명 검색" autocomplete="off" oninput="onPreBrandSearchInput()" style="width:160px;">
     <button onclick="loadAllPreProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
   </div>
 
@@ -394,6 +396,9 @@ let cart = loadCartFromStorage(CART_STORAGE_KEY);
 let normalSearchQuery = '';
 const CART_DISCOUNT_KEY = 'normal_cart_discount';
 let cartDiscount = parseInt(localStorage.getItem(CART_DISCOUNT_KEY)) || 0;
+// 🔥 장바구니가 어느 매장 기준으로 담겼는지 기억해서, 실제로 매장을 바꿨을 때만 비운다.
+// (전역 매장 동기화가 change 이벤트를 재발생시키는 것만으로는 장바구니를 비우지 않기 위함)
+const CART_STORE_KEY = 'normal_cart_store_id';
 
 // 🔥 퀵 버튼 (재고와 무관하게 담는 상품: 퀵비/공팟 등)
 let quickItems = [];
@@ -406,6 +411,7 @@ let preSearchQuery = '';
 let preProducts = [];
 const PRE_CART_DISCOUNT_KEY = 'pre_cart_discount';
 let preCartDiscount = parseInt(localStorage.getItem(PRE_CART_DISCOUNT_KEY)) || 0;
+const PRE_CART_STORE_KEY = 'pre_cart_store_id';
 
 // ---------- 매장/카테고리/제품 로드 ----------
 async function loadStores() {
@@ -532,14 +538,16 @@ async function loadProducts(forceLoad = false) {
   }
 
   const q = document.getElementById('searchBox').value.trim();
-  
-  if (!q && !forceLoad) {
+  const brandQ = document.getElementById('brandSearchBox').value.trim();
+
+  if (!q && !brandQ && !forceLoad) {
     document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
     return;
   }
 
   const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc' });
   if (q) params.append('q', q);
+  if (brandQ) params.append('brand_q', brandQ);
 
   const myToken = normalSearchGuard.next();
   try {
@@ -561,7 +569,20 @@ async function loadProducts(forceLoad = false) {
 
 function onSearchInput() {
   const q = document.getElementById('searchBox').value.trim();
-  if (q) {
+  const brandQ = document.getElementById('brandSearchBox').value.trim();
+  if (q || brandQ) {
+    loadProducts(false);
+  } else {
+    document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+    products = [];
+  }
+}
+
+// 🔥 브랜드명 전용 검색: 이 칸에 입력하면 브랜드명으로만 검색된다 (제품명 검색과 별개)
+function onBrandSearchInput() {
+  const q = document.getElementById('searchBox').value.trim();
+  const brandQ = document.getElementById('brandSearchBox').value.trim();
+  if (q || brandQ) {
     loadProducts(false);
   } else {
     document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
@@ -571,6 +592,7 @@ function onSearchInput() {
 
 function loadAllProducts() {
   document.getElementById('searchBox').value = '';
+  document.getElementById('brandSearchBox').value = '';
   loadProducts(true);
 }
 
@@ -578,9 +600,14 @@ function onStoreChange() {
   console.log('🔄 일반 판매 매장 변경됨:', document.getElementById('f_store').value);
   const val = document.getElementById('f_store').value;
   localStorage.setItem('global_store_id', val);
-  cart = {};
-  saveCartToStorage(CART_STORAGE_KEY, cart);
-  renderCart();
+  const cartStoreId = localStorage.getItem(CART_STORE_KEY);
+  if (cartStoreId && cartStoreId !== val) {
+    // 실제로 다른 매장으로 바뀐 경우에만 장바구니를 비운다 (매장마다 제품/재고가 다르기 때문)
+    cart = {};
+    saveCartToStorage(CART_STORAGE_KEY, cart);
+    renderCart();
+  }
+  localStorage.setItem(CART_STORE_KEY, val);
   document.getElementById('searchBox').value = '';
   loadProducts();
 }
@@ -589,9 +616,13 @@ function onPreStoreChange() {
   console.log('🔄 선결제 매장 변경됨:', document.getElementById('pre_store').value);
   const val = document.getElementById('pre_store').value;
   localStorage.setItem('global_store_id', val);
-  preCart = {};
-  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
-  renderPreCart();
+  const preCartStoreId = localStorage.getItem(PRE_CART_STORE_KEY);
+  if (preCartStoreId && preCartStoreId !== val) {
+    preCart = {};
+    saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+    renderPreCart();
+  }
+  localStorage.setItem(PRE_CART_STORE_KEY, val);
   document.getElementById('pre_searchBox').value = '';
   loadPreProducts();
 }
@@ -650,14 +681,16 @@ async function loadPreProducts(forceLoad = false) {
   }
 
   const q = document.getElementById('pre_searchBox').value.trim();
-  
-  if (!q && !forceLoad) {
+  const brandQ = document.getElementById('pre_brandSearchBox').value.trim();
+
+  if (!q && !brandQ && !forceLoad) {
     document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
     return;
   }
 
   const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc' });
   if (q) params.append('q', q);
+  if (brandQ) params.append('brand_q', brandQ);
 
   const myToken = preSearchGuard.next();
   try {
@@ -678,7 +711,20 @@ async function loadPreProducts(forceLoad = false) {
 
 function onPreSearchInput() {
   const q = document.getElementById('pre_searchBox').value.trim();
-  if (q) {
+  const brandQ = document.getElementById('pre_brandSearchBox').value.trim();
+  if (q || brandQ) {
+    loadPreProducts(false);
+  } else {
+    document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+    products = [];
+  }
+}
+
+// 🔥 브랜드명 전용 검색 (선결제 탭)
+function onPreBrandSearchInput() {
+  const q = document.getElementById('pre_searchBox').value.trim();
+  const brandQ = document.getElementById('pre_brandSearchBox').value.trim();
+  if (q || brandQ) {
     loadPreProducts(false);
   } else {
     document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
@@ -688,6 +734,7 @@ function onPreSearchInput() {
 
 function loadAllPreProducts() {
   document.getElementById('pre_searchBox').value = '';
+  document.getElementById('pre_brandSearchBox').value = '';
   loadPreProducts(true);
 }
 
@@ -1016,10 +1063,12 @@ async function checkout() {
     payment_method: payment,
     staff: document.getElementById('f_staff').value || null,
     items: items,
+    client_uuid: genClientUuid(),
   };
   try {
-    await api('/api/sales', { method: 'POST', body: JSON.stringify(payload) });
-    toast('판매가 등록되었습니다.', false, '✅');
+    const result = await apiOrQueue('/api/sales', 'POST', payload, '판매 등록');
+    if (result && result.error) return; // apiOrQueue가 이미 오류 토스트를 띄웠다
+    toast(result && result.queued ? '오프라인 상태입니다. 온라인이 되면 자동으로 등록됩니다.' : '판매가 등록되었습니다.', false, result && result.queued ? '📴' : '✅');
     cart = {};
     saveCartToStorage(CART_STORAGE_KEY, cart);
     cartDiscount = 0;

@@ -157,6 +157,18 @@
 </div>
 
 <!-- ============================================================ -->
+<!-- ============================================================ -->
+<!-- 🛠️ 유지보수 -->
+<!-- ============================================================ -->
+<div class="card">
+  <h3 style="color:var(--text);">🛠️ 유지보수</h3>
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+    <a href="/maintenance/orphaned-cancellations" style="display:inline-block; padding:8px 14px; border:1px solid var(--border); border-radius:6px; text-decoration:none; color:var(--text);">🧹 매출 오류 기록 정리</a>
+    <span style="font-size:12px; color:var(--text-light);">원본 판매 기록이 삭제되어 짝을 잃은 "판매취소" 기록을 정리합니다. (매출이 원인 모르게 마이너스로 나올 때 사용)</span>
+  </div>
+</div>
+
+<!-- ============================================================ -->
 <!-- 📦 데이터 백업 -->
 <!-- ============================================================ -->
 <div class="card">
@@ -172,6 +184,7 @@
     </table>
   </div>
 </div>
+
 
 <script>
 // ==============================================================
@@ -248,8 +261,8 @@ async function loadBackups() {
 }
 
 async function createBackup() {
-  await api('/api/backup', { method: 'POST' });
-  toast('백업이 생성되었습니다.', false, '✅');
+  const result = await api('/api/backup', { method: 'POST' });
+  toast(result.message || '백업이 생성되었습니다.', false, result.created === false ? 'ℹ️' : '✅');
   loadBackups();
 }
 

@@ -157,24 +157,6 @@ function filterNavItems(query) {
   </div>
 </div>
 
-<!-- 인수인계 메모장: 별도 플로팅 위젯 (크기 조절 가능) -->
-<div class="memo-widget" id="memoWidget">
-  <div class="memo-widget-header" onclick="toggleMemoWidget()">
-    <span class="fp-title">📝 인수인계 메모장</span>
-    <span style="display:flex; align-items:center; gap:8px;">
-      <span class="memo-size-toggle" id="memoSizeToggle" onclick="event.stopPropagation(); toggleMemoSize();" title="크게/작게">⤢</span>
-      <span class="handover-toggle" id="memoWidgetToggle">▼</span>
-    </span>
-  </div>
-  <div class="memo-widget-body" id="memoWidgetBody" style="display:none;">
-    <textarea id="handoverMemo" placeholder="인수인계 내용을 입력하세요..."></textarea>
-    <div style="display:flex; gap:6px; justify-content:flex-end; margin-top:6px;">
-      <button onclick="saveHandoverMemo()" style="padding:4px 12px; font-size:12px;">💾 저장</button>
-      <span id="handoverSaveStatus" style="font-size:11px; color:var(--text-light); align-self:center;"></span>
-    </div>
-  </div>
-</div>
-
 <div id="toast"></div>
 
 <div id="pwaInstallBanner" class="pwa-install-banner" style="display:none;">
@@ -277,6 +259,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (typeof loadForecast === 'function') loadForecast();
       if (typeof loadBestsellers === 'function' && typeof _bestsellerPeriod !== 'undefined') loadBestsellers(_bestsellerPeriod);
       if (typeof loadDailySalesSummary === 'function') loadDailySalesSummary();
+      if (typeof loadAllReports === 'function') loadAllReports();
     });
   }
 
@@ -285,11 +268,6 @@ document.addEventListener('DOMContentLoaded', function() {
   loadFloatingRevenue();
   restoreFloatingPanelState();
   loadHandoverMemo();
-  if (localStorage.getItem('memoWidgetLarge') === 'true') {
-    document.getElementById('memoWidget').classList.add('memo-widget-large');
-  }
-  restoreMemoWidgetState();
-  initMemoResizeObserver();
   loadGlobalStoreSelect();
 });
 
@@ -319,115 +297,41 @@ function syncAllStoreDropdowns(storeId) {
 }
 
 // ==============================================================
-// 인수인계 메모장 (별도 플로팅 위젯)
+// 인수인계 메모장 (대시보드 카드에서만 조회/수정 가능)
 // ==============================================================
-function toggleMemoWidget() {
-  const body = document.getElementById('memoWidgetBody');
-  const toggle = document.getElementById('memoWidgetToggle');
-  const widget = document.getElementById('memoWidget');
-  if (body.style.display === 'none') {
-    body.style.display = 'block';
-    toggle.textContent = '▲';
-    widget.classList.add('memo-widget-open');
-    localStorage.setItem('memoWidgetOpen', 'true');
-    restoreMemoWidgetSize();
-  } else {
-    body.style.display = 'none';
-    toggle.textContent = '▼';
-    widget.classList.remove('memo-widget-open');
-    // 접힌 상태에서는 이전에 드래그/토글로 고정된 인라인 높이를 지워서
-    // 헤더만 남기고 완전히 접히도록 한다 (memo-widget-large가 켜져 있어도 함께 접힘).
-    widget.style.height = '';
-    localStorage.setItem('memoWidgetOpen', 'false');
-  }
-}
-
-function restoreMemoWidgetState() {
-  const isOpen = localStorage.getItem('memoWidgetOpen') === 'true';
-  const body = document.getElementById('memoWidgetBody');
-  const toggle = document.getElementById('memoWidgetToggle');
-  const widget = document.getElementById('memoWidget');
-  if (isOpen) {
-    body.style.display = 'block';
-    toggle.textContent = '▲';
-    widget.classList.add('memo-widget-open');
-    restoreMemoWidgetSize();
-  } else {
-    body.style.display = 'none';
-    toggle.textContent = '▼';
-  }
-}
-
-// 데스크톱: 저장된 가로/세로 크기를 복원한다 (마우스로 드래그해서 조절한 크기)
-function restoreMemoWidgetSize() {
-  const widget = document.getElementById('memoWidget');
-  const saved = localStorage.getItem('memoWidgetSize');
-  if (saved) {
-    try {
-      const { w, h } = JSON.parse(saved);
-      if (w) widget.style.width = w + 'px';
-      if (h) widget.style.height = h + 'px';
-    } catch (e) { /* ignore */ }
-  }
-}
-
-// 모바일 등 드래그 리사이즈가 어려운 환경을 위한 크게/작게 토글 버튼
-function toggleMemoSize() {
-  const widget = document.getElementById('memoWidget');
-  const isBig = widget.classList.toggle('memo-widget-large');
-  localStorage.setItem('memoWidgetLarge', isBig ? 'true' : 'false');
-  // 이전에 드래그로 고정된 인라인 height가 남아있으면 large/normal 전환이
-  // 반영되지 않으므로, 여기서 지워서 CSS 클래스 높이가 즉시 적용되게 한다.
-  widget.style.height = '';
-}
-
-let _memoResizeObserver = null;
-function initMemoResizeObserver() {
-  const widget = document.getElementById('memoWidget');
-  if (!widget || typeof ResizeObserver === 'undefined') return;
-  _memoResizeObserver = new ResizeObserver(entries => {
-    const body = document.getElementById('memoWidgetBody');
-    if (!body || body.style.display === 'none') return; // 접힌 상태의 크기는 저장하지 않음
-    for (const entry of entries) {
-      const { width, height } = entry.contentRect;
-      if (width > 0 && height > 0) {
-        localStorage.setItem('memoWidgetSize', JSON.stringify({ w: Math.round(width), h: Math.round(height) }));
-      }
-    }
-  });
-  _memoResizeObserver.observe(widget);
-}
-
 async function loadHandoverMemo() {
   try {
     const data = await api('/api/settings');
     const memo = data.handover_memo || '';
-    document.getElementById('handoverMemo').value = memo;
-    // 대시보드 하단 카드에도 동일한 내용을 표시한다.
+    // 대시보드 카드(텍스트에어리어)에 값을 채워넣는다. 다른 페이지에는 해당 요소가 없으므로 조용히 넘어간다.
     const dashCard = document.getElementById('dashboardMemoContent');
-    if (dashCard) dashCard.textContent = memo || '작성된 인수인계 메모가 없습니다.';
+    if (dashCard) dashCard.value = memo;
   } catch (e) {
     console.error('메모 로드 오류:', e);
   }
 }
 
 async function saveHandoverMemo() {
-  const memo = document.getElementById('handoverMemo').value;
+  const dashCard = document.getElementById('dashboardMemoContent');
+  if (!dashCard) return;
+  const memo = dashCard.value;
   const status = document.getElementById('handoverSaveStatus');
-  status.textContent = '저장 중...';
+  if (status) status.textContent = '저장 중...';
   try {
     await api('/api/settings', {
       method: 'POST',
       body: JSON.stringify({ handover_memo: memo })
     });
-    status.textContent = '✅ 저장 완료';
-    setTimeout(() => { status.textContent = ''; }, 2000);
-    const dashCard = document.getElementById('dashboardMemoContent');
-    if (dashCard) dashCard.textContent = memo || '작성된 인수인계 메모가 없습니다.';
+    if (status) {
+      status.textContent = '✅ 저장 완료';
+      setTimeout(() => { status.textContent = ''; }, 2000);
+    }
   } catch (e) {
     console.error('메모 저장 오류:', e);
-    status.textContent = '❌ 저장 실패';
-    setTimeout(() => { status.textContent = ''; }, 2000);
+    if (status) {
+      status.textContent = '❌ 저장 실패';
+      setTimeout(() => { status.textContent = ''; }, 2000);
+    }
   }
 }
 

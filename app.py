@@ -207,11 +207,20 @@ def close_db(exception=None):
         except Exception:
             pass
     if db is not None and pool is not None:
+        # 뷰 함수 안에서 예외를 자체적으로 잡아(try/except) 200이 아닌 응답(400/404/500 등)을
+        # 정상적으로 리턴하는 경우가 매우 많은데, 그런 경우 Flask 입장에서는 "예외가 없었던
+        # 요청"이라 이 함수의 exception 인자가 None으로 들어온다. 그런데 view 함수 안에서
+        # commit()/rollback() 없이 즉시 return 해버리면(과거 코드가 이런 패턴이 많았다),
+        # 이 커넥션은 실패한 트랜잭션이 열린 채(Postgres에서는 "current transaction is
+        # aborted" 상태) 그대로 풀에 반환되어 재사용되고, 완전히 무관한 다음 요청이 그
+        # 상태를 물려받아 알 수 없는 500 에러를 내는 원인이 된다. 그래서 exception 값과
+        # 무관하게 매 요청 끝에 항상 rollback을 시도한다 (이미 commit되어 트랜잭션이
+        # 끝난 상태라면 rollback은 그냥 아무 일도 하지 않는 안전한 호출이다).
         try:
-            if exception is not None:
-                db.rollback()
+            db.rollback()
         except Exception:
-            pass
+            # rollback 자체가 실패했다는 것은 연결이 이미 끊어졌다는 뜻이므로 버린다.
+            exception = exception or True
         # 커넥션을 닫지 않고 풀에 반환해 재사용한다.
         # 오류가 있었던 연결은 close=True로 버려서 다음 요청에 새 연결을 만들도록 한다.
         try:
@@ -581,6 +590,13 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # /api/sales처럼 한 번의 오프라인 요청이 여러 건의 거래(장바구니)를 만드는
+        # 엔드포인트의 중복방지용. synced_transaction_id(단일)와 별개로 콤마로 구분된
+        # id 목록을 저장한다.
+        cur.execute("""
+            ALTER TABLE offline_sync_log
+            ADD COLUMN IF NOT EXISTS synced_transaction_ids TEXT;
+        """)
 
         conn.commit()
         create_indexes()
@@ -766,6 +782,19 @@ def product_row_to_dict(db, row, store_id=None):
         d["brand_name"] = None
         d["brand_color"] = None
 
+    if d.get("category_id"):
+        cur.execute("SELECT name, color FROM categories WHERE id = %s", (d["category_id"],))
+        category = cur.fetchone()
+        if category:
+            d["category_name"] = category["name"]
+            d["category_color"] = category["color"] if "color" in category.keys() else None
+        else:
+            d["category_name"] = None
+            d["category_color"] = None
+    else:
+        d["category_name"] = None
+        d["category_color"] = None
+
     # 🔥 옵션별 재고 관리 ("묶어보기"): 이 제품이 옵션(변형)을 몇 개 갖고 있는지 / 자신이 옵션인지
     try:
         cur.execute(
@@ -789,6 +818,14 @@ def product_row_to_dict(db, row, store_id=None):
     return d
 
 def _apply_stock_delta(db, store_id, product_id, ttype, quantity):
+    # 선결예약(예약주문)은 실제 재고 이동이 아니라 "나중에 출고하기로 한 매출 기록"일
+    # 뿐이다. 예약 생성 시점(api_pre_orders)에는 재고를 전혀 건드리지 않고, 실제
+    # 출고는 나중에 확정(api_pre_order_confirm)될 때 '판매출고'로 별도 반영된다.
+    # 따라서 여기서도 재고에 아무 영향을 주지 않아야 한다 (그렇지 않으면 거래 수정/
+    # 일괄 상태변경으로 유형을 '선결예약'으로 바꾸는 순간 재고가 실제로 없는데도
+    # 늘어나 보이는 유령 재고가 생긴다).
+    if ttype == "선결예약":
+        return None
     cur = g.cursor
     cur.execute("SELECT qty FROM store_stock WHERE store_id=%s AND product_id=%s", (store_id, product_id))
     stock = cur.fetchone()
@@ -1059,6 +1096,45 @@ def api_brand_detail(bid):
 
     if name_provided and not name:
         return jsonify({"error": "브랜드명을 입력해주세요."}), 400
+
+    # 🔥 브랜드명을 이미 존재하는 다른 브랜드의 이름으로 변경하면,
+    # 해당 브랜드에 속한 모든 제품을 기존 브랜드로 일괄 편입(병합)시키고 지금 브랜드는 삭제한다.
+    if name_provided:
+        cur.execute("SELECT id, name FROM brands WHERE name = %s AND id != %s", (name, bid))
+        existing = cur.fetchone()
+        if existing:
+            target_id = existing["id"]
+            try:
+                cur.execute("UPDATE products SET brand_id = %s WHERE brand_id = %s", (target_id, bid))
+                merged_count = cur.rowcount
+                merge_updates = []
+                merge_params = []
+                if category_id is not None:
+                    merge_updates.append("category_id = %s")
+                    merge_params.append(category_id)
+                if color_provided:
+                    merge_updates.append("color = %s")
+                    merge_params.append(color)
+                if status is not None:
+                    merge_updates.append("status = %s")
+                    merge_params.append(status)
+                if merge_updates:
+                    merge_updates.append("updated_at = CURRENT_TIMESTAMP")
+                    merge_params.append(target_id)
+                    cur.execute(f"UPDATE brands SET {', '.join(merge_updates)} WHERE id = %s", merge_params)
+                cur.execute("DELETE FROM brands WHERE id = %s", (bid,))
+                conn.commit()
+                return jsonify({
+                    "ok": True,
+                    "merged": True,
+                    "merged_into_id": target_id,
+                    "merged_into_name": existing["name"],
+                    "merged_product_count": merged_count
+                })
+            except Exception as e:
+                conn.rollback()
+                print(f"❌ 브랜드 편입(병합) 오류: {e}")
+                return jsonify({"error": "브랜드 편입 중 오류가 발생했습니다."}), 500
 
     updates = []
     params = []
@@ -1341,6 +1417,7 @@ def api_products():
     if request.method == "GET":
         try:
             q = request.args.get("q", "").strip()
+            brand_q = request.args.get("brand_q", "").strip()
             category_id = request.args.get("category_id")
             brand_id = request.args.get("brand_id")
             store_id = request.args.get("store_id")
@@ -1370,6 +1447,10 @@ def api_products():
                 )"""
                 params.append(f"%{q_norm}%")
                 params.append(f"%{q_norm}%")
+            if brand_q:
+                brand_q_norm = normalize_search(brand_q)
+                sql += " AND REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s"
+                params.append(f"%{brand_q_norm}%")
             if category_id:
                 sql += " AND p.category_id = %s"
                 params.append(category_id)
@@ -1519,9 +1600,11 @@ def api_products_search():
     q_norm = normalize_search(q)
     try:
         cur.execute("""
-            SELECT p.*, b.name as brand_name, b.color as brand_color
+            SELECT p.*, b.name as brand_name, b.color as brand_color,
+                   c.name as category_name, c.color as category_color
             FROM products p
             LEFT JOIN brands b ON b.id = p.brand_id
+            LEFT JOIN categories c ON c.id = p.category_id
             WHERE p.is_active = 1 AND (
                 REPLACE(p.name, ' ', '') ILIKE %s
                 OR REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s
@@ -1870,6 +1953,10 @@ _DECREASE_TYPES = {"판매출고", "반품", "폐기", "이동출고", "조정",
 
 def _reverse_stock_raw(store_id, product_id, ttype, quantity):
     """주어진 거래가 재고에 준 영향을 그대로 되돌린다 (검증 없이 원상복구용)."""
+    # _apply_stock_delta와 마찬가지로 선결예약은 애초에 재고를 건드리지 않으므로
+    # 되돌릴 것도 없다 (건드리면 오히려 실제로 줄어든 적 없는 재고가 줄어드는 버그가 된다).
+    if ttype == "선결예약":
+        return
     cur = g.cursor
     sign = -1 if ttype in _DECREASE_TYPES else 1
     # 원래 거래가 재고를 sign*quantity 만큼 바꿨으므로, 되돌리려면 반대로 적용한다.
@@ -2086,6 +2173,68 @@ def api_transactions_cancel_batch():
         conn.rollback()
         print(f"❌ 일괄 삭제 오류: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/transactions/batch_status", methods=["POST"])
+def api_transactions_batch_status():
+    """선택한 여러 거래의 유형(입고/판매출고/반품 등)을 한 번에 변경한다.
+    화면(transactions.html)의 "일괄 작업 바"에는 이 기능이 이미 구현되어 있었지만,
+    대응하는 백엔드 라우트가 없어 항상 404로 실패하고 있었다."""
+    conn = get_db()
+    cur = g.cursor
+    data = request.get_json(force=True)
+    ids = data.get("ids", [])
+    new_type = data.get("new_type")
+
+    allowed_types = ["입고", "판매출고", "반품", "폐기", "조정", "실사조정", "이동출고", "이동입고", "선결예약"]
+    if new_type not in allowed_types:
+        return jsonify({"error": "이 유형으로는 변경할 수 없습니다."}), 400
+    try:
+        ids = [int(i) for i in (ids or [])]
+    except (TypeError, ValueError):
+        return jsonify({"error": "선택한 항목이 올바르지 않습니다."}), 400
+    if not ids:
+        return jsonify({"error": "변경할 항목을 선택해주세요."}), 400
+
+    updated = 0
+    errors = []
+    for tid in ids:
+        try:
+            cur.execute("SELECT * FROM stock_transactions WHERE id=%s", (tid,))
+            original = cur.fetchone()
+            if not original:
+                errors.append(f"#{tid}: 거래를 찾을 수 없습니다.")
+                continue
+            # 취소 기록 자체이거나, 이미 취소/되돌리기 된 원본 거래는 유형을 바꿀 수 없다
+            # (단일 수정 API인 api_transaction_update와 동일한 규칙).
+            if original["type"] in ("판매취소", "입고취소"):
+                errors.append(f"#{tid}: 취소 기록은 변경할 수 없습니다.")
+                continue
+            cur.execute(
+                "SELECT id FROM stock_transactions WHERE ref_transaction_id=%s AND type IN ('입고취소', '판매취소')",
+                (tid,)
+            )
+            if cur.fetchone():
+                errors.append(f"#{tid}: 이미 취소된 거래는 변경할 수 없습니다.")
+                continue
+
+            # 기존 유형이 재고에 준 영향을 되돌린 뒤, 새 유형의 영향을 다시 적용한다.
+            _reverse_stock_raw(original["store_id"], original["product_id"], original["type"], original["quantity"])
+            err = _apply_stock_delta(conn, original["store_id"], original["product_id"], new_type, original["quantity"])
+            if err:
+                conn.rollback()
+                errors.append(f"#{tid}: {err}")
+                continue
+
+            cur.execute("UPDATE stock_transactions SET type=%s WHERE id=%s", (new_type, tid))
+            conn.commit()
+            updated += 1
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ 거래 상태 일괄 변경 오류(#{tid}): {e}")
+            errors.append(f"#{tid}: 처리 중 오류가 발생했습니다.")
+
+    return jsonify({"updated": updated, "failed": len(ids) - updated, "errors": errors})
 
 
 # ---------------------------------------------------------------------------
@@ -2846,17 +2995,14 @@ def api_daily_report():
             else:
                 lines.append("(출고 내역 없음)")
 
-            lines.append("=" * 15)
-
-            lines.append("[입고]")
             in_blocks = build_section(['입고', '이동입고'])
             if in_blocks:
+                lines.append("=" * 15)
+                lines.append("[입고]")
                 for i, block in enumerate(in_blocks):
                     if i > 0:
                         lines.append("-" * 26)
                     lines.extend(block)
-            else:
-                lines.append("(입고 내역 없음)")
 
             return "\n".join(lines)
 
@@ -2890,6 +3036,7 @@ def api_recommend_order():
         target_days = int(request.args.get("target_days", 7))
         category_id = request.args.get("category_id")
         brand_id = request.args.get("brand_id")
+        brand_q = request.args.get("brand_q", "").strip()
         limit = int(request.args.get("limit", 20))
         offset = int(request.args.get("offset", 0))
         sort_by = request.args.get("sort_by", "recommend_qty")
@@ -2908,6 +3055,10 @@ def api_recommend_order():
         if brand_id and brand_id != '':
             filters.append("p.brand_id = %s")
             stock_params.append(int(brand_id))
+        if brand_q:
+            brand_q_norm = normalize_search(brand_q)
+            filters.append("p.brand_id IN (SELECT id FROM brands WHERE REPLACE(name, ' ', '') ILIKE %s)")
+            stock_params.append(f"%{brand_q_norm}%")
 
         filter_clause = " AND " + " AND ".join(filters) if filters else ""
 
@@ -3129,7 +3280,10 @@ def api_forecast():
             WHERE {" AND ".join(main_where)}
         """
 
-        params = main_params + stock_params + sale_params
+        # 🔥 SQL 파라미터는 실제 쿼리 문자열에 %s가 등장하는 순서(하위쿼리 stock_sql → sale_sql → main_where)와
+        # 일치해야 한다. 검색어(q)/카테고리/브랜드 필터를 쓰면 main_params가 채워지는데,
+        # 이전 코드는 main_params를 맨 앞에 둬서 자리표시자 순서와 어긋나 API 오류가 발생했다.
+        params = stock_params + sale_params + main_params
         cur.execute(main_sql, params)
         rows = cur.fetchall()
         all_items = []
@@ -3283,6 +3437,20 @@ def api_sales():
     staff = data.get("staff") or ""
     memo = data.get("memo") or None
     items = data.get("items") or []
+    client_uuid = data.get("client_uuid") or None
+
+    # 오프라인 큐(apiOrQueue)에서 재전송된 결제 건이 이미 처리된 적이 있으면, 재고를
+    # 다시 차감하고 매출을 중복으로 남기는 대신 앞서 생성된 결과를 그대로 돌려준다.
+    # (/api/transactions 의 client_uuid 중복방지와 동일한 원리)
+    if client_uuid:
+        cur.execute(
+            "SELECT synced_transaction_ids FROM offline_sync_log WHERE client_uuid = %s",
+            (client_uuid,)
+        )
+        existing = cur.fetchone()
+        if existing and existing["synced_transaction_ids"]:
+            ids = [int(x) for x in existing["synced_transaction_ids"].split(",") if x]
+            return jsonify({"ok": True, "transaction_ids": ids, "deduplicated": True})
 
     if not store_id or payment_method not in ["현금", "카드", "계좌이체"]:
         return jsonify({"error": "매장과 결제수단을 확인해주세요."}), 400
@@ -3334,6 +3502,13 @@ def api_sales():
         )
         new_id = cur.fetchone()["id"]
         created_ids.append(new_id)
+
+    if client_uuid:
+        cur.execute(
+            """INSERT INTO offline_sync_log (client_uuid, synced_transaction_ids, device_label)
+            VALUES (%s, %s, %s) ON CONFLICT (client_uuid) DO NOTHING""",
+            (client_uuid, ",".join(str(i) for i in created_ids), request.headers.get("User-Agent", "")[:200])
+        )
     conn.commit()
     return jsonify({"ok": True, "transaction_ids": created_ids})
 
@@ -4334,7 +4509,30 @@ def api_backup():
                     stat = os.stat(os.path.join(BACKUP_DIR, f))
                     backups.append({"name": f, "size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")})
         return jsonify(backups)
-    return jsonify({"ok": True, "message": "PostgreSQL은 Aiven이 자동 백업합니다."})
+    # PostgreSQL로 옮겨온 뒤로는 이 폴더에 새로 파일을 만들지 않는다(Aiven/Neon이 자체적으로
+    # 백업한다). 화면에는 실제로 벌어진 일(파일이 생성되지 않았다는 것)을 그대로 보여줘야
+    # "백업이 생성되었습니다" 같은 거짓 성공 메시지가 뜨지 않는다.
+    return jsonify({"ok": True, "created": False, "message": "PostgreSQL은 Aiven이 자동 백업합니다. 로컬 백업 파일은 생성되지 않았습니다."})
+
+
+@app.route("/api/backup/<path:name>", methods=["DELETE"])
+def api_backup_delete(name):
+    """목록에 남아있는 (SQLite 시절의) 로컬 백업 파일을 삭제한다.
+    이전에는 이 라우트 자체가 없어서 설정 화면의 '삭제' 버튼을 누르면 항상
+    404 오류가 발생했다."""
+    # 경로 조작(../ 등) 방지: 디렉터리 구분자가 없는 순수 파일명만 허용한다.
+    safe_name = os.path.basename(name)
+    if safe_name != name or not safe_name.endswith(".db"):
+        return jsonify({"error": "올바르지 않은 파일명입니다."}), 400
+    file_path = os.path.join(BACKUP_DIR, safe_name)
+    if not os.path.isfile(file_path):
+        return jsonify({"error": "백업 파일을 찾을 수 없습니다."}), 404
+    try:
+        os.remove(file_path)
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"❌ 백업 삭제 오류: {e}")
+        return jsonify({"error": "삭제 중 오류가 발생했습니다."}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -5291,6 +5489,8 @@ def api_bestsellers():
     try:
         period = request.args.get("period", "week")
         store_id = request.args.get("store_id")
+        category_id = request.args.get("category_id")
+        brand_q = request.args.get("brand_q", "").strip()
 
         today = now_kst().date()
         if period == "day":
@@ -5307,10 +5507,13 @@ def api_bestsellers():
                 p.name,
                 b.name as brand_name,
                 b.color as brand_color,
+                c.name as category_name,
+                c.color as category_color,
                 COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) as sold_qty,
                 COALESCE(SUM(CASE WHEN t.type='판매출고' THEN COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0) ELSE 0 END), 0) as revenue
             FROM products p
             LEFT JOIN brands b ON b.id = p.brand_id
+            LEFT JOIN categories c ON c.id = p.category_id
             INNER JOIN stock_transactions t ON t.product_id = p.id
                 AND t.type IN ('판매출고')
                 AND date(t.date_time) >= date(%s)
@@ -5324,9 +5527,16 @@ def api_bestsellers():
         if store_id:
             sql += " AND t.store_id = %s"
             params.append(store_id)
+        if category_id:
+            sql += " AND p.category_id = %s"
+            params.append(category_id)
+        if brand_q:
+            brand_q_norm = normalize_search(brand_q)
+            sql += " AND REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s"
+            params.append(f"%{brand_q_norm}%")
 
         sql += """
-            GROUP BY p.id, b.name, b.color
+            GROUP BY p.id, b.name, b.color, c.name, c.color
             HAVING COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) > 0
             ORDER BY sold_qty DESC
             LIMIT 10

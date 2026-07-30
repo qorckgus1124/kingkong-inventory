@@ -10,9 +10,10 @@
   <select id="categoryFilter" onchange="loadRecommend()">
     <option value="">전체 카테고리</option>
   </select>
-  <select id="brandFilter" onchange="loadRecommend()">
-    <option value="">전체 브랜드</option>
-  </select>
+  <div class="autocomplete-wrap" style="position:relative; display:inline-block; width:160px;">
+    <input type="text" id="brandFilter" placeholder="🏷️ 브랜드명 검색" autocomplete="off" oninput="onRecommendBrandInput()" style="width:100%;">
+    <div class="autocomplete-list" id="recommendBrandAcList"></div>
+  </div>
   <label style="font-size:12px; color:var(--text-light);">기간:
     <select id="daysSelect" onchange="loadRecommend()">
       <option value="7">7일</option>
@@ -99,16 +100,6 @@ async function loadFilters() {
     console.error('카테고리 로드 오류:', e);
   }
 
-  try {
-    // 브랜드
-    const brands = await api('/api/brands');
-    const brandSel = document.getElementById('brandFilter');
-    brandSel.innerHTML = '<option value="">전체 브랜드</option>' +
-      brands.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
-  } catch (e) {
-    console.error('브랜드 로드 오류:', e);
-  }
-
   // 매장
    try {
     const stores = await api('/api/stores');
@@ -125,6 +116,49 @@ async function loadFilters() {
     console.error('매장 로드 오류:', e);
   }
 }
+
+// ---------- 브랜드명 검색(자동완성) ----------
+let _recommendBrandAcTimer = null;
+async function onRecommendBrandInput() {
+  clearTimeout(_recommendBrandAcTimer);
+  const q = document.getElementById('brandFilter').value.trim();
+  const listEl = document.getElementById('recommendBrandAcList');
+  if (!q) {
+    listEl.classList.remove('show');
+    changePage(0);
+    return;
+  }
+  _recommendBrandAcTimer = setTimeout(async () => {
+    try {
+      const brands = await api('/api/brands?search=' + encodeURIComponent(q));
+      if (!brands || brands.length === 0) {
+        listEl.classList.remove('show');
+      } else {
+        listEl.innerHTML = brands.slice(0, 10).map(b => `
+          <div class="autocomplete-item" onclick="pickRecommendBrand('${escapeHtml(b.name).replace(/'/g, "\\'")}')">
+            ${escapeHtml(b.name)}
+          </div>
+        `).join('');
+        listEl.classList.add('show');
+      }
+    } catch (e) {
+      console.error('브랜드 자동완성 오류:', e);
+    }
+    changePage(0);
+  }, 200);
+}
+
+function pickRecommendBrand(name) {
+  document.getElementById('brandFilter').value = name;
+  document.getElementById('recommendBrandAcList').classList.remove('show');
+  changePage(0);
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#brandFilter') && !e.target.closest('#recommendBrandAcList')) {
+    document.getElementById('recommendBrandAcList')?.classList.remove('show');
+  }
+});
 
 // ---------- 페이지 변경 ----------
 function changePage(delta) {
@@ -152,7 +186,7 @@ async function loadRecommend() {
   const days = document.getElementById('daysSelect').value;
   const target_days = document.getElementById('targetDays').value || 7;
   const category_id = document.getElementById('categoryFilter').value;
-  const brand_id = document.getElementById('brandFilter').value;
+  const brand_q = document.getElementById('brandFilter').value.trim();
   const sort_by = document.getElementById('sortSelect').value;
   rowsPerPage = parseInt(document.getElementById('rowsPerPage').value) || 20;
   const offset = (currentPage - 1) * rowsPerPage;
@@ -166,7 +200,7 @@ async function loadRecommend() {
   });
   if (store_id) params.append('store_id', store_id);
   if (category_id) params.append('category_id', category_id);
-  if (brand_id) params.append('brand_id', brand_id);
+  if (brand_q) params.append('brand_q', brand_q);
 
   try {
     const data = await api('/api/recommend_order?' + params.toString());

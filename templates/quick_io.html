@@ -122,6 +122,7 @@ function qioRenderAc(items) {
   listEl.innerHTML = items.map((p, i) => `
     <div class="autocomplete-item" onclick="qioPickProduct(${i})">
       ${escapeHtml(p.name)}
+      ${p.category_name ? `<span class="brand-tag" style="background:${p.category_color || '#8a8f98'}; margin-left:6px;">${escapeHtml(p.category_name)}</span>` : ''}
       ${p.brand_name ? `<span class="brand-tag" style="background:${p.brand_color || '#8a8f98'}; margin-left:6px;">${escapeHtml(p.brand_name)}</span>` : ''}
       <div class="meta">현재고 ${fmt(p.qty)}개</div>
     </div>

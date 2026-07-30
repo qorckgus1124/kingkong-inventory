@@ -77,49 +77,43 @@ async function loadDailySalesSummary() {
 
 <script>
 async function loadAllReports() {
+  const container = document.getElementById('reportsContainer');
+  const storeId = localStorage.getItem('global_store_id') || document.getElementById('globalStoreSelect')?.value;
+  if (!storeId) {
+    container.innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">🏪</span>좌측 상단에서 매장을 선택해주세요.</div></div>';
+    return;
+  }
   try {
     const stores = await api('/api/stores');
-    const container = document.getElementById('reportsContainer');
-    if (!stores || stores.length === 0) {
-      container.innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">🏪</span>등록된 매장이 없습니다.</div></div>';
-      return;
-    }
+    const store = (stores || []).find(s => String(s.id) === String(storeId));
+    const storeName = store ? store.name : '';
 
-    let html = '';
-    for (const store of stores) {
-      try {
-        const data = await api(`/api/daily_report?store_id=${store.id}`);
-        console.log(`📋 ${store.name} (ID: ${store.id}) 응답:`, data);
+    const data = await api(`/api/daily_report?store_id=${storeId}`);
+    console.log(`📋 ${storeName} (ID: ${storeId}) 응답:`, data);
 
-        const morningText = data.morning || '내역 없음';
-        const afternoonText = data.afternoon || '내역 없음';
+    const morningText = data.morning || '내역 없음';
+    const afternoonText = data.afternoon || '내역 없음';
 
-        html += `
-          <div class="card" style="margin-bottom:16px;">
-            <h3 style="color:var(--text);">🏪 ${escapeHtml(store.name)} (${data.date})</h3>
-            <div style="display:flex; gap:20px; flex-wrap:wrap;">
-              <div style="flex:1; min-width:250px;">
-                <strong style="color:var(--text);">🕘 4시 입출고 내역</strong>
-                <textarea class="report-textarea" readonly>${escapeHtml(morningText)}</textarea>
-                <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
-              </div>
-              <div style="flex:1; min-width:250px;">
-                <strong style="color:var(--text);">🕓 마감 입출고 내역</strong>
-                <textarea class="report-textarea" readonly>${escapeHtml(afternoonText)}</textarea>
-                <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
-              </div>
-            </div>
+    container.innerHTML = `
+      <div class="card" style="margin-bottom:16px;">
+        <h3 style="color:var(--text);">🏪 ${escapeHtml(storeName)} (${data.date})</h3>
+        <div style="display:flex; gap:20px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:250px;">
+            <strong style="color:var(--text);">🕘 4시 입출고 내역</strong>
+            <textarea class="report-textarea" readonly>${escapeHtml(morningText)}</textarea>
+            <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
           </div>
-        `;
-      } catch (e) {
-        console.error(`❌ 매장 ${store.name} 로드 오류:`, e);
-        html += `<div class="card" style="margin-bottom:16px;"><h3 style="color:var(--text);">🏪 ${escapeHtml(store.name)}</h3><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></div>`;
-      }
-    }
-    container.innerHTML = html;
+          <div style="flex:1; min-width:250px;">
+            <strong style="color:var(--text);">🕓 마감 입출고 내역</strong>
+            <textarea class="report-textarea" readonly>${escapeHtml(afternoonText)}</textarea>
+            <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
+          </div>
+        </div>
+      </div>
+    `;
   } catch (e) {
-    console.error('❌ 전체 로드 오류:', e);
-    document.getElementById('reportsContainer').innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">⚠️</span>매장 목록을 불러오는 중 오류가 발생했습니다.</div></div>';
+    console.error('❌ 보고 목록 로드 오류:', e);
+    container.innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러오는 중 오류가 발생했습니다.</div></div>';
   }
 }
 

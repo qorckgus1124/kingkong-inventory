@@ -12,6 +12,15 @@
       <button data-period="month" onclick="loadBestsellers('month')" class="tab-btn">이번달</button>
     </div>
   </div>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+    <select id="bestsellerCategoryFilter" onchange="loadBestsellers(_bestsellerPeriod)" style="min-width:130px;">
+      <option value="">전체 카테고리</option>
+    </select>
+    <div class="autocomplete-wrap" style="position:relative; width:180px;">
+      <input type="text" id="bestsellerBrandFilter" placeholder="🏷️ 브랜드명 검색" autocomplete="off" oninput="onBestsellerBrandInput()" style="width:100%;">
+      <div class="autocomplete-list" id="bestsellerBrandAcList"></div>
+    </div>
+  </div>
   <div id="bestsellerList" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:10px; padding:10px 0;">
     <div style="color:var(--text-light); text-align:center; padding:20px;">⏳ 로딩 중...</div>
   </div>
@@ -58,6 +67,62 @@
 <script>
 // ---------- 베스트셀러 TOP 10 ----------
 let _bestsellerPeriod = 'day';
+let _bestsellerCategories = [];
+
+async function loadBestsellerCategories() {
+  try {
+    _bestsellerCategories = await api('/api/categories') || [];
+    const sel = document.getElementById('bestsellerCategoryFilter');
+    const opts = _bestsellerCategories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    sel.innerHTML = '<option value="">전체 카테고리</option>' + opts;
+  } catch (e) {
+    console.error('베스트셀러 카테고리 로드 오류:', e);
+  }
+}
+
+// 🔥 브랜드명 자동완성 (직접 검색시 일치하는 브랜드명을 목록으로 보여줌)
+let _bestsellerBrandAcTimer = null;
+async function onBestsellerBrandInput() {
+  clearTimeout(_bestsellerBrandAcTimer);
+  const q = document.getElementById('bestsellerBrandFilter').value.trim();
+  const listEl = document.getElementById('bestsellerBrandAcList');
+  if (!q) {
+    listEl.classList.remove('show');
+    loadBestsellers(_bestsellerPeriod);
+    return;
+  }
+  _bestsellerBrandAcTimer = setTimeout(async () => {
+    try {
+      const brands = await api('/api/brands?search=' + encodeURIComponent(q));
+      if (!brands || brands.length === 0) {
+        listEl.classList.remove('show');
+      } else {
+        listEl.innerHTML = brands.slice(0, 10).map(b => `
+          <div class="autocomplete-item" onclick="pickBestsellerBrand('${escapeHtml(b.name).replace(/'/g, "\\'")}')">
+            ${escapeHtml(b.name)}
+          </div>
+        `).join('');
+        listEl.classList.add('show');
+      }
+    } catch (e) {
+      console.error('브랜드 자동완성 오류:', e);
+    }
+    loadBestsellers(_bestsellerPeriod);
+  }, 200);
+}
+
+function pickBestsellerBrand(name) {
+  document.getElementById('bestsellerBrandFilter').value = name;
+  document.getElementById('bestsellerBrandAcList').classList.remove('show');
+  loadBestsellers(_bestsellerPeriod);
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#bestsellerBrandFilter') && !e.target.closest('#bestsellerBrandAcList')) {
+    document.getElementById('bestsellerBrandAcList')?.classList.remove('show');
+  }
+});
+
 async function loadBestsellers(period) {
   _bestsellerPeriod = period;
   document.querySelectorAll('#bestsellerTabs .tab-btn').forEach(b => b.classList.remove('active'));
@@ -69,8 +134,12 @@ async function loadBestsellers(period) {
 
   try {
     const storeId = localStorage.getItem('global_store_id') || '';
+    const categoryId = document.getElementById('bestsellerCategoryFilter')?.value || '';
+    const brandQ = document.getElementById('bestsellerBrandFilter')?.value.trim() || '';
     const params = new URLSearchParams({ period: period });
     if (storeId) params.append('store_id', storeId);
+    if (categoryId) params.append('category_id', categoryId);
+    if (brandQ) params.append('brand_q', brandQ);
     const rows = await api(`/api/bestsellers?${params.toString()}`);
     if (!rows || rows.length === 0) {
       container.innerHTML = '<div style="color:var(--text-light); text-align:center; padding:20px;">📭 해당 기간의 판매 데이터가 없습니다.</div>';
@@ -82,7 +151,10 @@ async function loadBestsellers(period) {
     <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center;">
       <div style="font-size:24px;">${medal}</div>
       <div style="font-weight:600; font-size:14px; margin:4px 0;">${escapeHtml(r.name)}</div>
-      ${r.brand_name ? `<div style="font-size:12px; color:var(--text-light);">🏷️ ${escapeHtml(r.brand_name)}</div>` : ''}
+      <div style="display:flex; gap:4px; justify-content:center; flex-wrap:wrap; margin-bottom:2px;">
+        ${r.category_name ? `<span class="chip" style="background:${r.category_color || '#8a8f98'}; font-size:10px; padding:2px 8px;">${escapeHtml(r.category_name)}</span>` : ''}
+        ${r.brand_name ? `<span class="chip" style="background:${r.brand_color || '#8a8f98'}; font-size:10px; padding:2px 8px; color:white;">${escapeHtml(r.brand_name)}</span>` : ''}
+      </div>
       <div style="font-size:12px; color:var(--text-light);">판매 ${fmt(r.sold_qty)}개</div>
       <div style="font-size:12px; color:var(--accent);">${fmt(r.revenue)}원</div>
     </div>
@@ -172,6 +244,7 @@ async function exportPerformance() {
 
 document.addEventListener('DOMContentLoaded', function() {
   pickRange('month');
+  loadBestsellerCategories();
   loadBestsellers('day');
 });
 </script>
