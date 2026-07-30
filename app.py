@@ -2392,8 +2392,17 @@ def api_transfer():
                 (movement_id, out_trans_id, in_trans_id)
             )
 
-            _apply_stock_delta(conn, from_store_id, product_id, "이동출고", quantity)
-            _apply_stock_delta(conn, to_store_id, product_id, "이동입고", quantity)
+            # ⚠️ 버그 수정: 위에서 재고를 미리 확인했더라도, 동시에 다른 이동/판매 건이
+            # 먼저 처리되어 그 사이 재고가 줄어들면 이 시점에는 실패할 수 있다.
+            # 반환값을 확인하지 않으면 거래/이동 기록은 이미 커밋 대기 중인데 실제
+            # 재고는 차감되지 않아 데이터가 어긋나므로, 실패 시 반드시 롤백한다.
+            err = _apply_stock_delta(conn, from_store_id, product_id, "이동출고", quantity)
+            if not err:
+                err = _apply_stock_delta(conn, to_store_id, product_id, "이동입고", quantity)
+            if err:
+                conn.rollback()
+                results["failed"].append({"product_id": product_id, "error": err})
+                continue
 
             conn.commit()
             results["success"].append({"product_id": product_id, "quantity": quantity, "movement_id": movement_id})
@@ -3457,12 +3466,18 @@ def api_sales():
     if not items:
         return jsonify({"error": "장바구니가 비어있습니다."}), 400
 
+    # 같은 상품이 장바구니에 여러 줄로 나뉘어 담긴 경우, 각 줄을 따로따로 검사하면
+    # 개별로는 재고 이내라도 합산하면 재고를 초과하는 경우를 놓친다.
+    # 상품별 합산 수량으로 먼저 검사한다.
+    qty_by_product = {}
     for item in items:
         pid = item.get("product_id")
         qty = int(item.get("quantity") or 0)
-        unit_price_override = item.get("unit_price")
         if qty <= 0:
             return jsonify({"error": "수량은 1 이상이어야 합니다."}), 400
+        qty_by_product[pid] = qty_by_product.get(pid, 0) + qty
+
+    for pid, total_qty in qty_by_product.items():
         cur.execute("SELECT unlimited_stock FROM products WHERE id=%s", (pid,))
         prod_flag = cur.fetchone()
         # 재고 무관(퀵 버튼) 상품은 재고 체크를 건너뛴다.
@@ -3471,11 +3486,11 @@ def api_sales():
         cur.execute("SELECT qty FROM store_stock WHERE store_id=%s AND product_id=%s", (store_id, pid))
         stock = cur.fetchone()
         current_qty = stock["qty"] if stock else 0
-        if qty > current_qty:
+        if total_qty > current_qty:
             cur.execute("SELECT name FROM products WHERE id=%s", (pid,))
             product = cur.fetchone()
             pname = product["name"] if product else f"#{pid}"
-            return jsonify({"error": f"'{pname}' 재고가 부족합니다. (현재 재고 {current_qty}, 요청 {qty})"}), 400
+            return jsonify({"error": f"'{pname}' 재고가 부족합니다. (현재 재고 {current_qty}, 요청 {total_qty})"}), 400
 
     created_ids = []
     for item in items:
@@ -3486,7 +3501,15 @@ def api_sales():
         product = cur.fetchone()
         # 재고 무관(퀵 버튼) 상품은 재고 차감도 하지 않는다.
         if not (product and product.get("unlimited_stock")):
-            _apply_stock_delta(conn, store_id, pid, "판매출고", qty)
+            # ⚠️ 버그 수정: 이 반환값을 확인하지 않으면, 동시에 들어온 다른 결제 건이
+            # 앞서 재고를 먼저 차감해버린 경쟁 상태(race condition) 등으로 실제 차감이
+            # 실패했을 때도 재고는 그대로인 채 매출만 정상 처리된 것처럼 남아 재고
+            # 데이터가 어긋나는 문제가 있었다. 실패 시 이번 요청에서 지금까지 반영한
+            # 변경사항을 모두 롤백하고 오류를 반환한다.
+            err = _apply_stock_delta(conn, store_id, pid, "판매출고", qty)
+            if err:
+                conn.rollback()
+                return jsonify({"error": err}), 400
 
         if unit_price_override is not None and unit_price_override >= 0:
             unit_price = int(unit_price_override)
