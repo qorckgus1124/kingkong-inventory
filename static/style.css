@@ -1175,6 +1175,25 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
 
   /* ===== 페이지 아이콘 모바일 크기 ===== */
   .page-icon { font-size: 16px; }
+
+  /* ===== iOS Safari 자동 확대(줌) 방지 =====
+     iOS Safari는 포커스된 입력창의 글자 크기가 16px 미만이면 화면을 자동으로 확대한다.
+     페이지 곳곳의 작은 필터/옵션 입력창들이 12~14px로 지정돼 있어 이 문제가 있었는데,
+     인라인 style보다 우선 적용되도록 !important로 텍스트 계열 입력 요소만 모아 16px로 통일한다.
+     체크박스/라디오/컬러/파일 등 텍스트 입력이 아닌 요소나 데스크톱(PC)에는 영향 없음. */
+  input[type="text"],
+  input[type="search"],
+  input[type="number"],
+  input[type="email"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="date"],
+  input[type="time"],
+  input:not([type]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 /* 추가: 480px 이하 초소형 모바일 대응 */
