@@ -5532,13 +5532,13 @@ def api_bestsellers():
                 b.color as brand_color,
                 c.name as category_name,
                 c.color as category_color,
-                COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) as sold_qty,
-                COALESCE(SUM(CASE WHEN t.type='판매출고' THEN COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0) ELSE 0 END), 0) as revenue
+                COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity ELSE 0 END), 0) as sold_qty,
+                COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0) ELSE 0 END), 0) as revenue
             FROM products p
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             INNER JOIN stock_transactions t ON t.product_id = p.id
-                AND t.type IN ('판매출고')
+                AND t.type IN ('판매출고', '선결예약')
                 AND date(t.date_time) >= date(%s)
                 AND date(t.date_time) <= date(%s)
                 AND ((t.memo NOT LIKE %s AND t.memo NOT LIKE %s) OR t.memo IS NULL)
@@ -5560,7 +5560,7 @@ def api_bestsellers():
 
         sql += """
             GROUP BY p.id, b.name, b.color, c.name, c.color
-            HAVING COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) > 0
+            HAVING COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity ELSE 0 END), 0) > 0
             ORDER BY sold_qty DESC
             LIMIT 10
         """
