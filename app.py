@@ -135,6 +135,9 @@ def _create_pool():
         port=result.port,
         sslmode='require',  # Render에서는 'require'로 자동 설정됨
         connect_timeout=10,
+        # ⚡ 연결을 맺을 때 세션 타임존을 함께 지정한다. 이렇게 하면 요청마다
+        # "SET TIME ZONE" 쿼리를 보내지 않아도 되므로 원격 DB 왕복이 줄어든다.
+        options="-c timezone=Asia/Seoul",
     )
 
 
