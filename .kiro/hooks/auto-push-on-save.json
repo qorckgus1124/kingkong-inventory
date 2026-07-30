@@ -8,7 +8,7 @@
       "matcher": "\\.(py|html|js|css|json|md|txt|sh|yaml|yml|bat)$",
       "action": {
         "type": "command",
-        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .kiro/scripts/auto-push.ps1 -Reason \"파일 저장\"",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .kiro/scripts/auto-push.ps1 -Reason save",
         "timeout": 120
       }
     }

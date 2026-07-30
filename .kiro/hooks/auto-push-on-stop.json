@@ -7,7 +7,7 @@
       "description": "Kiro가 작업을 마치면 변경된 파일을 자동으로 GitHub(kingkong-inventory)에 업로드합니다.",
       "action": {
         "type": "command",
-        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .kiro/scripts/auto-push.ps1 -Reason \"Kiro 작업 완료\"",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .kiro/scripts/auto-push.ps1 -Reason done",
         "timeout": 180
       }
     }
