@@ -749,7 +749,13 @@ def handle_uncaught_exception(e):
     # 404/405 같은 정상적인 HTTP 오류는 그대로 둔다 (단, /api 경로는 JSON으로).
     if isinstance(e, HTTPException):
         if request.path.startswith("/api/"):
-            return jsonify({"error": e.description or e.name}), e.code
+            messages = {
+                400: "요청 형식이 올바르지 않습니다.",
+                404: "요청한 주소를 찾을 수 없습니다.",
+                405: "허용되지 않은 요청 방식입니다.",
+                413: "업로드한 파일이 너무 큽니다.",
+            }
+            return jsonify({"error": messages.get(e.code, e.description or e.name)}), e.code
         return e
 
     rollback_quietly()
