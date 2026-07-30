@@ -3631,10 +3631,16 @@ def api_sales():
                 conn.rollback()
                 return jsonify({"error": err}), 400
 
-        if unit_price_override is not None and unit_price_override >= 0:
-            unit_price = int(unit_price_override)
-        else:
-            unit_price = product["sale_price"] or 0
+        # 단가는 문자열("15000")이나 빈 값으로 올 수도 있다. 예전에는 문자열과 숫자를
+        # 바로 비교(unit_price_override >= 0)해서 TypeError로 500이 났다.
+        unit_price = product["sale_price"] or 0
+        if unit_price_override is not None and str(unit_price_override).strip() != "":
+            try:
+                override_value = int(float(unit_price_override))
+                if override_value >= 0:
+                    unit_price = override_value
+            except (TypeError, ValueError):
+                return jsonify({"error": "판매 단가가 올바른 숫자가 아닙니다."}), 400
 
         cur.execute(
             """INSERT INTO stock_transactions
