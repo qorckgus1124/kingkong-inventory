@@ -21,8 +21,11 @@ self.addEventListener('install', function (event) {
   event.waitUntil(
     caches.open(CACHE_NAME).then(function (cache) {
       // 일부 파일이 없어도(404) 설치가 실패하지 않도록 개별로 처리한다.
+      // (Cache.add는 지원하지 않는 브라우저가 있어 fetch + put으로 처리)
       return Promise.all(urlsToCache.map(function (url) {
-        return cache.add(new Request(url, { cache: 'reload' })).catch(function () {});
+        return fetch(new Request(url, { cache: 'reload' }))
+          .then(function (res) { if (res && res.status === 200) return cache.put(url, res); })
+          .catch(function () {});
       }));
     })
   );
