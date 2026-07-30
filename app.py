@@ -641,17 +641,40 @@ def init_db():
 def create_indexes():
     conn = get_db()
     cur = g.cursor
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_date ON stock_transactions(date_time);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_type ON stock_transactions(type);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_store ON stock_transactions(store_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_product ON stock_transactions(product_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_store_product ON store_stock(store_id, product_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_pre_orders_store ON pre_orders(store_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_pre_orders_status ON pre_orders(status);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_movements_status ON stock_movements(status);")
-    conn.commit()
+    statements = [
+        "CREATE INDEX IF NOT EXISTS idx_transactions_date ON stock_transactions(date_time);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_type ON stock_transactions(type);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_store ON stock_transactions(store_id);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_product ON stock_transactions(product_id);",
+        "CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);",
+        "CREATE INDEX IF NOT EXISTS idx_stock_store_product ON store_stock(store_id, product_id);",
+        "CREATE INDEX IF NOT EXISTS idx_pre_orders_store ON pre_orders(store_id);",
+        "CREATE INDEX IF NOT EXISTS idx_pre_orders_status ON pre_orders(status);",
+        "CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name);",
+        "CREATE INDEX IF NOT EXISTS idx_movements_status ON stock_movements(status);",
+        # ⚡ 아래는 실제 화면들이 쓰는 조회 패턴에 맞춘 복합 인덱스.
+        # 매출/판매실적/대시보드/타임머신은 "특정 매장 + 기간" 또는 "특정 유형 + 기간"으로
+        # 거래를 훑기 때문에, 컬럼 하나씩 걸린 인덱스만으로는 테이블 전체를 읽는 경우가 많았다.
+        "CREATE INDEX IF NOT EXISTS idx_transactions_store_date ON stock_transactions(store_id, date_time);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_product_date ON stock_transactions(product_id, date_time);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON stock_transactions(type, date_time);",
+        # 제품 목록은 항상 "활성 제품"만, 그리고 카테고리/브랜드로 걸러서 본다.
+        "CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active);",
+        "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);",
+        "CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand_id);",
+        # 재고 합계는 제품 기준으로 모으므로 product_id 선행 인덱스가 필요하다.
+        "CREATE INDEX IF NOT EXISTS idx_stock_product ON store_stock(product_id);",
+        "CREATE INDEX IF NOT EXISTS idx_brands_category ON brands(category_id);",
+        "CREATE INDEX IF NOT EXISTS idx_pre_order_items_order ON pre_order_items(pre_order_id);",
+    ]
+    for stmt in statements:
+        try:
+            cur.execute(stmt)
+            conn.commit()
+        except Exception as e:
+            # 인덱스 하나가 실패해도(권한/버전 차이 등) 나머지는 계속 만든다.
+            conn.rollback()
+            print(f"⚠️ 인덱스 생성 건너뜀: {stmt.split(' ')[5] if len(stmt.split(' ')) > 5 else stmt} - {e}")
 
 
 # ---------------------------------------------------------------------------
