@@ -4052,10 +4052,14 @@ def api_category_stats():
                 COUNT(p.id) as product_count,
                 AVG(p.cost_price) as avg_cost,
                 AVG(p.sale_price) as avg_sale,
-                COALESCE(SUM(ss.qty * p.cost_price), 0) as stock_value
+                COALESCE(SUM(COALESCE(ps.total_qty, 0) * p.cost_price), 0) as stock_value
             FROM categories c
             LEFT JOIN products p ON p.category_id = c.id AND p.is_active = 1
-            LEFT JOIN store_stock ss ON ss.product_id = p.id
+            LEFT JOIN (
+                SELECT product_id, SUM(qty) as total_qty
+                FROM store_stock
+                GROUP BY product_id
+            ) ps ON ps.product_id = p.id
             GROUP BY c.id
             ORDER BY c.id
         """)
@@ -5586,13 +5590,15 @@ def api_bestsellers():
                 b.color as brand_color,
                 c.name as category_name,
                 c.color as category_color,
-                COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity ELSE 0 END), 0) as sold_qty,
-                COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0) ELSE 0 END), 0) as revenue
+                COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity
+                                  WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END), 0) as sold_qty,
+                COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0)
+                                  WHEN t.type = '판매취소' THEN -COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0) ELSE 0 END), 0) as revenue
             FROM products p
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             INNER JOIN stock_transactions t ON t.product_id = p.id
-                AND t.type IN ('판매출고', '선결예약')
+                AND t.type IN ('판매출고', '선결예약', '판매취소')
                 AND date(t.date_time) >= date(%s)
                 AND date(t.date_time) <= date(%s)
                 AND ((t.memo NOT LIKE %s AND t.memo NOT LIKE %s) OR t.memo IS NULL)
@@ -5614,7 +5620,8 @@ def api_bestsellers():
 
         sql += """
             GROUP BY p.id, b.name, b.color, c.name, c.color
-            HAVING COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity ELSE 0 END), 0) > 0
+            HAVING COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity
+                                     WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END), 0) > 0
             ORDER BY sold_qty DESC
             LIMIT 10
         """
