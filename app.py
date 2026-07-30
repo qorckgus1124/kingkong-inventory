@@ -3614,6 +3614,11 @@ def api_sales():
         unit_price_override = item.get("unit_price")
         cur.execute("SELECT * FROM products WHERE id=%s", (pid,))
         product = cur.fetchone()
+        # 장바구니에 담은 뒤 다른 사람이 그 상품을 삭제한 경우 product가 None이 된다.
+        # 예전에는 곧바로 product["sale_price"]에 접근해서 500(빈 화면)이 났다.
+        if not product:
+            conn.rollback()
+            return jsonify({"error": f"상품(#{pid})을 찾을 수 없습니다. 목록을 새로고침한 뒤 다시 시도해주세요."}), 400
         # 재고 무관(퀵 버튼) 상품은 재고 차감도 하지 않는다.
         if not (product and product.get("unlimited_stock")):
             # ⚠️ 버그 수정: 이 반환값을 확인하지 않으면, 동시에 들어온 다른 결제 건이
