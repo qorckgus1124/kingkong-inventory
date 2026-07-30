@@ -721,7 +721,7 @@ def csv_download_response(header, rows, filename):
     return resp
 
 
-def _rollback_quietly_impl():
+def rollback_quietly():
     """오류가 난 트랜잭션을 되돌린다. 커넥션 풀로 재사용되는 연결이 'current transaction
     is aborted' 상태로 남아 다음 요청까지 전부 실패하는 것을 막는다."""
     conn = g.get("db")
@@ -731,6 +731,35 @@ def _rollback_quietly_impl():
         conn.rollback()
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# 처리하지 못한 예외를 JSON으로 돌려주는 공통 안전망
+# ---------------------------------------------------------------------------
+# 라우트 함수 대부분은 자체 try/except가 있지만 일부(판매 등록, 퀵버튼, 선결제 확정,
+# 공유링크, API 키, 웹훅 로그 등)는 없었다. 그런 곳에서 예외가 나면 Flask가 HTML로 된
+# 500 페이지를 내려주는데, 프론트엔드의 api()/downloadFile()은 JSON을 기대하므로
+# "아무 반응 없이 실패"한 것처럼 보였다. 여기서 한 번에 처리해 두면
+#   1) 실패한 트랜잭션을 즉시 롤백하고
+#   2) 화면에 원인이 담긴 메시지를 띄울 수 있다.
+@app.errorhandler(Exception)
+def handle_uncaught_exception(e):
+    from werkzeug.exceptions import HTTPException
+
+    # 404/405 같은 정상적인 HTTP 오류는 그대로 둔다 (단, /api 경로는 JSON으로).
+    if isinstance(e, HTTPException):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": e.description or e.name}), e.code
+        return e
+
+    rollback_quietly()
+    import traceback
+    print(f"❌ 처리되지 않은 오류 [{request.method} {request.path}]: {e}")
+    traceback.print_exc()
+
+    if request.path.startswith("/api/"):
+        return jsonify({"error": f"서버 처리 중 오류가 발생했습니다: {e}"}), 500
+    return "서버 처리 중 오류가 발생했습니다.", 500
 
 
 # ---------------------------------------------------------------------------
