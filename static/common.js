@@ -28,10 +28,63 @@ function apiFailure(message) {
   return empty;
 }
 
+// ---------- 마스터 데이터 짧은 캐시 ----------
+// ⚡ 매장/카테고리/브랜드 목록은 화면을 옮길 때마다 매번 다시 불러온다. 거의 바뀌지 않는
+// 데이터인데도 페이지마다 3~4번의 왕복이 추가되어 화면 전환이 굼떠 보였다.
+// 아주 짧은 시간(기본 60초)만 sessionStorage에 담아두고, 등록/수정/삭제가 일어나면
+// 즉시 비운다. 그래서 목록이 오래된 상태로 남아 있는 일은 없다.
+const API_CACHE_PREFIX = 'apicache:';
+const API_CACHE_TTL_MS = 60 * 1000;
+const API_CACHEABLE_URLS = ['/api/stores', '/api/categories', '/api/brands', '/api/suppliers'];
+
+function isCacheableApiUrl(url) {
+  // 검색어 같은 조건이 붙은 요청은 캐시하지 않는다 (목록 전체 조회만 캐시).
+  return API_CACHEABLE_URLS.indexOf(url) !== -1;
+}
+
+function readApiCache(url) {
+  if (!isCacheableApiUrl(url)) return null;
+  try {
+    const raw = sessionStorage.getItem(API_CACHE_PREFIX + url);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (!entry || (Date.now() - entry.t) > API_CACHE_TTL_MS) return null;
+    return entry.d;
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeApiCache(url, data) {
+  if (!isCacheableApiUrl(url)) return;
+  try {
+    sessionStorage.setItem(API_CACHE_PREFIX + url, JSON.stringify({ t: Date.now(), d: data }));
+  } catch (e) { /* 저장 공간 부족 등은 무시 (캐시는 있어도 없어도 되는 것) */ }
+}
+
+function clearApiCache() {
+  try {
+    const keys = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (k && k.indexOf(API_CACHE_PREFIX) === 0) keys.push(k);
+    }
+    keys.forEach(k => sessionStorage.removeItem(k));
+  } catch (e) { /* 무시 */ }
+}
+
 // ---------- API (네트워크 오류만 재시도 + 지수 백오프) ----------
 async function api(url, options, retries = 3) {
   const timeoutMs = 10000;
   const method = ((options && options.method) || 'GET').toUpperCase();
+
+  if (method === 'GET') {
+    const cached = readApiCache(url);
+    if (cached !== null) return cached;
+  } else {
+    // 무엇이든 바꾸는 요청이 나가면 캐시를 즉시 버린다 (오래된 목록 방지)
+    clearApiCache();
+  }
   // 쓰기 요청(POST/PUT/DELETE)은 재시도하지 않는다. 서버에서 이미 처리된 요청을
   // 다시 보내면 판매/입출고가 중복 등록될 수 있기 때문이다.
   const maxAttempts = method === 'GET' ? retries : 1;
