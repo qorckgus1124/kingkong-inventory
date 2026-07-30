@@ -1165,13 +1165,18 @@ def api_brands():
             sql += " ORDER BY b.name"
             cur.execute(sql, params)
             rows = cur.fetchall()
-            result = []
-            for r in rows:
-                d = dict(r)
-                cur.execute("SELECT COUNT(*) as cnt FROM products WHERE brand_id = %s", (r["id"],))
-                count = cur.fetchone()
-                d["product_count"] = count["cnt"] if count else 0
-                result.append(d)
+            # ⚡ 성능: 예전에는 브랜드 1건마다 제품 수를 세는 쿼리를 따로 던졌다.
+            # 브랜드가 300개면 301번 왕복했다. 지금은 한 번에 세서 붙인다.
+            result = [dict(r) for r in rows]
+            if result:
+                cur.execute(
+                    """SELECT brand_id, COUNT(*) AS cnt FROM products
+                       WHERE brand_id = ANY(%s) GROUP BY brand_id""",
+                    ([d["id"] for d in result],),
+                )
+                count_map = {r["brand_id"]: (r["cnt"] or 0) for r in cur.fetchall()}
+                for d in result:
+                    d["product_count"] = count_map.get(d["id"], 0)
             return jsonify(result)
         except Exception as e:
             print(f"⚠️ 브랜드 조회 오류: {e}")
