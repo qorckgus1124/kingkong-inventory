@@ -201,7 +201,9 @@ let editingStoreId = null;
 
 // 재고 이동 관련 변수
 let transferProducts = [];
-let transferCart = {};
+// 🔥 다른 화면(/transfer 페이지)과 같은 localStorage 키를 사용해서 이동 장바구니를 공유한다.
+// (지금까지는 저장만 하고 불러오지는 않아서, 다른 탭에 갔다가 돌아오면 목록이 비어보였음)
+let transferCart = loadCartFromStorage('transfer_cart');
 let transferSearchQuery = '';
 let transferSelectedStoreId = '';
 
@@ -216,6 +218,7 @@ function switchStoreTab(tab) {
   document.querySelector(`.tab-btn[data-tab="${tab}"]`).classList.add('active');
   
   if (tab === 'transfer') {
+    renderTransferCart();
     loadTransferStores();
     loadTransferProducts();
   } else if (tab === 'movements') {

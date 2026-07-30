@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <link rel="manifest" href="/static/manifest.json">
-<meta name="theme-color" content="#4f8ff7">
+<meta name="theme-color" content="#3B6FE0">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
 <title>킹콩재고 관리</title>
@@ -126,13 +126,66 @@ function filterNavItems(query) {
     group.style.display = visible ? '' : 'none';
   });
 }
+
+// ==============================================================
+// 모바일 전체 메뉴 오버레이 (PC에서는 mobile-bottom-nav 자체가 숨김 처리되어 진입 불가)
+// 사이드바(#sidebarNav)의 모든 nav-group/nav-item을 그대로 복제해 항상 최신 메뉴를 보여준다.
+// ==============================================================
+function buildMobileNavOverlay() {
+  const list = document.getElementById('mobileNavOverlayList');
+  if (!list || list.dataset.filled) return;
+  document.querySelectorAll('#sidebarNav .nav-group').forEach(group => {
+    const clone = group.cloneNode(true);
+    clone.querySelectorAll('.nav-item').forEach(item => item.classList.remove('hidden-by-search'));
+    list.appendChild(clone);
+  });
+  list.dataset.filled = '1';
+}
+
+function openMobileNavMenu() {
+  buildMobileNavOverlay();
+  const overlay = document.getElementById('mobileNavOverlay');
+  if (!overlay) return;
+  overlay.classList.add('open');
+  document.body.classList.add('mobile-nav-lock');
+  const trigger = document.querySelector('.mobile-nav-more-btn');
+  if (trigger) trigger.setAttribute('aria-expanded', 'true');
+  const search = document.getElementById('mobileNavSearchInput');
+  if (search) setTimeout(() => search.focus(), 150);
+}
+
+function closeMobileNavMenu() {
+  const overlay = document.getElementById('mobileNavOverlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  document.body.classList.remove('mobile-nav-lock');
+  const trigger = document.querySelector('.mobile-nav-more-btn');
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+}
+
+// PC 폭으로 리사이즈되면 전체 메뉴 오버레이는 절대 노출되지 않도록 강제로 닫는다.
+window.addEventListener('resize', function() {
+  if (window.innerWidth > 768) closeMobileNavMenu();
+});
+
+function filterMobileNavItems(query) {
+  const q = query.trim().toLowerCase();
+  document.querySelectorAll('#mobileNavOverlayList .nav-item').forEach(item => {
+    const label = (item.getAttribute('data-label') || item.textContent).toLowerCase();
+    item.classList.toggle('hidden-by-search', q.length > 0 && !label.includes(q));
+  });
+  document.querySelectorAll('#mobileNavOverlayList .nav-group').forEach(group => {
+    const visible = group.querySelectorAll('.nav-item:not(.hidden-by-search)').length > 0;
+    group.style.display = visible ? '' : 'none';
+  });
+}
 </script>
 
 <!-- 플로팅 패널 -->
 <!-- 오프라인 임시 입력 대기 배너 (모든 페이지 공통) -->
-<div id="offlineQueueBanner" style="display:none; position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:1000; align-items:center; gap:10px; background:#fff3cd; color:#7a5b00; border:1px solid #ffe08a; padding:8px 10px 8px 14px; border-radius:999px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,0.15);">
+<div id="offlineQueueBanner" style="display:none; position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:1000; align-items:center; gap:10px; background:var(--warning-light); color:var(--warning); border:1px solid var(--warning); padding:8px 10px 8px 14px; border-radius:999px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,0.15);">
   <span>📴 오프라인 대기 <strong id="offlineQueueCount">0</strong>건</span>
-  <button id="offlineQueueSyncBtn" onclick="syncOfflineQueue()" style="padding:5px 12px; font-size:12px; border-radius:999px; border:none; background:#7a5b00; color:#fff; cursor:pointer;">지금 동기화</button>
+  <button id="offlineQueueSyncBtn" onclick="syncOfflineQueue()" style="padding:5px 12px; font-size:12px; border-radius:999px; border:none; background:var(--warning); color:#fff; cursor:pointer;">지금 동기화</button>
 </div>
 
 <div class="floating-panel" id="floatingPanel">
@@ -194,7 +247,28 @@ function filterNavItems(query) {
     <i class="ti ti-settings nav-icon"></i>
     <span class="nav-label">설정</span>
   </a>
+  <a href="javascript:void(0)" class="mobile-nav-more-btn" onclick="openMobileNavMenu()" aria-haspopup="true" aria-expanded="false" aria-controls="mobileNavOverlay">
+    <i class="ti ti-grid-dots nav-icon"></i>
+    <span class="nav-label">메뉴</span>
+  </a>
 </nav>
+
+<!-- 모바일 전용: 전체 메뉴 오버레이 (사이드바의 모든 nav-item을 모바일에서도 볼 수 있도록 함, PC에서는 CSS로 비활성화됨) -->
+<div class="mobile-nav-overlay" id="mobileNavOverlay" role="dialog" aria-modal="true" aria-label="전체 메뉴">
+  <div class="mobile-nav-overlay-backdrop" onclick="closeMobileNavMenu()"></div>
+  <div class="mobile-nav-sheet">
+    <div class="mobile-nav-sheet-handle"></div>
+    <div class="mobile-nav-sheet-header">
+      <span>전체 메뉴</span>
+      <button type="button" class="mobile-nav-sheet-close" onclick="closeMobileNavMenu()" aria-label="닫기"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="nav-search">
+      <i class="ti ti-search"></i>
+      <input type="text" id="mobileNavSearchInput" placeholder="메뉴 검색" oninput="filterMobileNavItems(this.value)">
+    </div>
+    <nav id="mobileNavOverlayList" class="mobile-nav-overlay-list"></nav>
+  </div>
+</div>
 
 <script>
 function updateThemeToggleUI() {
@@ -443,6 +517,7 @@ document.addEventListener('keydown', function(e) {
         el.style.display = 'none';
       }
     });
+    closeMobileNavMenu();
   }
   if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
     const searchInput = document.querySelector('input[type="text"][placeholder*="검색"], input[placeholder*="검색"], #searchBox');

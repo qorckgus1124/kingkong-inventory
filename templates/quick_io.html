@@ -241,7 +241,7 @@ function qioRenderRecent() {
   list.innerHTML = qioRecent.map(r => `
     <div class="qio-recent-item">
       <span>${escapeHtml(r.name)}</span>
-      <span class="qio-recent-tag" ${r.queued ? 'style="background:#fff3cd; color:#7a5b00;"' : ''}>${r.queued ? '📴 대기중 · ' : ''}${escapeHtml(r.type)} ${fmt(r.qty)}개</span>
+      <span class="qio-recent-tag" ${r.queued ? 'style="background:var(--warning-light); color:var(--warning);"' : ''}>${r.queued ? '📴 대기중 · ' : ''}${escapeHtml(r.type)} ${fmt(r.qty)}개</span>
     </div>
   `).join('');
 }

@@ -80,7 +80,7 @@
   <button onclick="loadAll()" class="primary">📋 전체 보기</button>
   <select id="filterCategory" onchange="load()"><option value="">전체 카테고리</option></select>
   <select id="filterBrand" onchange="load()"><option value="">전체 브랜드</option></select>
-  <select id="storeSelect" onchange="load()">
+  <select id="storeSelect" onchange="onProductsStoreChange()">
     <option value="">전체 매장</option>
   </select>
   <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;">
@@ -498,6 +498,14 @@ async function loadStoresForSelects() {
     filterStoreSelect.innerHTML = '<option value="">매장 오류</option>';
     uploadStoreSelect.innerHTML = '<option value="">매장 오류</option>';
   }
+}
+
+function onProductsStoreChange() {
+  const storeId = document.getElementById('storeSelect').value;
+  if (storeId) {
+    localStorage.setItem('global_store_id', storeId);
+  }
+  load();
 }
 
 function debouncedLoad() {
@@ -1022,7 +1030,12 @@ async function updateField(id, field, value) {
     if (!value) { load(); return; }
     payload.name = value;
   } else {
-    const num = parseInt(String(value).replace(/[^0-9-]/g, ''), 10);
+    const trimmed = String(value).trim();
+    // 🔥 값이 없을 때 화면에 '-'로 표시되는데, 이 셀을 그냥 클릭했다가 수정 없이
+    // 벗어나기만 해도 '-'가 그대로 전송되어 가격이 0원으로 저장되는 문제가 있었다.
+    // '-' 자체는 실제 입력값이 아니라 "값 없음" 표시일 뿐이므로 변경으로 취급하지 않는다.
+    if (trimmed === '-' || trimmed === '') { load(); return; }
+    const num = parseInt(trimmed.replace(/[^0-9-]/g, ''), 10);
     payload[field] = isNaN(num) ? 0 : num;
   }
   try {

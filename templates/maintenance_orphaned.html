@@ -47,12 +47,12 @@ async function loadOrphans() {
       <tr>
         <td>${it.id}</td>
         <td>${(it.date_time || '').toString().replace('T',' ').slice(0,19)}</td>
-        <td>${it.product_name || '-'}</td>
-        <td>${it.store_name || '-'}</td>
+        <td>${escapeHtml(it.product_name || '-')}</td>
+        <td>${escapeHtml(it.store_name || '-')}</td>
         <td>${fmt(it.quantity)}</td>
         <td>${fmt(it.unit_price)}</td>
         <td>${fmt(it.revenue_impact)}</td>
-        <td>${it.memo || '-'}</td>
+        <td>${escapeHtml(it.memo || '-')}</td>
       </tr>
     `).join('');
 

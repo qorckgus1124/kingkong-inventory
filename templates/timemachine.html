@@ -53,6 +53,10 @@ async function loadStores() {
   const stores = await api('/api/stores');
   const sel = document.getElementById('storeSelect');
   sel.innerHTML = '<option value="">전체 매장</option>' + (stores || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  const saved = localStorage.getItem('global_store_id');
+  if (saved && (stores || []).some(s => s.id == saved)) {
+    sel.value = saved;
+  }
 }
 
 function todayStr() {
@@ -119,7 +123,11 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(load, 400);
   });
-  document.getElementById('storeSelect').addEventListener('change', load);
+  document.getElementById('storeSelect').addEventListener('change', () => {
+    const v = document.getElementById('storeSelect').value;
+    if (v) localStorage.setItem('global_store_id', v);
+    load();
+  });
 });
 </script>
 {% endblock %}

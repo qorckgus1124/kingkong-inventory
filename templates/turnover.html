@@ -19,7 +19,7 @@
         <button class="tab-btn" id="tab_product" onclick="switchGroup('product')">제품별</button>
       </div>
     </div>
-    <div class="form-field"><label>매장</label><select id="storeSelect" onchange="load()"><option value="">전체 매장</option></select></div>
+    <div class="form-field"><label>매장</label><select id="storeSelect" onchange="onTurnoverStoreChange()"><option value="">전체 매장</option></select></div>
     <div class="form-field"><label>분석 기간</label>
       <select id="daysSelect" onchange="load()">
         <option value="7">최근 7일</option>
@@ -61,6 +61,18 @@ async function loadStores() {
   const stores = await api('/api/stores');
   const sel = document.getElementById('storeSelect');
   sel.innerHTML = '<option value="">전체 매장</option>' + (stores || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  const saved = localStorage.getItem('global_store_id');
+  if (saved && (stores || []).some(s => s.id == saved)) {
+    sel.value = saved;
+  }
+}
+
+function onTurnoverStoreChange() {
+  const storeId = document.getElementById('storeSelect').value;
+  if (storeId) {
+    localStorage.setItem('global_store_id', storeId);
+  }
+  load();
 }
 
 function switchGroup(g) {

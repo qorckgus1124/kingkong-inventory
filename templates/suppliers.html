@@ -64,7 +64,9 @@ async function addSupplier() {
 
 async function updateSupplier(id, field, value) {
   value = value.trim();
-  if (field !== 'name' && value === '') value = null;
+  // 🔥 값이 없을 때 화면에 '-'로 표시되는데, 실제 수정 없이 클릭만 했다가 벗어나도
+  // 문자 그대로 '-'가 저장되는 문제가 있었다. '-'는 "값 없음" 표시일 뿐이므로 무시한다.
+  if (field !== 'name' && (value === '' || value === '-')) value = null;
   if (field === 'name' && !value) { load(); return; }
   await api(`/api/suppliers/${id}`, { method: 'PUT', body: JSON.stringify({ [field]: value }) });
   load();
