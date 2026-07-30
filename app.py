@@ -220,6 +220,43 @@ def get_db():
     return g.db
 
 
+# ---------------------------------------------------------------------------
+# 응답 압축 (gzip)
+# ---------------------------------------------------------------------------
+# ⚡ 제품/거래 목록 같은 JSON은 수백 KB가 되기도 한다. 모바일 회선에서는 이 전송
+# 시간이 체감 렉의 큰 부분이다. gzip을 씌우면 보통 1/5~1/10 크기로 줄어든다.
+# 파일 다운로드(send_file)처럼 스트리밍으로 내려가는 응답은 건드리지 않는다.
+GZIP_MIN_SIZE = 1024
+GZIP_TYPES = ("application/json", "text/html", "text/css", "application/javascript", "text/javascript", "text/plain")
+
+
+@app.after_request
+def compress_response(response):
+    try:
+        if response.direct_passthrough or response.status_code >= 300:
+            return response
+        if "gzip" not in (request.headers.get("Accept-Encoding") or "").lower():
+            return response
+        if response.headers.get("Content-Encoding"):
+            return response
+        ctype = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype not in GZIP_TYPES:
+            return response
+        data = response.get_data()
+        if len(data) < GZIP_MIN_SIZE:
+            return response
+        compressed = gzip.compress(data, compresslevel=6)
+        if len(compressed) >= len(data):
+            return response
+        response.set_data(compressed)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(compressed))
+        response.headers.add("Vary", "Accept-Encoding")
+    except Exception as e:
+        print(f"⚠️ 응답 압축 건너뜀: {e}")
+    return response
+
+
 @app.teardown_appcontext
 def close_db(exception=None):
     db = g.pop("db", None)
