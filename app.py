@@ -4316,7 +4316,14 @@ def api_stocktake_export():
         LEFT JOIN categories c ON c.id = p.category_id
         LEFT JOIN brands b ON b.id = p.brand_id
         WHERE p.is_active = 1 AND ss.store_id = %s
-        ORDER BY COALESCE(c.name, ''), COALESCE(b.name, ''), p.name
+        ORDER BY
+            CASE c.name
+                WHEN '액상' THEN 0
+                WHEN '일회용' THEN 1
+                WHEN '기기' THEN 2
+                ELSE 3
+            END,
+            COALESCE(c.name, ''), COALESCE(b.name, ''), p.name
     """, (store_id,))
     rows = cur.fetchall()
     output = io.StringIO()
@@ -5739,17 +5746,18 @@ def _build_report_query(source_key, columns, filters):
 
     sql = f'SELECT {", ".join(select_parts)} {source["from_sql"]} WHERE {" AND ".join(where)}'
 
-    has_agg = any(source["columns"][k]["agg"] for k in valid_cols)
-    if has_agg:
-        group_cols = list(group_parts)
-        if source.get("group_key"):
-            group_cols.append(source["group_key"])
-        if group_cols:
-            sql += f' GROUP BY {", ".join(group_cols)}'
+    # products 소스는 store_stock(매장별로 여러 행)을 조인하므로, qty/min_qty처럼
+    # 집계(agg) 컬럼을 하나도 선택하지 않아도 GROUP BY를 반드시 걸어 제품당 1행으로
+    # 묶어야 한다. 그렇지 않으면 제품명/브랜드 등 비집계 컬럼만 골랐을 때도
+    # 매장 수만큼 같은 제품이 중복으로 출력된다.
+    needs_group = source.get("group_key") is not None
+    if needs_group:
+        group_cols = list(dict.fromkeys(group_parts + [source["group_key"]]))
+        sql += f' GROUP BY {", ".join(group_cols)}'
 
-    if source_key == "products" and filters.get("low_stock_only") and "qty" in valid_cols:
+    if source_key == "products" and filters.get("low_stock_only"):
         having_col = "COALESCE(SUM(ss.qty), 0)"
-        sql += f' HAVING {having_col} <= COALESCE(MAX(ss.min_qty), 0)' if has_agg else ""
+        sql += f' HAVING {having_col} <= COALESCE(MAX(ss.min_qty), 0)'
 
     order_col = valid_cols[0]
     sql += f" ORDER BY {order_col} DESC" if source_key == "transactions" and order_col == "date_time" else f" ORDER BY {order_col}"

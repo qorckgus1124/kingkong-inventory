@@ -95,7 +95,7 @@
     <button onclick="document.getElementById('excelUpload').click()" class="primary" style="padding:4px 10px; font-size:12px;">업로드</button>
     <input type="file" id="excelUpload" accept=".csv" style="display:none" onchange="uploadExcel(event)">
   </span>
-  <button onclick="exportProducts()">📊 다운로드</button>
+  <button onclick="exportProducts(event)">📊 다운로드</button>
 </div>
 
 <div id="uploadResult" style="margin:8px 0; font-size:13px; padding:8px 12px; border-radius:6px; background:var(--card-bg); border:1px solid var(--border); min-height:20px; max-height:200px; overflow-y:auto; display:none;"></div>
@@ -1058,8 +1058,8 @@ async function deleteProduct(id) {
   }
 }
 
-function downloadTemplate() {
-  window.open('/api/import/template', '_blank');
+async function downloadTemplate() {
+  await downloadFile('/api/import/template', '제품_업로드_템플릿.csv');
 }
 
 async function uploadExcel(event) {
@@ -1121,10 +1121,16 @@ async function uploadExcel(event) {
   event.target.value = '';
 }
 
-async function exportProducts() {
+async function exportProducts(evt) {
   const store_id = document.getElementById('storeSelect').value || '';
   const show_inactive = document.getElementById('showInactive').checked ? '1' : '0';
-  window.open(`/api/export/${store_id || 'all'}/products?show_inactive=${show_inactive}`, '_blank');
+  const btn = evt && evt.target;
+  if (btn) { btn.disabled = true; }
+  try {
+    await downloadFile(`/api/export/${store_id || 'all'}/products?show_inactive=${show_inactive}`, '재고목록.csv');
+  } finally {
+    if (btn) { btn.disabled = false; }
+  }
 }
 
 // ---------- 초기화 ----------

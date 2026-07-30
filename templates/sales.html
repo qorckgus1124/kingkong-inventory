@@ -727,16 +727,6 @@ function loadAllPreProducts() {
   loadPreProducts(true);
 }
 
-function onPreStoreChange() {
-  console.log('🔄 선결제 매장 변경됨:', document.getElementById('pre_store').value);
-  preCart = {};
-  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
-  renderPreCart();
-  document.getElementById('pre_searchBox').value = '';
-  products = [];
-  document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
-}
-
 // ---------- 선결제 그리드 ----------
 function renderPreGrid() {
   const grid = document.getElementById('pre_grid');

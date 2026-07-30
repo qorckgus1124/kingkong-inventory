@@ -25,11 +25,11 @@
 <!-- 카카오톡/문자/SNS 링크 공유 시 썸네일 -->
 <meta property="og:title" content="킹콩재고 관리">
 <meta property="og:description" content="킹콩 전자담배 재고관리 사이트">
-<meta property="og:image" content="https://kingkong-inventory.onrender.com/static/link-thumbnail.jpg">
+<meta property="og:image" content="/static/link-thumbnail.jpg">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="킹콩재고 관리">
-<meta name="twitter:image" content="https://kingkong-inventory.onrender.com/static/link-thumbnail.jpg">
+<meta name="twitter:image" content="/static/link-thumbnail.jpg">
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
@@ -431,7 +431,10 @@ function restoreFloatingPanelState() {
 
 async function loadFloatingRevenue() {
   try {
-    const data = await api('/api/dashboard');
+    // 전역 매장 선택이 있으면 해당 매장 기준으로, 없으면 전체 매장 기준으로 오늘 매출을 가져온다.
+    const globalStoreId = localStorage.getItem('global_store_id');
+    const url = globalStoreId ? `/api/dashboard?store_id=${globalStoreId}` : '/api/dashboard';
+    const data = await api(url);
     const revenue = data.today?.revenue || 0;
     document.getElementById('fpRevenue').textContent = fmt(revenue) + '원';
 

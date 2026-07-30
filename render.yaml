@@ -6,7 +6,12 @@ services:
     buildCommand: "./build.sh"
     # gunicorn 워커 수(WEB_CONCURRENCY) x DB_POOL_MAXCONN 합이 DB 무료 플랜의
     # 최대 동시 연결 수를 넘지 않도록 --timeout도 넉넉히 준다.
-    startCommand: "gunicorn app:app --workers ${WEB_CONCURRENCY:-2} --timeout 60"
+    # --timeout 120: Neon/Aiven 무료 플랜은 일정 시간 미사용 시 DB가 슬립 상태가 되어
+    # 첫 요청에서 cold start 지연(최대 수십 초)이 발생한다. 60초면 이 경우 타임아웃이
+    # 나서 502 에러가 뜨므로 120초로 늘린다.
+    # --worker-class sync: 기본값이지만 명시해서 의도를 분명히 한다. (gevent 등으로
+    # 바꾸려면 requirements.txt에 gevent 추가 필요)
+    startCommand: "gunicorn app:app --workers ${WEB_CONCURRENCY:-2} --worker-class sync --timeout 120"
     envVars:
       # DATABASE_URL은 여기서 자동으로 채우지 않는다.
       # Render 대시보드 > Environment 탭에서 직접 값을 넣어야 한다.

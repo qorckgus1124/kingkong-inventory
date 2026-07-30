@@ -436,7 +436,7 @@ async function deleteBrand(id) {
 
 // ---------- CSV 내보내기 ----------
 async function exportBrandsCSV() {
-  window.open('/api/export/brands', '_blank');
+  await downloadFile('/api/export/brands', '브랜드목록.csv');
 }
 
 // ---------- CSV 업로드 ----------

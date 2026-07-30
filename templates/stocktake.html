@@ -15,10 +15,10 @@
     <div class="form-field"><label>실사 담당자</label><input type="text" id="staffInput" placeholder="이름"></div>
     <div class="form-field">
       <label>🔍 제품 검색</label>
-      <input type="text" id="searchInput" placeholder="제품명 또는 브랜드로 검색" oninput="render()">
+      <input type="text" id="searchInput" placeholder="제품명 또는 브랜드로 검색" oninput="onFilterChange()">
     </div>
     <div class="form-field"><label>정렬</label>
-      <select id="sortSelect" onchange="render()">
+      <select id="sortSelect" onchange="onFilterChange()">
         <option value="default" selected>기본순 (카테고리·브랜드순)</option>
         <option value="qty_desc">재고 많은 순</option>
         <option value="revenue_desc">매출 높은 순 (최근 30일)</option>
@@ -51,6 +51,24 @@
   <div id="stocktakeUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:6px; background:var(--card-bg); border:1px solid var(--border); min-height:20px; display:none;"></div>
 </div>
 
+<!-- ============================================================ -->
+<!-- 조회 줄수 / 페이지네이션 (입출고 관리와 동일한 스타일) -->
+<!-- ============================================================ -->
+<div class="toolbar" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+  <label style="font-size:12px; color:var(--text-light);">조회 줄수:
+    <input type="number" id="rowsPerPage" value="20" min="20" max="200" style="width:60px;" onchange="onRowsPerPageChange()">
+  </label>
+</div>
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:13px; color:var(--text-light);">
+  <span>총 <span id="totalCount">0</span>건</span>
+  <div>
+    <button onclick="changePage(-1)" id="prevPageBtn">◀ 이전</button>
+    <span id="pageInfo">0 / 0</span>
+    <button onclick="changePage(1)" id="nextPageBtn">다음 ▶</button>
+  </div>
+</div>
+
 <div class="table-wrap">
 <table>
   <thead>
@@ -62,8 +80,31 @@
 </table>
 </div>
 
+<div style="display:flex; justify-content:center; gap:8px; margin-top:12px;">
+  <button onclick="changePage(-1)" class="page-btn">◀</button>
+  <span id="pageInfoBottom" style="font-size:13px; color:var(--text-light);">0 / 0</span>
+  <button onclick="changePage(1)" class="page-btn">▶</button>
+</div>
+
+<style>
+.page-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.page-btn:hover { background: var(--hover-bg); }
+.page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#prevPageBtn:disabled, #nextPageBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
+
 <script>
 let items = [];
+let hasLoaded = false; // 아직 매장을 선택/조회하지 않은 초기 상태인지 여부 (그 전에는 목록을 표시하지 않음)
+let currentPage = 1;
+let totalPages = 1;
 
 async function loadStores() {
   const stores = await api('/api/stores');
@@ -88,11 +129,53 @@ function onStocktakeStoreChange() {
 
 async function load() {
   const storeId = document.getElementById('storeSelect').value;
-  if (!storeId) return;
+  if (!storeId) {
+    items = [];
+    hasLoaded = false;
+    currentPage = 1;
+    updateStats();
+    render();
+    return;
+  }
   items = await api(`/api/stocktake?store_id=${storeId}`);
+  hasLoaded = true;
   document.getElementById('searchInput').value = '';
+  currentPage = 1;
   updateStats();
   render();
+}
+
+// 검색/정렬 조건이 바뀌면 1페이지로 돌아간다 (입출고 관리와 동일한 동작)
+function onFilterChange() {
+  currentPage = 1;
+  render();
+}
+
+// "조회 줄수"는 최소 20줄 (수정 가능) — 20 미만으로 입력해도 20으로 보정한다.
+function onRowsPerPageChange() {
+  const el = document.getElementById('rowsPerPage');
+  let v = parseInt(el.value, 10);
+  if (isNaN(v) || v < 20) v = 20;
+  el.value = v;
+  changePage(0);
+}
+
+function changePage(delta) {
+  if (delta === 0) {
+    currentPage = 1;
+  } else {
+    const newPage = currentPage + delta;
+    if (newPage < 1 || newPage > totalPages) return;
+    currentPage = newPage;
+  }
+  render();
+}
+
+function updatePageButtons() {
+  const prevBtn = document.getElementById('prevPageBtn');
+  const nextBtn = document.getElementById('nextPageBtn');
+  if (prevBtn) prevBtn.disabled = currentPage <= 1;
+  if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
 }
 
 function updateStats() {
@@ -128,17 +211,49 @@ function getFilteredItems() {
   return list;
 }
 
+function setPageInfo(current, total, totalCount) {
+  document.getElementById('totalCount').textContent = fmt(totalCount);
+  document.getElementById('pageInfo').textContent = `${current} / ${total}`;
+  document.getElementById('pageInfoBottom').textContent = `${current} / ${total}`;
+  updatePageButtons();
+}
+
 function render() {
   const tbody = document.getElementById('tbody');
-  const list = getFilteredItems();
+
+  // 매장을 아직 선택/조회하지 않았다면 그 전에는 아무것도 표시하지 않는다.
+  if (!hasLoaded) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">🏬</span>매장을 선택하면 실사 목록이 표시됩니다.</div></td></tr>';
+    currentPage = 1; totalPages = 1;
+    setPageInfo(0, 0, 0);
+    return;
+  }
   if (!items || items.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">📦</span>실사할 재고가 없습니다.</div></td></tr>';
+    currentPage = 1; totalPages = 1;
+    setPageInfo(0, 0, 0);
     return;
   }
-  if (list.length === 0) {
+
+  const fullList = getFilteredItems();
+  if (fullList.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div></td></tr>';
+    currentPage = 1; totalPages = 1;
+    setPageInfo(0, 0, 0);
     return;
   }
+
+  // ---------- 조회 줄수(최소 20, 수정 가능) 기준 페이지네이션 ----------
+  let limit = parseInt(document.getElementById('rowsPerPage').value, 10) || 20;
+  if (limit < 20) limit = 20;
+  totalPages = Math.ceil(fullList.length / limit) || 1;
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  const start = (currentPage - 1) * limit;
+  const list = fullList.slice(start, start + limit);
+
+  setPageInfo(currentPage, totalPages, fullList.length);
+
   tbody.innerHTML = list.map((it) => `
     <tr id="row_${it.product_id}">
       <td>${it.category_name ? `<span class="chip" style="background:#8a8f98;">${escapeHtml(it.category_name)}</span>` : '<span style="color:var(--text-light);">-</span>'}</td>
@@ -192,10 +307,10 @@ async function save() {
   }
 }
 
-function exportCsv() {
+async function exportCsv() {
   const storeId = document.getElementById('storeSelect').value;
   if (!storeId) { toast('매장을 선택해주세요.', true, '⚠️'); return; }
-  window.location.href = `/api/stocktake/export?store_id=${storeId}`;
+  await downloadFile(`/api/stocktake/export?store_id=${storeId}`, '실사표.csv');
 }
 
 // ---------- CSV 파싱 (쉼표/따옴표 처리) ----------

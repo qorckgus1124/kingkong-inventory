@@ -90,6 +90,53 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// ---------- 파일 다운로드 (엑셀/CSV 내보내기 공통) ----------
+// window.open(url, '_blank')는 모바일 브라우저나 홈 화면에 추가한 PWA(독립 실행 모드)에서
+// 새 창을 제대로 열지 못하거나, 서버가 에러(JSON)를 반환해도 사용자가 알아챌 방법이 없어
+// "다운로드가 안 된다"는 문제의 흔한 원인이다. fetch로 직접 받아 Blob으로 저장하면
+// 실패 시 에러 메시지를 바로 보여줄 수 있고, PWA/모바일 환경에서도 안정적으로 동작한다.
+async function downloadFile(url, fallbackName) {
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+      let msg = '다운로드 중 오류가 발생했습니다.';
+      try {
+        const data = await res.clone().json();
+        if (data && data.error) msg = data.error;
+      } catch (e) {}
+      toast(msg, true, '❌');
+      return false;
+    }
+    const blob = await res.blob();
+    if (!blob || blob.size === 0) {
+      toast('다운로드할 내용이 없습니다.', true, '⚠️');
+      return false;
+    }
+    let filename = fallbackName || 'download.csv';
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+    if (utf8Match && utf8Match[1]) {
+      try { filename = decodeURIComponent(utf8Match[1]); } catch (e) {}
+    } else if (plainMatch && plainMatch[1]) {
+      filename = plainMatch[1];
+    }
+    const blobUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => window.URL.revokeObjectURL(blobUrl), 2000);
+    return true;
+  } catch (e) {
+    console.error('❌ 다운로드 오류:', e);
+    toast('다운로드 중 오류가 발생했습니다. 네트워크 상태를 확인해주세요.', true, '⚠️');
+    return false;
+  }
+}
+
 // ---------- 복사 기능 (강화 완료) ----------
 function copyText(textarea) {
   if (!textarea) {

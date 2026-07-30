@@ -942,9 +942,21 @@ async function uploadOutbound(event) {
 }
 
 // ---------- 템플릿 다운로드 ----------
-function downloadTemplate(adjust) {
+async function downloadTemplate(adjust) {
   const url = adjust ? '/api/import/transactions_template?adjust=true' : '/api/import/transactions_template?adjust=false';
-  window.open(url, '_blank');
+  await downloadFile(url, '입출고_업로드_템플릿.csv');
+}
+
+// ---------- 파일 다운로드 헬퍼 ----------
+// transactions.html 내 downloadTemplate()이 이 함수를 호출하는데,
+// common.js에는 정의가 없어 "downloadFile is not defined" 오류가 발생했다.
+function downloadFile(url, filename) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || '';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 // ---------- 초기화 ----------

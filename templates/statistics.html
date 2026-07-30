@@ -86,7 +86,7 @@ function renderTable(rows) {
 }
 
 async function exportStatistics() {
-  window.open(`/api/export/statistics?period=${currentPeriod}`, '_blank');
+  await downloadFile(`/api/export/statistics?period=${currentPeriod}`, '매출통계.csv');
 }
 
 // 초기화: day 선택
