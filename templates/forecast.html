@@ -4,24 +4,24 @@
 <div class="subtitle">최근 3개월 출고 데이터를 기반으로 향후 필요한 출고량을 예측합니다.</div>
 
 <div class="toolbar">
-  <select id="storeSelect" onchange="loadForecast()">
+  <select id="storeSelect" onchange="onForecastStoreChange()">
     <option value="">전체 매장</option>
   </select>
-  <select id="categoryFilter" onchange="loadForecast()">
+  <select id="categoryFilter" onchange="changePage(0)">
     <option value="">전체 카테고리</option>
   </select>
-  <select id="brandFilter" onchange="loadForecast()">
+  <select id="brandFilter" onchange="changePage(0)">
     <option value="">전체 브랜드</option>
   </select>
   <label style="font-size:12px; color:var(--text-light);">기간:
-    <select id="daysSelect" onchange="loadForecast()">
+    <select id="daysSelect" onchange="changePage(0)">
       <option value="30">30일</option>
       <option value="60">60일</option>
       <option value="90" selected>90일 (3개월)</option>
       <option value="180">180일 (6개월)</option>
     </select>
   </label>
-  <input type="text" id="forecastSearch" placeholder="🔍 제품명 검색" autocomplete="off" oninput="loadForecast()" style="width:180px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+  <input type="text" id="forecastSearch" placeholder="🔍 제품명 검색" autocomplete="off" oninput="changePage(0)" style="width:180px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
   <select id="sortSelect" onchange="changePage(0)">
     <option value="shortage" selected>부족량 큰 순</option>
     <option value="recommend_qty">추천 발주량 많은 순</option>
@@ -134,6 +134,17 @@ function changePage(delta) {
     currentPage = newPage;
   }
   loadForecast();
+}
+
+// ---------- 매장 선택 변경 ----------
+// 다른 화면(판매/입출고/이동 등)과 동일하게, 여기서 매장을 바꾸면
+// 전역 매장 선택값을 저장해서 다른 화면으로 이동해도 같은 매장이 유지되게 한다.
+function onForecastStoreChange() {
+  const storeId = document.getElementById('storeSelect').value;
+  if (storeId) {
+    localStorage.setItem('global_store_id', storeId);
+  }
+  changePage(0);
 }
 
 // ---------- 데이터 로드 ----------

@@ -11,7 +11,7 @@
 
 <div class="card">
   <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr;">
-    <div class="form-field"><label>매장</label><select id="storeSelect" onchange="load()"></select></div>
+    <div class="form-field"><label>매장</label><select id="storeSelect" onchange="onStocktakeStoreChange()"></select></div>
     <div class="form-field"><label>실사 담당자</label><input type="text" id="staffInput" placeholder="이름"></div>
     <div class="form-field">
       <label>🔍 제품 검색</label>
@@ -69,6 +69,21 @@ async function loadStores() {
   const stores = await api('/api/stores');
   const sel = document.getElementById('storeSelect');
   sel.innerHTML = (stores || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  // 🔥 다른 화면(판매/입출고/이동 등)과 동일하게 전역 매장 선택값을 적용/동기화한다.
+  const saved = localStorage.getItem('global_store_id');
+  if (saved && stores.some(s => s.id == saved)) {
+    sel.value = saved;
+  } else if (stores.length > 0) {
+    sel.value = stores[0].id;
+  }
+}
+
+function onStocktakeStoreChange() {
+  const storeId = document.getElementById('storeSelect').value;
+  if (storeId) {
+    localStorage.setItem('global_store_id', storeId);
+  }
+  load();
 }
 
 async function load() {
