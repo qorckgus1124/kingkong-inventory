@@ -721,7 +721,7 @@ def csv_download_response(header, rows, filename):
     return resp
 
 
-def rollback_quietly():
+def _rollback_quietly_impl():
     """오류가 난 트랜잭션을 되돌린다. 커넥션 풀로 재사용되는 연결이 'current transaction
     is aborted' 상태로 남아 다음 요청까지 전부 실패하는 것을 막는다."""
     conn = g.get("db")
