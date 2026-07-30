@@ -34,7 +34,9 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
 <link rel="stylesheet" href="/static/style.css">
-<script src="/static/common.js"></script>
+<!-- ?v= 값을 올리면 브라우저가 캐시된 예전 파일 대신 새 파일을 반드시 받아온다.
+     (다운로드 로직이 common.js에 있어서, 캐시된 옛 버전이 남아 있으면 수정이 반영되지 않는다) -->
+<script src="/static/common.js?v=5"></script>
 </head>
 <body data-page="{{ active }}">
 <script>

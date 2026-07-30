@@ -312,18 +312,15 @@ async function loadDashboard() {
     toast('대시보드 데이터를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
     // 오류 시 기본값 표시
     document.querySelectorAll('.summary-card .value, #forecastRevenue, #forecastProfit').forEach(el => el.textContent = '0원');
-    document.getElementById('thisMonthCategories').innerHTML = catNames.map(name => `
+    const _catNames = ['일회용', '기기', '액상'];
+    const _emptyRows = _catNames.map(name => `
       <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border);">
         <span>${name}</span>
         <span>0개</span>
       </div>
     `).join('');
-    document.getElementById('lastMonthCategories').innerHTML = catNames.map(name => `
-      <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border);">
-        <span>${name}</span>
-        <span>0개</span>
-      </div>
-    `).join('');
+    document.getElementById('thisMonthCategories').innerHTML = _emptyRows;
+    document.getElementById('lastMonthCategories').innerHTML = _emptyRows;
     document.getElementById('warningList').innerHTML = '<li class="empty" style="list-style:none; padding:10px 0;"><span class="empty-icon">⚠️</span> 데이터를 불러올 수 없습니다.</li>';
     document.getElementById('recentList').innerHTML = '<li class="empty" style="list-style:none; padding:10px 0;"><span class="empty-icon">⚠️</span> 데이터를 불러올 수 없습니다.</li>';
     document.getElementById('categoryChart').innerHTML = '<span style="color:var(--text-light);">⚠️ 데이터를 불러올 수 없습니다.</span>';

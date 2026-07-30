@@ -3,10 +3,12 @@
 // (v1은 캐시를 무한정 붙잡고 있어서, 서버를 배포해도 브라우저가 옛날 페이지를
 //  계속 보여주는 문제가 있었음. v2에서 네트워크 우선 전략으로 변경했고,
 //  v3에서는 완전히 오프라인일 때 빈 화면 대신 안내 페이지를 보여주도록 개선)
-const CACHE_NAME = 'inventory-v4';
+// v5: 다운로드(엑셀/CSV 내보내기) 로직이 담긴 common.js가 바뀌었으므로 캐시 이름을 올려
+//     예전 캐시를 폐기한다 (activate 단계에서 이름이 다른 캐시는 모두 삭제된다).
+const CACHE_NAME = 'inventory-v5';
 const urlsToCache = [
   '/static/style.css',
-  '/static/common.js',
+  '/static/common.js?v=5',
   '/static/manifest.json',
   '/static/icon-192.png',
   '/static/icon-512.png',
@@ -55,7 +57,9 @@ self.addEventListener('fetch', function (event) {
         return response;
       })
       .catch(function () {
-        return caches.match(event.request).then(function (cached) {
+        // ignoreSearch: common.js?v=5 처럼 캐시 무효화용 쿼리스트링이 붙어도
+        // 오프라인일 때 캐시된 같은 파일을 찾아 쓸 수 있게 한다.
+        return caches.match(event.request, { ignoreSearch: true }).then(function (cached) {
           if (cached) return cached;
           if (event.request.mode === 'navigate') {
             return caches.match('/static/offline.html');

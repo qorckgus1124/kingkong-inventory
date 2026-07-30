@@ -670,6 +670,70 @@ with app.app_context():
 
 
 # ---------------------------------------------------------------------------
+# 헬퍼 함수 - CSV 내보내기 공통
+# ---------------------------------------------------------------------------
+#  - 엑셀에서 한글이 깨지지 않도록 UTF-8 BOM(utf-8-sig)으로 인코딩한다.
+#  - 브라우저/프록시가 오래된 파일을 재사용하지 않도록 캐시를 끈다.
+#  - DB 오류가 나면 500(HTML 오류 페이지)이 아니라 JSON 오류를 돌려준다.
+#    (프론트엔드 downloadFile()이 JSON의 error 메시지를 그대로 보여주기 때문에
+#     "다운로드가 그냥 안 된다"가 아니라 원인을 화면에서 바로 확인할 수 있다.)
+
+# 내보내기 파일에서 카테고리를 항상 이 순서로 정렬한다 (액상 → 일회용 → 기기 → 나머지).
+CATEGORY_EXPORT_ORDER = ("액상", "일회용", "기기")
+
+
+def category_export_rank(name):
+    """카테고리명을 내보내기 정렬 순번으로 변환한다. 목록에 없는 카테고리는 맨 뒤."""
+    key = (name or "").strip()
+    try:
+        return CATEGORY_EXPORT_ORDER.index(key)
+    except ValueError:
+        return len(CATEGORY_EXPORT_ORDER)
+
+
+def sort_rows_for_export(rows, category_key="category_name"):
+    """액상 → 일회용 → 기기 → 그 외 순서로 안정 정렬(stable sort)한다.
+    DB에서 이미 정렬해서 내려주지만, 정렬 규칙을 파이썬에서 한 번 더 보장해두면
+    카테고리명이 바뀌거나 DB 정렬 규칙(collation)이 달라도 파일 순서가 흔들리지 않는다.
+    안정 정렬이라 같은 카테고리 안에서는 DB가 정해준 순서(브랜드·제품명)가 유지된다."""
+    return sorted(rows, key=lambda r: category_export_rank(r.get(category_key)))
+
+
+def csv_download_response(header, rows, filename):
+    """행 리스트를 CSV 첨부파일 응답으로 만들어 준다."""
+    rows = list(rows)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(header)
+    for row in rows:
+        writer.writerow(row)
+    resp = send_file(
+        io.BytesIO(output.getvalue().encode("utf-8-sig")),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=filename,
+    )
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    # 데이터가 몇 줄 들어갔는지 알려준다. 화면에서 "0건이라 내용이 비어있음"을
+    # 바로 안내할 수 있어, 빈 파일을 받고 "다운로드가 안 된다"고 오해하는 일을 막는다.
+    resp.headers["X-Row-Count"] = str(len(rows))
+    return resp
+
+
+def rollback_quietly():
+    """오류가 난 트랜잭션을 되돌린다. 커넥션 풀로 재사용되는 연결이 'current transaction
+    is aborted' 상태로 남아 다음 요청까지 전부 실패하는 것을 막는다."""
+    conn = g.get("db")
+    if conn is None:
+        return
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # 헬퍼 함수 (PostgreSQL)
 # ---------------------------------------------------------------------------
 
@@ -2828,7 +2892,7 @@ def api_daily_report():
             WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고')
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
-              AND EXTRACT(HOUR FROM t.date_time) BETWEEN 8 AND 15
+              AND EXTRACT(HOUR FROM t.date_time) < 16
               AND NOT (
                     t.type IN ('판매취소', '입고취소')
                  OR (t.type = '판매출고' AND EXISTS (
@@ -4269,8 +4333,10 @@ def api_stocktake():
             rows = cur.fetchall()
             return jsonify([dict(r) for r in rows])
         except Exception as e:
+            # 빈 배열로 조용히 넘기면 "재고가 없다"로 오해하게 되므로 오류를 그대로 알린다.
+            rollback_quietly()
             print(f"❌ 재고 실사 조회 오류: {e}")
-            return jsonify([])
+            return jsonify({"error": "실사 목록을 불러오는 중 오류가 발생했습니다."}), 500
 
     data = request.get_json(force=True)
     store_id = data.get("store_id")
@@ -4298,47 +4364,61 @@ def api_stocktake():
         conn.commit()
         return jsonify({"ok": True, "changes": result})
     except Exception as e:
+        # 일부만 반영된 채로 커밋되지 않도록 되돌린다 (실사 저장은 여러 건을 한 트랜잭션으로 처리).
+        rollback_quietly()
         print(f"❌ 재고 실사 저장 오류: {e}")
         return jsonify({"error": "저장 중 오류가 발생했습니다."}), 500
 
 
 @app.route("/api/stocktake/export")
 def api_stocktake_export():
-    get_db()
-    cur = g.cursor
     store_id = request.args.get("store_id")
     if not store_id:
         return jsonify({"error": "매장을 선택해주세요."}), 400
-    cur.execute("""
-        SELECT p.id as product_id, c.name as category_name, b.name as brand_name, p.name as product_name, ss.qty as qty
-        FROM products p
-        JOIN store_stock ss ON ss.product_id = p.id
-        LEFT JOIN categories c ON c.id = p.category_id
-        LEFT JOIN brands b ON b.id = p.brand_id
-        WHERE p.is_active = 1 AND ss.store_id = %s
-        ORDER BY
-            CASE c.name
-                WHEN '액상' THEN 0
-                WHEN '일회용' THEN 1
-                WHEN '기기' THEN 2
-                ELSE 3
-            END,
-            COALESCE(c.name, ''), COALESCE(b.name, ''), p.name
-    """, (store_id,))
-    rows = cur.fetchall()
-    output = io.StringIO()
-    writer = csv.writer(output)
+    try:
+        store_id_int = int(store_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "올바른 매장 ID가 아닙니다."}), 400
+
+    try:
+        get_db()
+        cur = g.cursor
+        # 정렬: 액상 → 일회용 → 기기 → 그 외 카테고리, 같은 카테고리 안에서는 브랜드 → 제품명 순.
+        cur.execute("""
+            SELECT p.id as product_id, c.name as category_name, b.name as brand_name,
+                   p.name as product_name, COALESCE(ss.qty, 0) as qty
+            FROM products p
+            JOIN store_stock ss ON ss.product_id = p.id
+            LEFT JOIN categories c ON c.id = p.category_id
+            LEFT JOIN brands b ON b.id = p.brand_id
+            WHERE p.is_active = 1 AND ss.store_id = %s
+            ORDER BY
+                CASE COALESCE(c.name, '')
+                    WHEN '액상' THEN 0
+                    WHEN '일회용' THEN 1
+                    WHEN '기기' THEN 2
+                    ELSE 3
+                END,
+                COALESCE(c.name, ''), COALESCE(b.name, ''), p.name
+        """, (store_id_int,))
+        rows = cur.fetchall()
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 실사표 내보내기 오류: {e}")
+        return jsonify({"error": f"실사표를 내보내는 중 오류가 발생했습니다: {e}"}), 500
+
+    # DB 정렬에 더해 파이썬에서도 한 번 더 카테고리 순서를 고정한다 (액상 → 일회용 → 기기).
+    rows = sort_rows_for_export(rows)
+
     # ID 컬럼을 포함시켜, 같은 이름의 제품이 여러 개 있어도(브랜드가 다르거나 등록 실수로
     # 이름이 겹치는 경우) 업로드 시 "제품명"이 아니라 "ID"로 정확히 매칭되도록 한다.
     # (예전에는 제품명만으로 매칭해서, 이름이 겹치는 제품이 있으면 엉뚱한 제품에
     #  같은 수량이 잘못 채워지는 문제가 있었다.)
-    writer.writerow(['ID', '카테고리', '브랜드', '제품명', '갯수'])
-    for r in rows:
-        writer.writerow([r['product_id'], r['category_name'] or '', r['brand_name'] or '', r['product_name'], r['qty']])
-    output.seek(0)
-    resp = send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='실사표.csv')
-    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
-    return resp
+    body = [
+        [r['product_id'], r['category_name'] or '', r['brand_name'] or '', r['product_name'], r['qty']]
+        for r in rows
+    ]
+    return csv_download_response(['ID', '카테고리', '브랜드', '제품명', '갯수'], body, '실사표.csv')
 
 
 # ---------------------------------------------------------------------------
@@ -4612,11 +4692,20 @@ def api_backup_delete(name):
 # ---------------------------------------------------------------------------
 # API - 엑셀 다운로드 (Export)
 # ---------------------------------------------------------------------------
+# 공통 처리(BOM 인코딩 / 캐시 끄기 / 오류를 JSON으로 반환)는 파일 상단의
+# csv_download_response(), rollback_quietly(), sort_rows_for_export() 참고.
 
+# 제품 관리 화면의 "📊 다운로드" 버튼이 호출한다.
+# 예전에는 /api/export/<store_id>/products 형태만 있었는데, 매장 값이 비어 있으면
+# /api/export//products 가 되어 404가 나는 구조였다. 쿼리스트링 방식(/api/export/products
+# ?store_id=all)을 기본으로 추가하고, 기존 경로도 그대로 동작하도록 함께 등록한다.
+@app.route("/api/export/products")
 @app.route("/api/export/<path:store_id>/products")
-def api_export_products(store_id):
-    conn = get_db()
-    cur = g.cursor
+def api_export_products(store_id=None):
+    if not store_id:
+        store_id = request.args.get("store_id") or "all"
+    store_id = str(store_id).strip()
+
     # 화면(제품 관리 목록)은 기본적으로 활성 제품만 보여주므로, 다운로드도 같은 기준을 따라야
     # "화면에 보이는 재고"와 "다운로드한 재고"가 일치한다. show_inactive=1을 넘기면 비활성(단종)
     # 제품도 포함해서 내려준다 (화면의 "비활성 포함" 체크박스와 동일한 동작).
@@ -4624,68 +4713,94 @@ def api_export_products(store_id):
     active_filter = "" if show_inactive else "WHERE p.is_active = 1"
     active_filter_and = "" if show_inactive else "AND p.is_active = 1"
 
-    if store_id == 'all' or store_id == '':
-        cur.execute(f"""
-            SELECT p.id, p.name, b.name as brand_name, c.name as category_name, p.cost_price, p.card_cost_price, p.sale_price,
-                   COALESCE(SUM(ss.qty), 0) as qty,
-                   COALESCE(SUM(ss.min_qty), 0) as min_qty,
-                   CASE WHEN p.is_active THEN '활성' ELSE '비활성' END as status
-            FROM products p
-            LEFT JOIN brands b ON b.id = p.brand_id
-            LEFT JOIN categories c ON c.id = p.category_id
-            LEFT JOIN store_stock ss ON ss.product_id = p.id
-            {active_filter}
-            GROUP BY p.id, p.name, b.name, c.name, p.cost_price, p.card_cost_price, p.sale_price, p.is_active
-            ORDER BY p.id
-        """)
-    else:
+    is_all = store_id in ("", "all", "전체")
+    store_id_int = None
+    if not is_all:
         try:
             store_id_int = int(store_id)
-        except:
+        except (TypeError, ValueError):
             return jsonify({"error": "올바른 매장 ID가 아닙니다."}), 400
-        cur.execute(f"""
-            SELECT p.id, p.name, b.name as brand_name, c.name as category_name, p.cost_price, p.card_cost_price, p.sale_price,
-                   ss.qty, ss.min_qty,
-                   CASE WHEN p.is_active THEN '활성' ELSE '비활성' END as status
-            FROM products p
-            LEFT JOIN brands b ON b.id = p.brand_id
-            LEFT JOIN categories c ON c.id = p.category_id
-            JOIN store_stock ss ON ss.product_id = p.id
-            WHERE ss.store_id = %s {active_filter_and}
-            ORDER BY p.id
-        """, (store_id_int,))
 
-    rows = cur.fetchall()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['ID','제품명','브랜드','카테고리','원가','카드원가','판매가','재고수량','최소재고','상태'])
-    for r in rows:
-        writer.writerow([r['id'], r['name'], r['brand_name'] or '', r['category_name'] or '', r['cost_price'], r['card_cost_price'], r['sale_price'], r['qty'], r['min_qty'], r['status']])
-    output.seek(0)
-    resp = send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='재고목록.csv')
-    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
-    return resp
+    try:
+        get_db()
+        cur = g.cursor
+        if is_all:
+            # 전체 매장: 매장별 재고를 미리 합산한 뒤 붙인다. (GROUP BY 없이 조회해서
+            # 제품 정보 컬럼이 늘어나도 집계 오류가 생기지 않는다.)
+            cur.execute(f"""
+                SELECT p.id, p.name, b.name as brand_name, c.name as category_name,
+                       p.cost_price, p.card_cost_price, p.sale_price,
+                       COALESCE(s.qty, 0) as qty,
+                       COALESCE(s.min_qty, 0) as min_qty,
+                       CASE WHEN p.is_active = 1 THEN '활성' ELSE '비활성' END as status
+                FROM products p
+                LEFT JOIN brands b ON b.id = p.brand_id
+                LEFT JOIN categories c ON c.id = p.category_id
+                LEFT JOIN (
+                    SELECT product_id, SUM(qty) as qty, SUM(min_qty) as min_qty
+                    FROM store_stock
+                    GROUP BY product_id
+                ) s ON s.product_id = p.id
+                {active_filter}
+                ORDER BY p.id
+            """)
+        else:
+            cur.execute(f"""
+                SELECT p.id, p.name, b.name as brand_name, c.name as category_name,
+                       p.cost_price, p.card_cost_price, p.sale_price,
+                       COALESCE(ss.qty, 0) as qty, COALESCE(ss.min_qty, 0) as min_qty,
+                       CASE WHEN p.is_active = 1 THEN '활성' ELSE '비활성' END as status
+                FROM products p
+                LEFT JOIN brands b ON b.id = p.brand_id
+                LEFT JOIN categories c ON c.id = p.category_id
+                JOIN store_stock ss ON ss.product_id = p.id
+                WHERE ss.store_id = %s {active_filter_and}
+                ORDER BY p.id
+            """, (store_id_int,))
+        rows = cur.fetchall()
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 제품 목록 내보내기 오류: {e}")
+        return jsonify({"error": f"제품 목록을 내보내는 중 오류가 발생했습니다: {e}"}), 500
+
+    body = [
+        [
+            r["id"], r["name"], r["brand_name"] or "", r["category_name"] or "",
+            r["cost_price"] or 0, r["card_cost_price"] or 0, r["sale_price"] or 0,
+            r["qty"] or 0, r["min_qty"] or 0, r["status"],
+        ]
+        for r in rows
+    ]
+    return csv_download_response(
+        ['ID', '제품명', '브랜드', '카테고리', '원가', '카드원가', '판매가', '재고수량', '최소재고', '상태'],
+        body,
+        '재고목록.csv',
+    )
 
 @app.route("/api/export/transactions")
 def api_export_transactions():
-    conn = get_db()
-    cur = g.cursor
-    cur.execute("""
-        SELECT t.date_time, p.name as product_name, s.name as store_name, t.type, t.quantity, t.staff, t.memo
-        FROM stock_transactions t
-        JOIN products p ON p.id = t.product_id
-        JOIN stores s ON s.id = t.store_id
-        ORDER BY t.date_time DESC
-        LIMIT 1000
-    """)
-    rows = cur.fetchall()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['일시','제품명','매장','유형','수량','담당자','메모'])
-    for r in rows:
-        writer.writerow([r['date_time'], r['product_name'], r['store_name'], r['type'], r['quantity'], r['staff'] or '', r['memo'] or ''])
-    output.seek(0)
-    return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='입출고내역.csv')
+    try:
+        get_db()
+        cur = g.cursor
+        cur.execute("""
+            SELECT t.date_time, p.name as product_name, s.name as store_name, t.type, t.quantity, t.staff, t.memo
+            FROM stock_transactions t
+            JOIN products p ON p.id = t.product_id
+            JOIN stores s ON s.id = t.store_id
+            ORDER BY t.date_time DESC
+            LIMIT 1000
+        """)
+        rows = cur.fetchall()
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 입출고 내역 내보내기 오류: {e}")
+        return jsonify({"error": f"입출고 내역을 내보내는 중 오류가 발생했습니다: {e}"}), 500
+
+    body = [
+        [r['date_time'], r['product_name'], r['store_name'], r['type'], r['quantity'], r['staff'] or '', r['memo'] or '']
+        for r in rows
+    ]
+    return csv_download_response(['일시', '제품명', '매장', '유형', '수량', '담당자', '메모'], body, '입출고내역.csv')
 
 @app.route("/api/export/performance")
 def api_export_performance():
@@ -4715,16 +4830,21 @@ def api_export_performance():
         params.append(end_date)
     sql += """ GROUP BY p.id, p.name, c.name
         HAVING SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity
-                        WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END) != 0"""
-    cur.execute(sql, params)
-    rows = cur.fetchall()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['제품명','카테고리','판매량','순매출','순이익'])
-    for r in rows:
-        writer.writerow([r['product_name'], r['category_name'] or '', r['sold_qty'], r['revenue'], r['profit']])
-    output.seek(0)
-    return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='판매실적.csv')
+                        WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END) != 0
+        ORDER BY revenue DESC"""
+    try:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 판매실적 내보내기 오류: {e}")
+        return jsonify({"error": f"판매실적을 내보내는 중 오류가 발생했습니다: {e}"}), 500
+
+    body = [
+        [r['product_name'], r['category_name'] or '', r['sold_qty'], r['revenue'], r['profit']]
+        for r in rows
+    ]
+    return csv_download_response(['제품명', '카테고리', '판매량', '순매출', '순이익'], body, '판매실적.csv')
 
 @app.route("/api/export/statistics")
 def api_export_statistics():
@@ -4769,15 +4889,16 @@ def api_export_statistics():
         GROUP BY period_key
         ORDER BY period_key ASC
     """
-    cur.execute(sql, (start_date, end_date))
-    rows = cur.fetchall()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['기간','판매량','순매출','순이익'])
-    for r in rows:
-        writer.writerow([r['period_key'], r['sold_qty'], r['revenue'], r['profit']])
-    output.seek(0)
-    return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='매출통계.csv')
+    try:
+        cur.execute(sql, (start_date, end_date))
+        rows = cur.fetchall()
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 매출통계 내보내기 오류: {e}")
+        return jsonify({"error": f"매출통계를 내보내는 중 오류가 발생했습니다: {e}"}), 500
+
+    body = [[r['period_key'], r['sold_qty'], r['revenue'], r['profit']] for r in rows]
+    return csv_download_response(['기간', '판매량', '순매출', '순이익'], body, '매출통계.csv')
 
 
 # ---------------------------------------------------------------------------
@@ -4941,13 +5062,14 @@ def api_import_products():
 
 @app.route("/api/import/template")
 def api_import_template():
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['ID','제품명','브랜드','카테고리','원가','카드원가','판매가','최소재고','초기재고'])
-    writer.writerow(['','예시: 레몬에이드','네스티','일회용','3000','3300','4500','5','10'])
-    writer.writerow(['','예시: 팟','플릭','액상','5000','5500','8000','3','0'])
-    output.seek(0)
-    return send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name='제품_업로드_템플릿.csv')
+    return csv_download_response(
+        ['ID', '제품명', '브랜드', '카테고리', '원가', '카드원가', '판매가', '최소재고', '초기재고'],
+        [
+            ['', '예시: 레몬에이드', '네스티', '일회용', '3000', '3300', '4500', '5', '10'],
+            ['', '예시: 팟', '플릭', '액상', '5000', '5500', '8000', '3', '0'],
+        ],
+        '제품_업로드_템플릿.csv',
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -5146,27 +5268,19 @@ def api_import_transactions():
 @app.route("/api/import/transactions_template")
 def api_import_transactions_template():
     adjust = request.args.get('adjust', 'false') == 'true'
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['일시', '제품명', '브랜드', '카테고리', '수량', '비고'])
-
     if adjust:
-        writer.writerow(['2026-07-01', '예시 제품A', '네스티', '일회용', '5', '출고'])
-        writer.writerow(['2026-07-02', '예시 제품B', '플릭', '액상', '2', '고객 주문'])
+        rows = [
+            ['2026-07-01', '예시 제품A', '네스티', '일회용', '5', '출고'],
+            ['2026-07-02', '예시 제품B', '플릭', '액상', '2', '고객 주문'],
+        ]
         filename = '출고내역_업로드_템플릿_출고용.csv'
     else:
-        writer.writerow(['2026-07-01', '예시 제품A', '네스티', '일회용', '5', '단순 기록'])
-        writer.writerow(['2026-07-02', '예시 제품B', '플릭', '액상', '2', '테스트'])
+        rows = [
+            ['2026-07-01', '예시 제품A', '네스티', '일회용', '5', '단순 기록'],
+            ['2026-07-02', '예시 제품B', '플릭', '액상', '2', '테스트'],
+        ]
         filename = '출고내역_업로드_템플릿_기록용.csv'
-
-    output.seek(0)
-    return send_file(
-        io.BytesIO(output.getvalue().encode('utf-8-sig')),
-        mimetype='text/csv',
-        as_attachment=True,
-        download_name=filename
-    )
+    return csv_download_response(['일시', '제품명', '브랜드', '카테고리', '수량', '비고'], rows, filename)
 
 
 # ---------------------------------------------------------------------------
@@ -5236,27 +5350,26 @@ def api_import_brands():
 
 @app.route("/api/export/brands")
 def api_export_brands():
-    conn = get_db()
-    cur = g.cursor
-    cur.execute("""
-        SELECT b.name as 브랜드명, c.name as 카테고리, b.color as 색상, b.status as 상태
-        FROM brands b
-        LEFT JOIN categories c ON c.id = b.category_id
-        ORDER BY b.name
-    """)
-    rows = cur.fetchall()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['브랜드명', '카테고리', '색상', '상태'])
-    for r in rows:
-        writer.writerow([r['브랜드명'], r['카테고리'] or '', r['색상'] or '#8a8f98', r['상태'] or 'approved'])
-    output.seek(0)
-    return send_file(
-        io.BytesIO(output.getvalue().encode('utf-8-sig')),
-        mimetype='text/csv',
-        as_attachment=True,
-        download_name='브랜드_목록.csv'
-    )
+    try:
+        get_db()
+        cur = g.cursor
+        cur.execute("""
+            SELECT b.name as brand_name, c.name as category_name, b.color as color, b.status as status
+            FROM brands b
+            LEFT JOIN categories c ON c.id = b.category_id
+            ORDER BY b.name
+        """)
+        rows = cur.fetchall()
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 브랜드 목록 내보내기 오류: {e}")
+        return jsonify({"error": f"브랜드 목록을 내보내는 중 오류가 발생했습니다: {e}"}), 500
+
+    body = [
+        [r['brand_name'], r['category_name'] or '', r['color'] or '#8a8f98', r['status'] or 'approved']
+        for r in rows
+    ]
+    return csv_download_response(['브랜드명', '카테고리', '색상', '상태'], body, '브랜드_목록.csv')
 
 
 # ---------------------------------------------------------------------------
@@ -5794,15 +5907,16 @@ def api_report_builder_run():
             out_rows.append(d)
         return jsonify({"columns": valid_cols, "labels": labels, "rows": out_rows, "count": len(out_rows)})
     except Exception as e:
+        rollback_quietly()
         print(f"❌ 리포트 빌더 조회 오류: {e}")
         return jsonify({"error": "리포트를 생성하지 못했습니다. 조건을 확인해주세요."}), 400
 
 
 @app.route("/api/report_builder/export", methods=["POST"])
 def api_report_builder_export():
-    conn = get_db()
+    get_db()
     cur = g.cursor
-    data = request.get_json(force=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
     source_key = data.get("source", "products")
     columns = data.get("columns") or []
     filters = data.get("filters") or {}
@@ -5810,19 +5924,14 @@ def api_report_builder_export():
         sql, params, valid_cols, labels = _build_report_query(source_key, columns, filters)
         cur.execute(sql, params)
         rows = cur.fetchall()
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(labels)
-        for r in rows:
-            writer.writerow([r[c] for c in valid_cols])
-        filename = f"커스텀리포트_{now_kst().strftime('%Y%m%d_%H%M')}.csv"
-        return send_file(
-            io.BytesIO(output.getvalue().encode("utf-8-sig")),
-            mimetype="text/csv", as_attachment=True, download_name=filename,
-        )
     except Exception as e:
+        rollback_quietly()
         print(f"❌ 리포트 빌더 내보내기 오류: {e}")
-        return jsonify({"error": "내보내기에 실패했습니다."}), 400
+        return jsonify({"error": f"내보내기에 실패했습니다: {e}"}), 400
+
+    body = [[r[c] for c in valid_cols] for r in rows]
+    filename = f"커스텀리포트_{now_kst().strftime('%Y%m%d_%H%M')}.csv"
+    return csv_download_response(labels, body, filename)
 
 
 @app.route("/report_builder")

@@ -169,26 +169,16 @@ function renderResult(res) {
 async function exportReport() {
   const columns = rbSelectedColumns[rbSource] || [];
   if (columns.length === 0) { toast('표시할 항목을 하나 이상 선택해주세요.', true, '⚠️'); return; }
-  try {
-    const res = await fetch('/api/report_builder/export', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: rbSource, columns, filters: collectFilters() }),
-    });
-    if (!res.ok) { toast('내보내기에 실패했습니다.', true, '⚠️'); return; }
-    const blob = await res.blob();
-    const disposition = res.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename="?([^"]+)"?/);
-    const filename = match ? decodeURIComponent(match[1]) : `커스텀리포트.csv`;
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    window.URL.revokeObjectURL(url);
-    toast('CSV 파일을 내려받았습니다.', false, '✅');
-  } catch (e) {
-    console.error(e);
-    toast('내보내기 중 오류가 발생했습니다.', true, '⚠️');
+  // common.js의 공용 downloadFile()을 사용한다. (예전에는 Content-Disposition 파싱이
+  // 잘못되어 "이름.csv; filename*=UTF-8''..." 같은 엉뚱한 파일명으로 저장됐고,
+  // 서버 오류 내용을 그대로 csv로 저장하는 문제도 있었다.)
+  const result = await downloadFile('/api/report_builder/export', '커스텀리포트.csv', {
+    method: 'POST',
+    body: JSON.stringify({ source: rbSource, columns, filters: collectFilters() }),
+  });
+  if (result && result.ok) {
+    const cnt = (result.rowCount === null || result.rowCount === undefined) ? '' : ` (${fmt(result.rowCount)}건)`;
+    toast(`CSV 파일을 내려받았습니다.${cnt}`, false, '✅');
   }
 }
 

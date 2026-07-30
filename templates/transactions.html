@@ -947,17 +947,9 @@ async function downloadTemplate(adjust) {
   await downloadFile(url, '입출고_업로드_템플릿.csv');
 }
 
-// ---------- 파일 다운로드 헬퍼 ----------
-// transactions.html 내 downloadTemplate()이 이 함수를 호출하는데,
-// common.js에는 정의가 없어 "downloadFile is not defined" 오류가 발생했다.
-function downloadFile(url, filename) {
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || '';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}
+// 참고: 파일 다운로드는 common.js의 공용 downloadFile()을 사용한다.
+// (이 파일에 있던 별도 구현은 common.js 버전을 덮어써서, 서버 오류가 나도
+//  아무 반응 없이 조용히 실패하고 PWA/모바일에서 저장이 안 되는 문제가 있었다.)
 
 // ---------- 초기화 ----------
 document.addEventListener('DOMContentLoaded', async function() {

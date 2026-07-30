@@ -1121,15 +1121,36 @@ async function uploadExcel(event) {
   event.target.value = '';
 }
 
+// ---------- 엑셀(CSV) 다운로드 ----------
+// 매장 값이 비어 있어도 절대 /api/export//products 같은 잘못된 주소가 만들어지지 않도록
+// 쿼리스트링 방식(/api/export/products?store_id=...)으로 호출한다.
 async function exportProducts(evt) {
-  const store_id = document.getElementById('storeSelect').value || '';
-  const show_inactive = document.getElementById('showInactive').checked ? '1' : '0';
-  const btn = evt && evt.target;
-  if (btn) { btn.disabled = true; }
+  const storeEl = document.getElementById('storeSelect');
+  const inactiveEl = document.getElementById('showInactive');
+  const storeId = (storeEl && storeEl.value) ? storeEl.value : 'all';
+  const showInactive = (inactiveEl && inactiveEl.checked) ? '1' : '0';
+
+  const btn = (evt && (evt.currentTarget || evt.target)) || null;
+  const originalText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 다운로드 중...'; }
   try {
-    await downloadFile(`/api/export/${store_id || 'all'}/products?show_inactive=${show_inactive}`, '재고목록.csv');
+    const params = new URLSearchParams({ store_id: storeId, show_inactive: showInactive });
+    const result = await downloadFile(`/api/export/products?${params.toString()}`, '재고목록.csv');
+    if (result && result.ok) {
+      const storeName = (storeEl && storeEl.selectedIndex >= 0)
+        ? storeEl.options[storeEl.selectedIndex].text : '전체 매장';
+      if (result.rowCount === 0) {
+        toast(`${storeName}에 내보낼 제품이 없습니다. (빈 파일이 저장됩니다)`, true, '⚠️');
+      } else {
+        const cnt = (result.rowCount === null || result.rowCount === undefined) ? '' : ` · ${fmt(result.rowCount)}건`;
+        toast(`재고목록.csv 다운로드 완료 (${storeName}${cnt})`, false, '📊');
+      }
+    }
+  } catch (e) {
+    console.error('❌ 재고목록 다운로드 오류:', e);
+    toast('다운로드 중 오류가 발생했습니다.', true, '⚠️');
   } finally {
-    if (btn) { btn.disabled = false; }
+    if (btn) { btn.disabled = false; btn.textContent = originalText || '📊 다운로드'; }
   }
 }
 
