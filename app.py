@@ -162,6 +162,14 @@ def _reset_pool():
     return _DB_POOL
 
 
+def _conn_key(conn):
+    """연결을 구분하는 키. get_backend_pid()는 로컬 캐시값이라 DB 왕복이 없다."""
+    try:
+        return conn.get_backend_pid()
+    except Exception:
+        return id(conn)
+
+
 def get_db():
     if "db" not in g:
         pool = _init_pool()
@@ -172,14 +180,30 @@ def get_db():
             # 서버를 재시작하지 않아도 스스로 새 풀을 만들어 복구를 시도한다.
             pool = _reset_pool()
             conn = pool.getconn()
-        try:
-            # 풀에 오래 유지된 연결이 원격에서 끊겼을 수 있으므로 가벼운 헬스체크 후,
-            # 죽어있으면 버리고 새 연결을 받아온다.
-            with conn.cursor() as probe:
-                probe.execute("SELECT 1")
-        except Exception:
-            pool.putconn(conn, close=True)
-            conn = pool.getconn()
+
+        # ⚡ 성능: 예전에는 요청마다 헬스체크(SELECT 1) + SET TIME ZONE + commit을 실행해서
+        # 원격 DB를 3번이나 더 왕복했다. 화면 하나가 API를 5~10개 호출하니 그 자체로
+        # 수백 ms가 낭비됐다. 타임존은 연결 시 옵션으로 지정하고(위 _create_pool),
+        # 헬스체크는 "한동안 쓰이지 않아 끊겼을 가능성이 있는 연결"에만 수행한다.
+        now = time.monotonic()
+        key = _conn_key(conn)
+        last_used = _CONN_LAST_CHECKED.get(key, 0)
+        needs_probe = conn.closed or (now - last_used) > CONN_HEALTHCHECK_IDLE_SEC
+        if needs_probe:
+            try:
+                with conn.cursor() as probe:
+                    probe.execute("SELECT 1")
+            except Exception:
+                _CONN_LAST_CHECKED.pop(key, None)
+                pool.putconn(conn, close=True)
+                conn = pool.getconn()
+                key = _conn_key(conn)
+        _CONN_LAST_CHECKED[key] = now
+        # 오래된 항목이 무한히 쌓이지 않게 정리 (연결 수만큼만 유지되면 충분하다)
+        if len(_CONN_LAST_CHECKED) > 200:
+            for k, t in list(_CONN_LAST_CHECKED.items()):
+                if now - t > 600:
+                    _CONN_LAST_CHECKED.pop(k, None)
         # 참고: 새로 만들어진 연결은 원래 autocommit이 기본값 False라서
         # 여기서 다시 설정할 필요가 없다. 오히려 방금 위 헬스체크(SELECT 1)로
         # 트랜잭션이 열린 상태에서 이 값을 다시 대입하면
