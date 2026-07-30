@@ -731,6 +731,11 @@ def create_indexes():
         "CREATE INDEX IF NOT EXISTS idx_stock_product ON store_stock(product_id);",
         "CREATE INDEX IF NOT EXISTS idx_brands_category ON brands(category_id);",
         "CREATE INDEX IF NOT EXISTS idx_pre_order_items_order ON pre_order_items(pre_order_id);",
+        # 일일 보고/리포트 화면은 date(t.date_time) = date(%s) 형태로 조회한다.
+        # 컬럼에 함수를 씌우면 일반 인덱스를 쓸 수 없으므로, 같은 식(expression)으로
+        # 인덱스를 만들어 준다. (date_time은 timestamp 타입이라 이 식은 불변이므로 색인 가능)
+        "CREATE INDEX IF NOT EXISTS idx_transactions_dateonly ON stock_transactions((date(date_time)));",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_store_dateonly ON stock_transactions(store_id, (date(date_time)));",
     ]
     for stmt in statements:
         try:
