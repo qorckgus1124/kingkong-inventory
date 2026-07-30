@@ -169,7 +169,8 @@ async function loadStores() {
   } catch (e) {
     console.error('매장 로드 오류:', e);
     const sel = document.getElementById('storeSelect');
-    sel.innerHTML = '<option value="">전체 매장</option><option value="1">본점</option><option value="2">강남역점</option>';
+    sel.innerHTML = '<option value="">전체 매장</option>';
+    toast('매장 목록을 불러오지 못했습니다.', true, '⚠️');
   }
 }
 

@@ -428,11 +428,11 @@ async function loadStores() {
     console.log('✅ 매장 데이터 수신:', storesData);
 
     if (!storesData || !Array.isArray(storesData) || storesData.length === 0) {
-      storesData = [
-        { id: 1, name: '본점' },
-        { id: 2, name: '강남역점' }
-      ];
-      console.log('⚠️ fallback 매장 사용');
+      sel.innerHTML = '<option value="">등록된 매장 없음</option>';
+      preSel.innerHTML = '<option value="">등록된 매장 없음</option>';
+      stores = [];
+      toast('등록된 매장이 없습니다. 매장 관리에서 먼저 매장을 등록해주세요.', true, '⚠️');
+      return;
     }
 
     stores = storesData;
@@ -459,25 +459,14 @@ async function loadStores() {
     renderPreCart();
 
   } catch (e) {
+    // 🔥 실제 매장 목록을 불러오지 못했는데 존재하지도 않는 가짜 매장(본점/강남역점 등)을
+    // 표시하면, 사용자가 그 매장으로 판매를 등록해 DB 오류가 나거나 엉뚱한 매장의 재고가
+    // 바뀔 수 있다. 그래서 실패 시에는 명확한 오류 상태만 보여주고 재시도를 유도한다.
     console.error('❌ 매장 로드 오류:', e);
-    const fallbackStores = [
-      { id: 1, name: '본점' },
-      { id: 2, name: '강남역점' }
-    ];
-    stores = fallbackStores;
-    const opts = fallbackStores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
-    sel.innerHTML = opts;
-    preSel.innerHTML = opts;
-    if (fallbackStores.length > 0) {
-      sel.value = fallbackStores[0].id;
-      preSel.value = fallbackStores[0].id;
-    }
-    toast('매장 목록을 불러오지 못해 기본 매장을 표시합니다.', true, '⚠️');
-    await loadCategories();
-    await loadPreProducts();
-    await loadPreOrders();
-    renderCart();
-    renderPreCart();
+    stores = [];
+    sel.innerHTML = '<option value="">매장 로드 실패</option>';
+    preSel.innerHTML = '<option value="">매장 로드 실패</option>';
+    toast('매장 목록을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.', true, '⚠️');
   }
 }
 

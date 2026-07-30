@@ -225,7 +225,10 @@ async function batchCancelMovements() {
 <script>
 let stores = [];
 let products = [];
-let transferCart = {};
+const TRANSFER_CART_KEY = 'transfer_cart';
+// 🔥 판매 등록 화면과 동일하게, 다른 페이지로 이동했다가 돌아와도 담아둔
+// 이동 목록이 사라지지 않도록 localStorage에 저장/복원한다.
+let transferCart = loadCartFromStorage(TRANSFER_CART_KEY);
 let searchQuery = '';
 let currentFromStore = '';
 
@@ -288,6 +291,7 @@ function onFromStoreChange() {
   document.getElementById('searchBox').value = '';
   searchQuery = '';
   transferCart = {};
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
   renderTransferCart();
   document.getElementById('transferProductGrid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
   document.getElementById('batchTransferBtn').disabled = true;
@@ -385,6 +389,7 @@ function addToTransferCart(pid) {
   } else {
     transferCart[pid] = { product, qty: 1 };
   }
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
   renderTransferCart();
   renderProductGrid();
 }
@@ -395,6 +400,7 @@ function changeTransferQty(pid, delta) {
   const newQty = item.qty + delta;
   if (newQty <= 0) {
     delete transferCart[pid];
+    saveCartToStorage(TRANSFER_CART_KEY, transferCart);
     renderTransferCart();
     renderProductGrid();
     return;
@@ -405,6 +411,7 @@ function changeTransferQty(pid, delta) {
     return;
   }
   item.qty = newQty;
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
   renderTransferCart();
   renderProductGrid();
 }
@@ -420,12 +427,14 @@ function setTransferQty(pid, value) {
     return;
   }
   item.qty = qty;
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
   renderTransferCart();
   renderProductGrid();
 }
 
 function removeFromTransferCart(pid) {
   delete transferCart[pid];
+  saveCartToStorage(TRANSFER_CART_KEY, transferCart);
   renderTransferCart();
   renderProductGrid();
 }
@@ -535,6 +544,7 @@ async function doBatchTransfer() {
 
     // 장바구니 초기화
     transferCart = {};
+    saveCartToStorage(TRANSFER_CART_KEY, transferCart);
     renderTransferCart();
     await loadProducts();
     await loadMovements();
@@ -565,6 +575,7 @@ async function doBatchTransfer() {
 
 // ---------- 초기화 ----------
 document.addEventListener('DOMContentLoaded', function() {
+  renderTransferCart();
   loadStores();
   loadMovements();
 });
