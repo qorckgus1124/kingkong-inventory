@@ -16,10 +16,27 @@ function toast(msg, isError, icon) {
   window.__toastTimer = setTimeout(() => { el.className = ''; }, 3000);
 }
 
-// ---------- API (재시도 + 지수 백오프) ----------
+// ---------- API 실패값 ----------
+// 실패했을 때 {}를 돌려주면, 목록을 기대하는 화면들이 곧바로 res.map(...)을 호출하면서
+// "map is not a function" 오류로 페이지 스크립트 전체가 멈춰버린다(로딩 중 상태로 굳음).
+// 그래서 실패값은 "빈 배열"로 준다. 배열은 .map/.forEach는 물론 res.ok 같은 속성 접근도
+// undefined로 안전하게 처리되기 때문에 두 형태(목록/객체) 모두에 안전하다.
+// 실패 여부를 구분해야 하는 화면은 결과의 __apiError 값을 확인하면 된다.
+function apiFailure(message) {
+  const empty = [];
+  try { empty.__apiError = message || true; } catch (e) {}
+  return empty;
+}
+
+// ---------- API (네트워크 오류만 재시도 + 지수 백오프) ----------
 async function api(url, options, retries = 3) {
   const timeoutMs = 10000;
-  for (let i = 0; i < retries; i++) {
+  const method = ((options && options.method) || 'GET').toUpperCase();
+  // 쓰기 요청(POST/PUT/DELETE)은 재시도하지 않는다. 서버에서 이미 처리된 요청을
+  // 다시 보내면 판매/입출고가 중복 등록될 수 있기 때문이다.
+  const maxAttempts = method === 'GET' ? retries : 1;
+
+  for (let i = 0; i < maxAttempts; i++) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -31,30 +48,40 @@ async function api(url, options, retries = 3) {
       clearTimeout(timeoutId);
       let data = null;
       try { data = await res.json(); } catch (e) {}
+
+      // 서버가 응답을 준 경우(400/404/500 등)는 재시도하지 않는다.
+      // 예전에는 여기서 예외를 던져 재시도 루프를 돌았기 때문에, 같은 오류 메시지가
+      // 3번 뜨고 같은 요청이 3번 더 전송됐다.
       if (!res.ok) {
         const msg = (data && data.error) ? data.error : '오류가 발생했습니다.';
         toast(msg, true, '❌');
-        throw new Error(msg);
+        return apiFailure(msg);
+      }
+      if (data === null || data === undefined) {
+        toast('서버 응답을 읽지 못했습니다.', true, '⚠️');
+        return apiFailure('빈 응답');
       }
       return data;
     } catch (e) {
+      // 여기까지 오는 것은 네트워크 단절/타임아웃 같은 전송 실패뿐이다.
       if (e.name === 'AbortError') {
-        console.warn(`⏱️ API 타임아웃 (${i+1}/${retries}): ${url}`);
-        if (i === retries - 1) {
+        console.warn(`⏱️ API 타임아웃 (${i + 1}/${maxAttempts}): ${url}`);
+        if (i === maxAttempts - 1) {
           toast('서버 응답이 너무 느립니다. 다시 시도해주세요.', true, '⚠️');
-          return {};
+          return apiFailure('타임아웃');
         }
       } else {
-        console.error(`❌ API 오류 (${i+1}/${retries}):`, e);
-      }
-      if (i === retries - 1) {
-        toast('데이터를 불러오지 못했습니다.', true, '⚠️');
-        return {};
+        console.error(`❌ API 통신 오류 (${i + 1}/${maxAttempts}):`, e);
+        if (i === maxAttempts - 1) {
+          toast('데이터를 불러오지 못했습니다. 네트워크 상태를 확인해주세요.', true, '⚠️');
+          return apiFailure('통신 오류');
+        }
       }
       // 지수 백오프: 500ms, 1000ms, 2000ms
       await new Promise(r => setTimeout(r, 500 * Math.pow(2, i)));
     }
   }
+  return apiFailure('요청 실패');
 }
 
 // ---------- 유틸리티 ----------
