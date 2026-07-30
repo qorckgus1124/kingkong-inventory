@@ -425,6 +425,7 @@ function queueOfflineAction(endpoint, method, body, label) {
 // 서버가 정상 응답하면 평소처럼 결과 데이터를 반환한다.
 async function apiOrQueue(endpoint, method, body, label) {
   const payload = Object.assign({}, body || {});
+  clearApiCache();  // 데이터가 바뀌는 요청이므로 마스터 데이터 캐시를 비운다
   if (!navigator.onLine) {
     queueOfflineAction(endpoint, method, payload, label);
     toast('오프라인 상태입니다. 온라인이 되면 자동으로 등록됩니다.', false, '📴');
