@@ -1720,13 +1720,7 @@ def api_products_search():
             ORDER BY p.name LIMIT 15
         """, (f"%{q_norm}%", f"%{q_norm}%"))
         rows = cur.fetchall()
-        result = []
-        for r in rows:
-            try:
-                result.append(product_row_to_dict(conn, r, store_id))
-            except:
-                result.append(dict(r))
-        return jsonify(result)
+        return jsonify(enrich_product_rows(rows, store_id))
     except Exception as e:
         print(f"⚠️ 제품 검색 오류 (q={q}): {e}")
         return jsonify([])
