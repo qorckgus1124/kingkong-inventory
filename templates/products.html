@@ -417,9 +417,22 @@ async function saveMultiProducts() {
 }
 
 // ---------- 브랜드/카테고리/매장 로드 ----------
+// ⚡ 목록을 그릴 때 행마다 brands.find()/categories.find()로 훑으면
+// (제품 2,000개 × 브랜드 300개) 만큼 비교가 일어나 표 그리기가 느려진다.
+// id로 바로 찾을 수 있는 Map을 만들어 쓴다.
+let brandMap = new Map();
+let categoryMap = new Map();
+
+function rebuildLookupMaps() {
+  brandMap = new Map((brands || []).map(b => [b.id, b]));
+  categoryMap = new Map((categories || []).map(c => [c.id, c]));
+}
+
 async function loadBrands() {
   try {
     brands = await api('/api/brands');
+    if (!Array.isArray(brands)) brands = [];
+    rebuildLookupMaps();
     document.getElementById('filterBrand').innerHTML = '<option value="">전체 브랜드</option>' + 
       brands.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
   } catch (e) {
