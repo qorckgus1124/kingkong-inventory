@@ -161,9 +161,9 @@ async function load() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 조회 중...'; }
   try {
     const data = await api(`/api/stocktake?store_id=${encodeURIComponent(storeId)}`);
-    // 오류가 나면 api()가 배열이 아닌 값({})을 돌려준다. 이때 "재고 없음"으로 잘못
-    // 보이지 않도록 조회 전 상태를 유지한다.
-    if (!Array.isArray(data)) {
+    // 오류가 나면 api()가 __apiError가 붙은 빈 배열을 돌려준다. 이때 "재고 없음"으로
+    // 잘못 보이지 않도록 조회 전 상태를 유지한다.
+    if (!Array.isArray(data) || data.__apiError) {
       resetView();
       return;
     }
