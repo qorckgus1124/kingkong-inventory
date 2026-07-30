@@ -1104,6 +1104,7 @@ async function uploadExcel(event) {
 
   try {
     const res = await fetch('/api/import/products', { method: 'POST', body: formData });
+    clearApiCache();  // 업로드로 브랜드/카테고리가 늘어날 수 있으므로 캐시를 비운다
     const data = await res.json();
     if (data.error) {
       resultDiv.innerHTML = `<span style="color:var(--danger);">❌ ${data.error}</span>`;
