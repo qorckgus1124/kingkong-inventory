@@ -534,13 +534,14 @@ async function loadProducts(forceLoad = false) {
     return;
   }
 
-  const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc' });
+  // 판매할 수 없는(재고 0) 제품은 숨긴다
+  const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc', hide_zero_stock: '1' });
   if (q) params.append('q', q);
   if (brandQ) params.append('brand_q', brandQ);
 
   const myToken = normalSearchGuard.next();
   try {
-    const result = await api('/api/products?' + params.toString());
+    const result = await apiSearch('/api/products?' + params.toString());
     if (!normalSearchGuard.isCurrent(myToken)) {
       console.log('⏭️ 오래된 검색 응답 무시 (더 최신 검색이 이미 진행됨)');
       return;
