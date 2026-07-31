@@ -1595,6 +1595,13 @@ def api_products():
             order = request.args.get("order", "asc")
             show_inactive = request.args.get("show_inactive", "0") == "1"
             min_qty_warning = request.args.get("min_qty_warning", "0") == "1"
+            # 재고가 0 이하인 제품 숨기기 (검색 화면에서 기본으로 켜서 보낸다)
+            hide_zero_stock = request.args.get("hide_zero_stock", "0") == "1"
+            # 결과 개수 제한 (자동완성처럼 조금만 필요한 화면이 빠르게 응답받도록)
+            try:
+                limit = min(int(request.args.get("limit", "0") or 0), 2000)
+            except (TypeError, ValueError):
+                limit = 0
 
             sql = """
                 SELECT p.*, b.name as brand_name, b.color as brand_color
@@ -1608,18 +1615,22 @@ def api_products():
             if parent_id:
                 sql += " AND p.parent_product_id = %s"
                 params.append(parent_id)
+
+            # 🔍 검색: 낱말(공백 단위) 전부가 제품명 또는 브랜드명에 있어야 한다.
+            #    "밤 백향" -> 브랜드 "펀치밤" + 제품명 "백향과" 도 검색됨
+            #    "2%" -> %를 글자로 취급하므로 "2%"가 실제로 들어있는 것만 검색됨
+            name_col = "lower(replace(p.name, ' ', ''))"
+            brand_col = "lower(replace(COALESCE(b.name, ''), ' ', ''))"
             if q:
-                q_norm = normalize_search(q)
-                sql += """ AND (
-                    REPLACE(p.name, ' ', '') ILIKE %s
-                    OR REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s
-                )"""
-                params.append(f"%{q_norm}%")
-                params.append(f"%{q_norm}%")
+                cond, cond_params = build_token_match_sql(q, [name_col, brand_col])
+                if cond:
+                    sql += f" AND {cond}"
+                    params.extend(cond_params)
             if brand_q:
-                brand_q_norm = normalize_search(brand_q)
-                sql += " AND REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s"
-                params.append(f"%{brand_q_norm}%")
+                cond, cond_params = build_token_match_sql(brand_q, [brand_col])
+                if cond:
+                    sql += f" AND {cond}"
+                    params.extend(cond_params)
             if category_id:
                 sql += " AND p.category_id = %s"
                 params.append(category_id)
@@ -1627,20 +1638,27 @@ def api_products():
                 sql += " AND p.brand_id = %s"
                 params.append(brand_id)
 
+            # 재고 0 숨김은 DB 단계에서 걸러서 가져오는 양 자체를 줄인다.
+            if hide_zero_stock:
+                if store_id:
+                    sql += """ AND EXISTS (
+                        SELECT 1 FROM store_stock ss
+                        WHERE ss.product_id = p.id AND ss.store_id = %s AND ss.qty > 0
+                    )"""
+                    params.append(store_id)
+                else:
+                    sql += """ AND EXISTS (
+                        SELECT 1 FROM store_stock ss
+                        WHERE ss.product_id = p.id AND ss.qty > 0
+                    )"""
+
             if sort == "qty":
+                if limit:
+                    sql += " LIMIT %s"
+                    params.append(limit)
                 cur.execute(sql, params)
                 rows = cur.fetchall()
-                result = []
-                for r in rows:
-                    try:
-                        result.append(product_row_to_dict(conn, r, store_id))
-                    except Exception as e:
-                        print(f"⚠️ 제품 #{r['id']} 변환 오류: {e}")
-                        d = dict(r)
-                        d["qty"] = 0
-                        d["min_qty"] = 0
-                        d["margin_rate"] = None
-                        result.append(d)
+                result = enrich_product_rows(rows, store_id)
                 reverse = (order.lower() == "desc")
                 result.sort(key=lambda x: x.get("qty", 0), reverse=reverse)
                 if min_qty_warning:
