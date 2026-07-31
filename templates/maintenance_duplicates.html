@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block content %}
+<h1><i class="ti ti-copy page-icon"></i>중복 제품 정리</h1>
+<div class="subtitle">같은 제품이 두 번 등록되면 재고와 판매 기록이 둘로 갈립니다. 이름이 같은(공백·대소문자 무시) 제품을 찾아 하나로 합칠 수 있습니다.</div>
+
+<div class="card">
+  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <button class="primary" onclick="loadDuplicates()">🔍 중복 찾기</button>
+    <span id="dupSummary" style="font-size:13px; color:var(--text-light);"></span>
+  </div>
+  <div style="font-size:12px; color:var(--text-light); margin-top:10px;">
+    📌 합치면 <strong>재고는 매장별로 더해지고</strong>, 입출고·판매·가격 이력은 남길 제품으로 이관됩니다.
+    합쳐진 제품은 삭제하지 않고 <strong>비활성</strong>으로 남겨두므로, 잘못 합쳤을 때 제품 관리에서 "비활성 제품도 보기"로 확인할 수 있습니다.
+  </div>
+</div>
+
+<div id="dupArea"></div>
+
+<script>
+let dupGroups = [];
+
+async function loadDuplicates() {
+  const area = document.getElementById('dupArea');
+  area.innerHTML = '<div class="card"><div class="empty">⏳ 확인 중...</div></div>';
+  document.getElementById('dupSummary').textContent = '';
+
+  const res = await api('/api/products/duplicates');
+  if (!res || res.__apiError || res.error) {
+    area.innerHTML = `<div class="card"><div class="empty"><span class="empty-icon">⚠️</span>${escapeHtml((res && res.error) || '조회에 실패했습니다.')}</div></div>`;
+    return;
+  }
+
+  dupGroups = Array.isArray(res.groups) ? res.groups : [];
+  document.getElementById('dupSummary').textContent = `중복 후보 ${fmt(dupGroups.length)}그룹`;
+
+  if (dupGroups.length === 0) {
+    area.innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">✅</span>이름이 겹치는 제품이 없습니다.</div></div>';
+    return;
+  }
+
+  area.innerHTML = dupGroups.map((gr, gi) => renderGroup(gr, gi)).join('');
+}
+
+function renderGroup(gr, gi) {
+  const warn = gr.same_brand
+    ? ''
+    : '<span class="badge badge-warning" style="margin-left:6px;">브랜드가 다름 · 확인 필요</span>';
+  const catWarn = gr.same_category
+    ? ''
+    : '<span class="badge badge-warning" style="margin-left:6px;">카테고리가 다름</span>';
+
+  const rows = gr.items.map((it, idx) => `
+    <tr>
+      <td style="width:40px;">
+        <input type="radio" name="target_${gi}" value="${it.id}" ${idx === 0 ? 'checked' : ''}>
+      </td>
+      <td>#${it.id}</td>
+      <td>${escapeHtml(it.name)}</td>
+      <td>${escapeHtml(it.brand_name || '-')}</td>
+      <td>${it.category_name ? `<span class="chip" style="background:#8a8f98;">${escapeHtml(it.category_name)}</span>` : '-'}</td>
+      <td>${fmt(it.cost_price)}</td>
+      <td>${fmt(it.sale_price)}</td>
+      <td><strong>${fmt(it.qty)}</strong></td>
+      <td>${fmt(it.transaction_count)}건</td>
+    </tr>
+  `).join('');
+
+  return `
+  <div class="card">
+    <h3 style="margin-top:0;">
+      ${escapeHtml(gr.display_name)}
+      <span style="font-size:12px; color:var(--text-light);">(${gr.items.length}개 · 재고 합계 ${fmt(gr.total_qty)})</span>
+      ${warn}${catWarn}
+    </h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>남길 제품</th><th>#</th><th>제품명</th><th>브랜드</th><th>카테고리</th><th>원가</th><th>판매가</th><th>재고</th><th>기록</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+      <button class="primary" onclick="mergeGroup(${gi})">🔗 선택한 제품으로 합치기</button>
+    </div>
+  </div>`;
+}
+
+async function mergeGroup(gi) {
+  const gr = dupGroups[gi];
+  if (!gr) return;
+  const picked = document.querySelector(`input[name="target_${gi}"]:checked`);
+  if (!picked) { toast('남길 제품을 선택해주세요.', true, '⚠️'); return; }
+
+  const targetId = parseInt(picked.value, 10);
+  const sourceIds = gr.items.map(it => it.id).filter(id => id !== targetId);
+  if (sourceIds.length === 0) { toast('합칠 제품이 없습니다.', true, 'ℹ️'); return; }
+
+  const targetItem = gr.items.find(it => it.id === targetId);
+  const msg = `"${targetItem.name}" (#${targetId}) 하나로 합칩니다.\n\n`
+    + `합쳐질 제품: ${sourceIds.length}개\n`
+    + `재고는 매장별로 더해지고, 입출고·판매 기록은 남길 제품으로 옮겨집니다.\n\n진행할까요?`;
+  if (!confirm(msg)) return;
+
+  const res = await api('/api/products/merge', {
+    method: 'POST',
+    body: JSON.stringify({ target_id: targetId, source_ids: sourceIds })
+  });
+  if (res && res.ok) {
+    toast(`${res.merged_count}개 제품을 합쳤습니다. (기록 ${fmt(res.moved_transactions)}건 이관)`, false, '✅');
+    loadDuplicates();
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadDuplicates);
+</script>
+{% endblock %}
