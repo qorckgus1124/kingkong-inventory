@@ -33,7 +33,7 @@
 
   <!-- 매장 수정 모달 -->
   <div id="editStoreModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9998; justify-content:center; align-items:center;">
-    <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:500px; width:92%; max-height:80vh; overflow-y:auto; box-shadow:var(--shadow);">
+    <div style="background:var(--card-bg); border-radius:var(--radius-card); padding:26px; max-width:500px; width:92%; max-height:80vh; overflow-y:auto; box-shadow:var(--shadow);">
       <h3 style="color:var(--text); margin-top:0;">✏️ 매장 수정</h3>
       <input type="hidden" id="editStoreId">
       <div class="form-field" style="margin-bottom:12px;"><label>매장명</label><input type="text" id="editStoreName" style="width:100%;"></div>
@@ -50,7 +50,7 @@
 
   <!-- 출근 기록 수정 모달 -->
   <div id="editAttendanceModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
-    <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:400px; width:92%; box-shadow:var(--shadow);">
+    <div style="background:var(--card-bg); border-radius:var(--radius-card); padding:26px; max-width:400px; width:92%; box-shadow:var(--shadow);">
       <h3 style="color:var(--text); margin-top:0;">⏰ 출근 기록 수정</h3>
       <input type="hidden" id="editAttendanceId">
       <div class="form-field" style="margin-bottom:12px;"><label>직원명</label><input type="text" id="editAttendanceStaff" style="width:100%;" readonly></div>
@@ -66,12 +66,12 @@
 
   <!-- 시간 선택 모달 -->
   <div id="timePickerModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9997; justify-content:center; align-items:center;">
-    <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:360px; width:90%; box-shadow:var(--shadow);">
+    <div style="background:var(--card-bg); border-radius:var(--radius-card); padding:26px; max-width:360px; width:90%; box-shadow:var(--shadow);">
       <h3 style="margin-top:0; color:var(--text);">⏰ 근무 시간 선택</h3>
       <p id="timePickerInfo" style="color:var(--text-light); font-size:13px; margin-bottom:12px;"></p>
       <div style="display:flex; gap:12px; margin-bottom:16px;">
-        <div style="flex:1;"><label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">시작</label><select id="timeStart" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);"></select></div>
-        <div style="flex:1;"><label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">종료</label><select id="timeEnd" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);"></select></div>
+        <div style="flex:1;"><label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">시작</label><select id="timeStart" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);"></select></div>
+        <div style="flex:1;"><label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">종료</label><select id="timeEnd" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);"></select></div>
       </div>
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button onclick="closeTimePicker()" style="padding:8px 16px;">취소</button>
@@ -273,7 +273,7 @@ function renderStoreList() {
         <span style="font-size:12px; color:var(--text-light); margin-right:8px;">📌 전체 담당자:</span>
         ${staffs.map(name => `
           <span class="staff-tag" draggable="true" ondragstart="dragStaff(event, '${escapeHtml(name)}')" 
-                style="background:var(--hover-bg); padding:2px 8px; border-radius:12px; cursor:grab; display:inline-flex; align-items:center; gap:4px; color:var(--text);">
+                style="background:var(--hover-bg); padding:2px 9px; border-radius:var(--radius-pill); cursor:grab; display:inline-flex; align-items:center; gap:4px; color:var(--text);">
             ${escapeHtml(name)}
             <span style="cursor:pointer; color:var(--danger);" onclick="removeStaffFromStore(${s.id}, '${escapeHtml(name)}')">✕</span>
           </span>
@@ -305,14 +305,14 @@ function renderStoreList() {
         <h4 style="margin:0 0 8px 0; color:var(--text);">⏰ 출근 기록</h4>
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
           <input type="date" id="attDate_${s.id}" value="${today}" style="width:140px;">
-          <select id="attStaff_${s.id}" style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--input-bg); color:var(--text);">
+          <select id="attStaff_${s.id}" style="padding:4px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
             <option value="">전체</option>
             ${staffs.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
           </select>
           <button onclick="loadAttendance(${s.id})" class="primary" style="padding:4px 12px;">🔄 조회</button>
           <button onclick="addAttendanceForm(${s.id})" style="padding:4px 12px;">+ 추가</button>
         </div>
-        <div id="attendanceList_${s.id}" style="margin-top:8px; font-size:13px; max-height:250px; overflow-y:auto; border:1px solid var(--border); border-radius:6px; background:var(--card-bg);">
+        <div id="attendanceList_${s.id}" style="margin-top:8px; font-size:13px; max-height:250px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius); background:var(--card-bg);">
           <div style="padding:12px; color:var(--text-light); text-align:center;">조회 버튼을 눌러 기록을 확인하세요.</div>
         </div>
       </div>
@@ -1200,61 +1200,17 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <style>
-.calendar-cell { transition: background 0.1s; }
-.calendar-cell:hover { background: var(--hover-bg) !important; }
-.staff-tag { cursor: grab; }
-.staff-tag:active { cursor: grabbing; }
-
-/* 재고 이동 탭 스타일 */
-#transferProductGrid .product-card {
-  cursor: pointer;
-}
-#transferProductGrid .product-card.disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-#transferCartWrap {
-  max-height: 300px;
-  overflow-y: auto;
-}
-#transferCartWrap::-webkit-scrollbar {
-  width: 4px;
-}
-#transferCartWrap::-webkit-scrollbar-track {
-  background: transparent;
-}
+/* .calendar-cell / .staff-tag / .tab-btn / .tab-row / .product-card 는
+   static/style.css(HYPER-GLASS)에서 관리한다.
+   여기에는 이 화면에만 필요한 "재고 이동 탭" 치수만 남긴다. */
+#transferProductGrid .product-card { cursor: pointer; }
+#transferProductGrid .product-card.disabled { opacity: 0.4; cursor: not-allowed; }
+#transferCartWrap { max-height: 300px; overflow-y: auto; padding-right: 4px; }
+#transferCartWrap::-webkit-scrollbar { width: 5px; }
+#transferCartWrap::-webkit-scrollbar-track { background: transparent; }
 #transferCartWrap::-webkit-scrollbar-thumb {
-  background: var(--text-light);
-  border-radius: 4px;
-}
-#transferCartWrap::-webkit-scrollbar-thumb:hover {
-  background: var(--text);
-}
-.tab-btn {
-  transition: all 0.2s;
-  font-weight: 600;
-  border: none;
-  background: none;
-  padding: 6px 16px;
-  cursor: pointer;
-  color: var(--text-light) !important;
-  border-bottom: 3px solid transparent !important;
-  font-size: 14px;
-}
-.tab-btn:hover {
-  color: var(--text) !important;
-}
-.tab-btn.active {
-  color: var(--text) !important;
-  border-bottom: 3px solid var(--accent) !important;
-  font-weight: 700 !important;
-}
-.tab-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-  border-bottom: 2px solid var(--border);
-  padding-bottom: 8px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  border-radius: var(--radius-pill);
 }
 </style>
 {% endblock %}

@@ -142,7 +142,7 @@
 <!-- 인수인계 메모 (대시보드에서만 수정 가능) -->
 <div class="card">
   <h3>📝 인수인계 메모</h3>
-  <textarea id="dashboardMemoContent" placeholder="인수인계 내용을 입력하세요..." style="width:100%; min-height:120px; font-size:13px; color:var(--text); line-height:1.6; background:var(--textarea-bg); border:1px solid var(--border); border-radius:6px; padding:10px; resize:vertical; font-family:'Pretendard', monospace;"></textarea>
+  <textarea id="dashboardMemoContent" placeholder="인수인계 내용을 입력하세요..." style="width:100%; min-height:120px; font-size:13px; color:var(--text); line-height:1.6; background:var(--textarea-bg); border:1px solid var(--border); border-radius:var(--radius); padding:10px; resize:vertical; font-family:'Pretendard', monospace;"></textarea>
   <div style="display:flex; gap:6px; justify-content:flex-end; margin-top:6px;">
     <button onclick="saveHandoverMemo()" style="padding:4px 12px; font-size:12px;">💾 저장</button>
     <span id="handoverSaveStatus" style="font-size:11px; color:var(--text-light); align-self:center;"></span>
@@ -152,6 +152,28 @@
 <!-- Chart.js CDN -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+// ==============================================================
+// HYPER-GLASS 차트 테마
+// Chart.js는 CSS 변수를 해석하지 못하므로, 현재 테마에 맞는 실제 색을
+// 전역 기본값으로 넣어준다. (다크 모드에서 축/범례 글씨가 안 보이던 문제도 함께 해결)
+// ==============================================================
+(function applyChartTheme() {
+  if (typeof Chart === 'undefined') return;
+  const dark = document.body.classList.contains('dark-mode');
+  Chart.defaults.font.family = "'Pretendard', -apple-system, sans-serif";
+  Chart.defaults.font.weight = '600';
+  Chart.defaults.color = dark ? '#ADA7DC' : '#4C4775';
+  Chart.defaults.borderColor = dark ? 'rgba(150,130,255,0.16)' : 'rgba(24,12,72,0.11)';
+  Chart.defaults.plugins.tooltip.backgroundColor = dark ? 'rgba(16,12,42,0.94)' : 'rgba(246,247,255,0.96)';
+  Chart.defaults.plugins.tooltip.titleColor = dark ? '#F3F1FF' : '#100C2E';
+  Chart.defaults.plugins.tooltip.bodyColor = dark ? '#ADA7DC' : '#4C4775';
+  Chart.defaults.plugins.tooltip.borderColor = dark ? 'rgba(168,139,255,0.35)' : 'rgba(91,30,255,0.28)';
+  Chart.defaults.plugins.tooltip.borderWidth = 1;
+  Chart.defaults.plugins.tooltip.padding = 10;
+  Chart.defaults.plugins.tooltip.cornerRadius = 12;
+})();
+</script>
+<script>
 let trendChart = null;
 let currentPeriod = 'day';
 let categoryDoughnutChart = null;
@@ -160,7 +182,8 @@ let turnoverTopChart = null;
 let turnoverBottomChart = null;
 let currentStockView = 'value';
 
-const CHART_PALETTE = ['#4f8ff7', '#e07a5f', '#81b29a', '#f2cc8f', '#9b5de5', '#00bbf9', '#f15bb5', '#fee440'];
+// HYPER-GLASS 차트 팔레트 (Y2K 네온: 바이올렛 → 마젠타 → 시안 → 라임 → 오렌지 순환)
+const CHART_PALETTE = ['#5B1EFF', '#FF2D9B', '#00E5FF', '#B8FF3C', '#FF9E2C', '#8C6BFF', '#00E5A8', '#FFD84D'];
 
 // 매장 목록 로드
 async function loadStores() {
@@ -285,7 +308,7 @@ async function loadDashboard() {
     } else {
       chart.innerHTML = catSales.map(c => `
         <div style="flex:1; min-width:120px; text-align:center;">
-          <div style="background:${c.category_color || '#8a8f98'}; height:20px; border-radius:4px; width:${Math.max(c.percent || 0, 1)}%; margin:auto;"></div>
+          <div style="background:${c.category_color || '#8a8f98'}; height:20px; border-radius:var(--radius-pill); width:${Math.max(c.percent || 0, 1)}%; margin:auto;"></div>
           <div style="font-size:13px; margin-top:4px;">${escapeHtml(c.category_name || '미분류')} (${c.percent || 0}%)</div>
           <div style="font-size:12px; color:var(--text-light);">${fmt(c.revenue)}원</div>
         </div>
@@ -306,7 +329,7 @@ async function loadDashboard() {
           const arrow = t.change > 0 ? '▲' : t.change < 0 ? '▼' : '➖';
           const color = t.change > 0 ? 'var(--accent)' : t.change < 0 ? 'var(--danger)' : 'var(--text-light)';
           return `
-            <div style="flex:1; min-width:100px; text-align:center; padding:8px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px;">
+            <div style="flex:1; min-width:100px; text-align:center; padding:8px; background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius);">
               <div style="font-weight:600;">${t.category}</div>
               <div style="font-size:20px; font-weight:700; color:${color};">${arrow} ${Math.abs(t.percent)}%</div>
               <div style="font-size:12px; color:var(--text-light);">
@@ -367,8 +390,8 @@ async function loadChart(period) {
         data: {
           labels: ['데이터 없음'],
           datasets: [
-            { label: '매출', data: [0], backgroundColor: 'rgba(79, 143, 247, 0.6)', borderColor: 'rgba(79, 143, 247, 1)', borderWidth: 1 },
-            { label: '이익', data: [0], backgroundColor: 'rgba(224, 122, 95, 0.6)', borderColor: 'rgba(224, 122, 95, 1)', borderWidth: 1 }
+            { label: '매출', data: [0], backgroundColor: 'rgba(91, 30, 255, 0.55)', borderColor: 'rgba(91, 30, 255, 1)', borderWidth: 1 },
+            { label: '이익', data: [0], backgroundColor: 'rgba(255, 45, 155, 0.55)', borderColor: 'rgba(255, 45, 155, 1)', borderWidth: 1 }
           ]
         },
         options: {
@@ -389,16 +412,16 @@ async function loadChart(period) {
           {
             label: '매출',
             data: revenues,
-            backgroundColor: 'rgba(79, 143, 247, 0.6)',
-            borderColor: 'rgba(79, 143, 247, 1)',
+            backgroundColor: 'rgba(91, 30, 255, 0.55)',
+            borderColor: 'rgba(91, 30, 255, 1)',
             borderWidth: 1,
             yAxisID: 'y',
           },
           {
             label: '이익',
             data: profits,
-            backgroundColor: 'rgba(224, 122, 95, 0.6)',
-            borderColor: 'rgba(224, 122, 95, 1)',
+            backgroundColor: 'rgba(255, 45, 155, 0.55)',
+            borderColor: 'rgba(255, 45, 155, 1)',
             borderWidth: 1,
             yAxisID: 'y',
           }
@@ -431,8 +454,8 @@ async function loadChart(period) {
       data: {
         labels: ['오류'],
         datasets: [
-          { label: '매출', data: [0], backgroundColor: 'rgba(79, 143, 247, 0.6)', borderColor: 'rgba(79, 143, 247, 1)', borderWidth: 1 },
-          { label: '이익', data: [0], backgroundColor: 'rgba(224, 122, 95, 0.6)', borderColor: 'rgba(224, 122, 95, 1)', borderWidth: 1 }
+          { label: '매출', data: [0], backgroundColor: 'rgba(91, 30, 255, 0.55)', borderColor: 'rgba(91, 30, 255, 1)', borderWidth: 1 },
+          { label: '이익', data: [0], backgroundColor: 'rgba(255, 45, 155, 0.55)', borderColor: 'rgba(255, 45, 155, 1)', borderWidth: 1 }
         ]
       },
       options: {
@@ -452,10 +475,10 @@ function renderCategoryDoughnut(catSales) {
   const list = (catSales || []).filter(c => (c.revenue || 0) > 0);
   const labels = list.length ? list.map(c => c.category_name || '미분류') : ['데이터 없음'];
   const data = list.length ? list.map(c => c.revenue || 0) : [1];
-  const colors = list.length ? list.map((c, i) => c.category_color || CHART_PALETTE[i % CHART_PALETTE.length]) : ['#e5e7eb'];
+  const colors = list.length ? list.map((c, i) => c.category_color || CHART_PALETTE[i % CHART_PALETTE.length]) : ['rgba(140, 130, 180, 0.35)'];
   categoryDoughnutChart = new Chart(ctx, {
     type: 'doughnut',
-    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 2, borderColor: 'var(--card-bg, #fff)' }] },
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 2, borderColor: 'rgba(255, 255, 255, 0.18)' }] },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -507,7 +530,7 @@ function renderStockComposition() {
       datasets: [{
         label: currentStockView === 'value' ? '재고 금액(원가 기준)' : '취급 상품 수',
         data: values.length ? values : [0],
-        backgroundColor: colors.length ? colors : ['#e5e7eb'],
+        backgroundColor: colors.length ? colors : ['rgba(140, 130, 180, 0.35)'],
         borderRadius: 4,
       }]
     },
@@ -540,7 +563,7 @@ async function loadTurnoverCharts() {
     const top = rows.filter(r => r.turnover_count !== null).slice(0, 5);
     renderHorizontalBar('turnoverTopChart', turnoverTopChart,
       top.map(r => r.group_name), top.map(r => r.turnover_count),
-      '회전 횟수', '#81b29a', (v) => `${v}회전`,
+      '회전 횟수', '#00E5A8', (v) => `${v}회전`,
       (chart) => { turnoverTopChart = chart; });
 
     // 소진 임박 TOP5 (days_to_deplete 짧은 순, 판매 이력 있는 것만)
@@ -548,7 +571,7 @@ async function loadTurnoverCharts() {
       .sort((a, b) => a.days_to_deplete - b.days_to_deplete).slice(0, 5);
     renderHorizontalBar('turnoverBottomChart', turnoverBottomChart,
       bottom.map(r => r.group_name), bottom.map(r => r.days_to_deplete),
-      '예상 소진일', '#e07a5f', (v) => `${v}일`,
+      '예상 소진일', '#FF2D9B', (v) => `${v}일`,
       (chart) => { turnoverBottomChart = chart; });
   } catch (e) {
     console.error('재고회전율 차트 로드 오류:', e);

@@ -111,7 +111,7 @@ function renderColumnPicker() {
   const box = document.getElementById('rbColumnList');
   const selected = rbSelectedColumns[rbSource] || [];
   box.innerHTML = meta.columns.map(c => `
-    <label style="display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--border); border-radius:8px; cursor:pointer; font-size:13px;">
+    <label style="display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius); cursor:pointer; font-size:13px;">
       <input type="checkbox" value="${c.key}" ${selected.includes(c.key) ? 'checked' : ''} onchange="toggleColumn('${c.key}', this.checked)">
       ${escapeHtml(c.label)}
     </label>

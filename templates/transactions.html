@@ -14,7 +14,7 @@
       <div style="font-size:11px; color:var(--text-light);">필수: 일시, 제품명, 브랜드, 카테고리, 수량</div>
     </div>
     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-      <select id="recordStoreSelect" style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--input-bg); color:var(--text);">
+      <select id="recordStoreSelect" style="padding:4px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
         <option value="">기본 매장</option>
       </select>
       <button onclick="document.getElementById('recordFileInput').click()" class="primary">📤 기록 업로드</button>
@@ -22,7 +22,7 @@
       <input type="file" id="recordFileInput" accept=".csv" style="display:none" onchange="uploadRecord(event)">
     </div>
   </div>
-  <div id="recordUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:6px; background:var(--card-bg); border:1px solid var(--border); min-height:20px;"></div>
+  <div id="recordUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:var(--radius); background:var(--card-bg); border:1px solid var(--border); min-height:20px;"></div>
 </div>
 
 <!-- ============================================================ -->
@@ -36,7 +36,7 @@
       <div style="font-size:11px; color:var(--text-light);">필수: 일시, 제품명, 브랜드, 카테고리, 수량</div>
     </div>
     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-      <select id="outboundStoreSelect" style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--input-bg); color:var(--text);">
+      <select id="outboundStoreSelect" style="padding:4px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
         <option value="">기본 매장</option>
       </select>
       <button onclick="document.getElementById('outboundFileInput').click()" class="primary" style="background:var(--danger); border-color:var(--danger);">📤 출고 업로드</button>
@@ -44,7 +44,7 @@
       <input type="file" id="outboundFileInput" accept=".csv" style="display:none" onchange="uploadOutbound(event)">
     </div>
   </div>
-  <div id="outboundUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:6px; background:var(--card-bg); border:1px solid var(--border); min-height:20px;"></div>
+  <div id="outboundUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:var(--radius); background:var(--card-bg); border:1px solid var(--border); min-height:20px;"></div>
 </div>
 
 <!-- ============================================================ -->
@@ -154,7 +154,7 @@
 <!-- 8-1. 입출고 수정 모달 -->
 <!-- ============================================================ -->
 <div class="modal-overlay" id="editTransModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center;">
-  <div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:20px; width:min(420px, 92vw); max-height:90vh; overflow-y:auto;">
+  <div style="background:var(--card-bg); border:1px solid var(--glass-border); border-radius:var(--radius-card); padding:24px; width:min(420px, 92vw); max-height:90vh; overflow-y:auto;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
       <h3 style="margin:0; color:var(--text);">✏️ 입출고 내역 수정</h3>
       <span style="cursor:pointer; font-size:18px; color:var(--text-light);" onclick="closeEditModal()">✕</span>
@@ -892,7 +892,7 @@ async function processUpload(file, adjustStock, resultDivId, storeSelectId) {
     if (data.failed > 0) {
       html += `<div style="color:var(--danger); font-weight:600;">❌ 실패: ${data.failed}건</div>`;
       if (data.errors && data.errors.length > 0) {
-        html += `<div style="margin-top:6px; font-size:12px; max-height:150px; overflow-y:auto; background:var(--hover-bg); padding:6px 10px; border-radius:4px;">`;
+        html += `<div style="margin-top:6px; font-size:12px; max-height:150px; overflow-y:auto; background:var(--hover-bg); padding:6px 10px; border-radius:var(--radius);">`;
         data.errors.slice(0, 10).forEach(err => {
           html += `<div style="padding:2px 0; border-bottom:1px solid var(--border);">${escapeHtml(err)}</div>`;
         });
@@ -963,71 +963,13 @@ document.addEventListener('DOMContentLoaded', async function() {
 </script>
 
 <style>
-.page-btn {
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--card-bg);
-  color: var(--text);
-  cursor: pointer;
-}
-.page-btn:hover {
-  background: var(--hover-bg);
-}
-.page-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+/* .page-btn / .brand-tag / .table-wrap / .txn-row / .txn-remove-btn /
+   .f_brand_display / .selectedInfo 는 static/style.css(HYPER-GLASS)에서 관리한다. */
 #pageInfo, #pageInfoBottom {
   font-size: 13px;
   color: var(--text-light);
-}
-.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.brand-tag {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
-  color: white;
-}
-
-.txn-row {
-  position: relative;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 14px 10px;
-  margin-bottom: 12px;
-  background: var(--card-bg);
-}
-.txn-row:last-child { margin-bottom: 0; }
-.txn-remove-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 24px;
-  height: 24px;
-  line-height: 1;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--card-bg);
-  color: var(--text-light);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0;
-}
-.txn-remove-btn:hover { background: var(--danger-light); color: var(--danger); border-color: var(--danger); }
-.f_brand_display {
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  font-size: 13px;
-  color: var(--text-light);
-}
-.txn-row .selectedInfo {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--text-light);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 </style>
 {% endblock %}

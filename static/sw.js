@@ -5,10 +5,13 @@
 //  v3에서는 완전히 오프라인일 때 빈 화면 대신 안내 페이지를 보여주도록 개선)
 // v5: 다운로드(엑셀/CSV 내보내기) 로직이 담긴 common.js가 바뀌었으므로 캐시 이름을 올려
 //     예전 캐시를 폐기한다 (activate 단계에서 이름이 다른 캐시는 모두 삭제된다).
-const CACHE_NAME = 'inventory-v5';
+// v6: HYPER-GLASS 리디자인으로 style.css가 전면 교체되고 immersive.js가 새로 추가됐다.
+//     캐시 이름을 올려서 예전 스타일이 남아 있는 일이 없게 한다.
+const CACHE_NAME = 'inventory-v6';
 const urlsToCache = [
   '/static/style.css',
   '/static/common.js?v=5',
+  '/static/immersive.js',
   '/static/manifest.json',
   '/static/icon-192.png',
   '/static/icon-512.png',

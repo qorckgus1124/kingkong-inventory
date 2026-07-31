@@ -163,7 +163,7 @@ async function loadBestsellers(period) {
     container.innerHTML = rows.map((r, idx) => {
   const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx+1}`;
   return `
-    <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center;">
+    <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius); padding:12px; text-align:center;">
       <div style="font-size:24px;">${medal}</div>
       <div style="font-weight:600; font-size:14px; margin:4px 0;">${escapeHtml(r.name)}</div>
       <div style="display:flex; gap:4px; justify-content:center; flex-wrap:wrap; margin-bottom:2px;">

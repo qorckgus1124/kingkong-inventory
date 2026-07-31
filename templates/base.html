@@ -2,7 +2,9 @@
 <html lang="ko">
 <head>
 <link rel="manifest" href="/static/manifest.json">
-<meta name="theme-color" content="#3B6FE0">
+<!-- HYPER-GLASS 브랜드 컬러. 다크모드를 직접 토글해도 주소창 색이 따라오도록
+     아래 초기화 스크립트 / updateThemeToggleUI()에서 값을 갱신한다. -->
+<meta name="theme-color" id="themeColorMeta" content="#EDF0FF">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
 <title>킹콩재고 관리</title>
@@ -33,15 +35,30 @@
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
+<!-- 수치 디스플레이용 사이버 서체(Orbitron). 한글은 Pretendard로 자동 폴백된다.
+     display=swap 이라 폰트가 늦게 와도 화면이 비어 보이지 않는다. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&display=swap">
 <!-- ?v= 값은 파일이 바뀔 때 서버가 자동으로 바꿔준다(app.py의 asset_version).
      덕분에 브라우저가 css/js를 오래 캐시해도 새 배포는 즉시 반영된다. -->
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 <!-- ?v= 값을 올리면 브라우저가 캐시된 예전 파일 대신 새 파일을 반드시 받아온다.
      (다운로드 로직이 common.js에 있어서, 캐시된 옛 버전이 남아 있으면 수정이 반영되지 않는다) -->
 <script src="/static/common.js?v={{ asset_version }}"></script>
+<!-- 3D 틸트 / 포인터 광원 / 배경 패럴랙스 (기능에는 개입하지 않고 CSS 변수만 채운다) -->
+<script src="/static/immersive.js?v={{ asset_version }}" defer></script>
 </head>
 <body data-page="{{ active }}">
 <script>
+  // 주소창/상태바 색을 현재 테마에 맞춘다. (HYPER-DAY / HYPER-NIGHT)
+  function syncThemeColorMeta() {
+    const meta = document.getElementById('themeColorMeta');
+    if (!meta) return;
+    meta.setAttribute('content',
+      document.body.classList.contains('dark-mode') ? '#05030F' : '#EDF0FF');
+  }
+
   (function() {
     const saved = localStorage.getItem('darkMode');
     if (saved === 'true') {
@@ -51,15 +68,32 @@
       document.body.classList.add('dark-mode');
       localStorage.setItem('darkMode', 'true');
     }
+    syncThemeColorMeta();
   })();
 </script>
+
+<!-- ==============================================================
+     배경 스테이지 (HYPER-GLASS 표면 3층 중 1층)
+     원근 그리드 바닥 + 호라이즌 네온 라인 + 블러 오브 3개 + CRT 스캔라인
+     + 필름 노이즈 + 비네트. 전부 CSS로만 그려지고 클릭을 막지 않는다.
+     ============================================================== -->
+<div class="bg-stage" aria-hidden="true">
+  <div class="bg-orb o1"></div>
+  <div class="bg-orb o2"></div>
+  <div class="bg-orb o3"></div>
+  <div class="bg-horizon"></div>
+  <div class="bg-grid"></div>
+  <div class="bg-scan"></div>
+  <div class="bg-noise"></div>
+  <div class="bg-vignette"></div>
+</div>
 
 <div class="layout">
   <aside class="sidebar" id="sidebar">
     <div class="brand"><span class="brand-mark"><i class="ti ti-box"></i></span>재고·판매관리</div>
     <div class="store-selector" style="padding: 0 2px; margin-bottom: 8px; flex-shrink: 0;">
       <!-- 매장 목록을 서버에서 미리 넣어둔다 (열자마자 바로 보이고, 요청 한 번이 줄어든다) -->
-      <select id="globalStoreSelect" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:13px; cursor:pointer;">
+      <select id="globalStoreSelect" style="width:100%; padding:7px 12px; border-radius:var(--radius-pill); border:1px solid var(--glass-border); background:var(--input-bg); color:var(--text); font-size:13px; cursor:pointer;">
         <option value="">매장 선택</option>
         {% for s in global_stores %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
       </select>
@@ -302,8 +336,13 @@ function filterMobileNavItems(query) {
 function updateThemeToggleUI() {
   const isDark = document.body.classList.contains('dark-mode');
   document.querySelectorAll('.theme-toggle-btn').forEach(btn => {
+    // 유리 트랙/노브는 CSS의 ::before/::after로 그려지므로 innerHTML을 갈아도 유지된다.
     btn.innerHTML = isDark ? '<i class="ti ti-sun"></i> 라이트 모드' : '<i class="ti ti-moon"></i> 다크 모드';
+    btn.setAttribute('role', 'switch');
+    btn.setAttribute('aria-checked', isDark ? 'true' : 'false');
+    btn.setAttribute('aria-label', isDark ? '라이트 모드로 전환' : '다크 모드로 전환');
   });
+  if (typeof syncThemeColorMeta === 'function') syncThemeColorMeta();
 }
 
 function toggleTheme() {
@@ -566,16 +605,19 @@ async function loadFloatingRevenue() {
     if (!progressBar) {
       progressBar = document.createElement('div');
       progressBar.className = 'fp-progress-bar';
+      // HYPER-GLASS: 트랙은 유리 홈, 채움은 브랜드 그라디언트(달성) / 마젠타(미달성)
       progressBar.style.cssText = `
-        width: 100%; height: 4px; background: var(--border); border-radius: 2px;
-        margin-top: 4px; overflow: hidden;
+        width: 100%; height: 6px; background: var(--glass-3);
+        border: 1px solid var(--border); border-radius: var(--radius-pill);
+        margin-top: 6px; overflow: hidden;
+        box-shadow: inset 0 1px 3px rgba(24,12,72,0.2);
       `;
       const fill = document.createElement('div');
       fill.className = 'fp-progress-fill';
       fill.style.cssText = `
         width: 0%; height: 100%;
-        background: ${isAchieved ? 'var(--accent)' : 'var(--danger)'};
-        border-radius: 2px; transition: width 0.5s ease;
+        background-image: ${isAchieved ? 'var(--grad-lime)' : 'var(--grad-brand)'};
+        border-radius: var(--radius-pill); transition: width 0.5s var(--ease);
       `;
       progressBar.appendChild(fill);
       targetInfo.appendChild(progressBar);
@@ -583,7 +625,7 @@ async function loadFloatingRevenue() {
     const fill = progressBar.querySelector('.fp-progress-fill');
     if (fill) {
       fill.style.width = Math.min(progress, 100) + '%';
-      fill.style.background = isAchieved ? 'var(--accent)' : 'var(--danger)';
+      fill.style.backgroundImage = isAchieved ? 'var(--grad-lime)' : 'var(--grad-brand)';
     }
   } catch (e) {
     console.error('플로팅 패널 매출 로드 오류:', e);

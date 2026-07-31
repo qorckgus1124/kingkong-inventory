@@ -32,7 +32,7 @@ function renderSummarySection(section) {
       `</div>`
     : '';
   return `
-    <div style="border:1px solid var(--border); border-radius:10px; padding:12px 14px;">
+    <div style="border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px;">
       <div style="font-weight:700; color:var(--text); margin-bottom:8px;">${escapeHtml(section.title)}</div>
       <div style="font-size:13px; color:var(--text); display:flex; flex-direction:column; gap:2px;">${linesHtml}</div>
       ${extraHtml}
@@ -150,19 +150,5 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 
-<style>
-.report-textarea {
-  font-size: 13px;
-  line-height: 1.6;
-  background: var(--textarea-bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px;
-  width: 100%;
-  height: 200px;
-  resize: vertical;
-  font-family: 'Pretendard', monospace;
-}
-</style>
+<!-- .report-textarea 스타일은 static/style.css(HYPER-GLASS)에서 관리한다. -->
 {% endblock %}

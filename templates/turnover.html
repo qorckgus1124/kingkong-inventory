@@ -49,9 +49,9 @@
 </table>
 </div>
 <div style="display:flex; gap:16px; margin-top:12px; font-size:12px; color:var(--text-light); align-items:center;">
-  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:var(--danger); margin-right:4px;"></span>7일 이하 - 재고 부족 위험</span>
-  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:var(--warning); margin-right:4px;"></span>14일 이하 - 주의</span>
-  <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:var(--success); margin-right:4px;"></span>여유</span>
+  <span><span style="display:inline-block; width:10px; height:10px; border-radius:var(--radius-pill); background:var(--danger); margin-right:4px;"></span>7일 이하 - 재고 부족 위험</span>
+  <span><span style="display:inline-block; width:10px; height:10px; border-radius:var(--radius-pill); background:var(--warning); margin-right:4px;"></span>14일 이하 - 주의</span>
+  <span><span style="display:inline-block; width:10px; height:10px; border-radius:var(--radius-pill); background:var(--success); margin-right:4px;"></span>여유</span>
 </div>
 
 <script>
@@ -135,7 +135,7 @@ function render(rows) {
       <td>${fmt(r.profit)}원</td>
       <td>
         <div style="display:flex; align-items:center; gap:8px;">
-          <div style="flex:1; background:var(--input-bg); border-radius:4px; height:8px; overflow:hidden;">
+          <div style="flex:1; background:var(--glass-3); border:1px solid var(--border); border-radius:var(--radius-pill); height:8px; overflow:hidden;">
             <div style="width:${barPercent}%; height:100%; background:${depleteColor};"></div>
           </div>
           <span style="color:${depleteColor}; font-weight:600; white-space:nowrap; font-size:12px;">${depleteLabel}</span>

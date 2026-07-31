@@ -86,19 +86,19 @@
         <div style="margin-bottom:8px;">
           <div class="form-field" style="margin-bottom:4px;">
             <label style="font-size:12px; color:var(--text-light);">👤 고객명</label>
-            <input type="text" id="pre_customer_name" placeholder="고객명" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+            <input type="text" id="pre_customer_name" placeholder="고객명" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
           </div>
           <div class="form-field" style="margin-bottom:4px;">
             <label style="font-size:12px; color:var(--text-light);">📞 연락처</label>
-            <input type="text" id="pre_customer_phone" placeholder="연락처" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+            <input type="text" id="pre_customer_phone" placeholder="연락처" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
           </div>
           <div class="form-field" style="margin-bottom:4px;">
             <label style="font-size:12px; color:var(--text-light);">🏠 주소</label>
-            <input type="text" id="pre_customer_address" placeholder="주소" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+            <input type="text" id="pre_customer_address" placeholder="주소" style="width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
           </div>
           <div class="form-field" style="margin-bottom:4px;">
             <label style="font-size:12px; color:var(--text-light);">📝 요청사항</label>
-            <textarea id="pre_request_memo" placeholder="요청사항을 입력하세요." rows="1" oninput="autoGrowTextarea(this)" style="width:100%; min-height:36px; resize:none; overflow:hidden; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text); font-family:inherit; font-size:13px; line-height:1.4;"></textarea>
+            <textarea id="pre_request_memo" placeholder="요청사항을 입력하세요." rows="1" oninput="autoGrowTextarea(this)" style="width:100%; min-height:36px; resize:none; overflow:hidden; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text); font-family:inherit; font-size:13px; line-height:1.4;"></textarea>
           </div>
         </div>
         <div class="cart-title" style="margin-top:4px;">🛒 장바구니</div>
@@ -139,236 +139,17 @@
 <!-- 추가 스타일 -->
 <!-- ============================================================ -->
 <style>
-/* 🔥 제품 카드 4열 배치 */
-.product-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-}
-.product-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 12px;
-  cursor: pointer;
-  text-align: left;
-  transition: all 0.2s ease;
-}
-.product-card:hover {
-  border-color: var(--accent);
-  transform: translateY(-3px);
-  box-shadow: 0 6px 20px rgba(0,0,0,0.08);
-}
-.product-card.disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.product-card .pname {
-  font-weight: 600;
-  font-size: 13px;
-  margin-bottom: 6px;
-  line-height: 1.4;
-  word-break: break-word;
-}
-.product-card .pprice {
-  color: var(--accent);
-  font-weight: 700;
-  font-size: 14px;
-}
-.product-card .pqty {
-  color: var(--text-light);
-  font-size: 11px;
-  margin-top: 4px;
-}
+/* 컴포넌트 스타일(.product-card / .cat-tab / .quick-btn / .ci-* / .discount-input /
+   .cart-* / 스크롤바)은 static/style.css(HYPER-GLASS)에서 관리한다.
+   이 화면 고유 규칙만 남긴다: 제품 카드 4열 배치, 장바구니 높이. */
+.product-grid { grid-template-columns: repeat(4, 1fr); }
+.sale-right { max-height: 80vh; height: 100%; }
 
-.cat-tabs {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-.cat-tab {
-  padding: 6px 14px;
-  border-radius: 20px;
-  border: 1px solid var(--border);
-  background: var(--card-bg);
-  cursor: pointer;
-  font-size: 13px;
-}
-.cat-tab:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-}
-.cat-tab.active {
-  background: var(--text);
-  color: var(--bg);
-  border-color: var(--text);
-}
-body.dark-mode .cat-tab.active {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
-
-/* 🔥 장바구니 컨테이너 - 고정 + 스크롤 */
-.sale-right {
-  display: flex;
-  flex-direction: column;
-  max-height: 80vh;
-  height: 100%;
-}
-
-/* 상단 고정 영역 */
-.cart-header {
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-}
-
-/* 장바구니 아이템 스크롤 영역 */
-.cart-items-wrap {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-  padding-right: 4px;
-}
-
-/* 스크롤바 스타일 (얇고 투명) */
-.cart-items-wrap::-webkit-scrollbar {
-  width: 4px;
-}
-.cart-items-wrap::-webkit-scrollbar-track {
-  background: transparent;
-}
-.cart-items-wrap::-webkit-scrollbar-thumb {
-  background: var(--text-light);
-  border-radius: 4px;
-}
-.cart-items-wrap::-webkit-scrollbar-thumb:hover {
-  background: var(--text);
-}
-
-/* 🔥 퀵 버튼 (재고와 무관하게 바로 담는 상품) */
-.quick-btns {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-}
-.quick-btn {
-  flex: 1;
-  min-width: 90px;
-  padding: 8px 6px;
-  border-radius: 6px;
-  border: 1px dashed var(--accent);
-  background: var(--card-bg);
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.4;
-  text-align: center;
-}
-.quick-btn:hover {
-  background: var(--accent);
-  color: #fff;
-}
-.quick-btn .qb-price {
-  display: block;
-  font-size: 11px;
-  font-weight: 400;
-  opacity: 0.85;
-}
-
-/* 🔥 장바구니 상품별 단가/할인 수정 */
-.ci-edit-row {
-  display: flex;
-  gap: 6px;
-  margin-top: 4px;
-}
-.ci-edit-row label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-light);
-}
-.ci-price-input, .ci-discount-input {
-  width: 72px;
-  padding: 3px 5px;
-  font-size: 12px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--text);
-}
-
-/* 🔥 장바구니 전체 할인 입력 필드 */
-.discount-input {
-  width: 120px !important;
-  padding: 6px 8px !important;
-  font-size: 14px !important;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--text);
-}
-.discount-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* 🔥 장바구니 전체 할인 & 합계 영역 */
-.cart-total-breakdown {
-  margin: 10px 0 4px;
-}
-.ctb-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 13px;
-  color: var(--text-light);
-  margin-bottom: 6px;
-  gap: 8px;
-}
-.ctb-row.discount-row .discount-input {
-  width: 140px !important;
-  text-align: right;
-}
-.cart-total {
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
-}
-
-/* 🔥 모바일 반응형 */
 @media (max-width: 768px) {
-  .product-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-  }
-  .product-card {
-    padding: 10px 8px;
-  }
-  .product-card .pname {
-    font-size: 12px;
-  }
-  .product-card .pprice {
-    font-size: 13px;
-  }
-  
-  /* 모바일에서 고정 해제 */
-  .sale-right {
-    max-height: none;
-    height: auto;
-  }
-  .cart-header {
-    position: static;
-  }
-  .cart-items-wrap {
-    overflow-y: visible;
-    max-height: none;
-  }
+  .product-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .sale-right { max-height: none; height: auto; }
+  .cart-header { position: static; }
+  .cart-items-wrap { overflow-y: visible; max-height: none; }
 }
 </style>
 
@@ -965,7 +746,7 @@ function renderCart() {
         </div>
         <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
           <button onclick="toggleService('${key}')" 
-                  style="padding:4px 12px; font-size:13px; border-radius:4px; border:1px solid ${isService ? 'var(--accent)' : 'var(--border)'}; background:${isService ? 'var(--accent)' : 'var(--card-bg)'}; color:${isService ? '#fff' : 'var(--text)'}; cursor:pointer; min-width:60px;">
+                  style="padding:4px 12px; font-size:13px; border-radius:var(--radius-pill); border:1px solid ${isService ? 'var(--accent)' : 'var(--border)'}; background:${isService ? 'var(--accent)' : 'var(--card-bg)'}; color:${isService ? '#fff' : 'var(--text)'}; cursor:pointer; min-width:60px;">
             ${isService ? '✅ 서비스' : '서비스'}
           </button>
           <div class="qty-ctrl">
@@ -1268,7 +1049,7 @@ async function loadPreOrders() {
     }
 
     container.innerHTML = orders.map(o => `
-      <div style="border:1px solid var(--border); border-radius:6px; padding:8px; margin-bottom:6px; background:var(--card-bg);">
+      <div style="border:1px solid var(--border); border-radius:var(--radius); padding:8px; margin-bottom:6px; background:var(--card-bg);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
           <strong style="color:var(--text); font-size:13px;">#${o.id}</strong>
           <span style="font-size:11px; color:var(--text-light);">${o.created_at}</span>

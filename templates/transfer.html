@@ -558,7 +558,7 @@ async function doBatchTransfer() {
     }
     if (result.failed.length > 0) {
       html += `<div style="color:var(--danger); font-weight:600;">❌ 실패: ${result.failed.length}건</div>`;
-      html += `<div style="font-size:12px; max-height:150px; overflow-y:auto; background:var(--hover-bg); padding:6px 10px; border-radius:4px; margin-top:4px;">`;
+      html += `<div style="font-size:12px; max-height:150px; overflow-y:auto; background:var(--hover-bg); padding:6px 10px; border-radius:var(--radius); margin-top:4px;">`;
       result.failed.forEach(f => {
         const p = products.find(p => p.id === f.product_id);
         html += `<div>${p ? escapeHtml(p.name) : '#'+f.product_id}: ${escapeHtml(f.error)}</div>`;
@@ -583,69 +583,12 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <style>
-.sale-layout { display: flex; gap: 20px; align-items: flex-start; }
-.sale-left { flex: 1; min-width: 0; }
-.sale-right {
-  width: 320px; flex-shrink: 0;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
-  position: sticky;
-  top: 20px;
-  box-shadow: var(--shadow);
-  max-height: 500px;
-  display: flex;
-  flex-direction: column;
-}
-.sale-right .cart-items-wrap {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
-.sale-right .cart-footer {
-  flex-shrink: 0;
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-  margin-top: 8px;
-}
-.cart-items-wrap::-webkit-scrollbar {
-  width: 4px;
-}
-.cart-items-wrap::-webkit-scrollbar-track {
-  background: transparent;
-}
-.cart-items-wrap::-webkit-scrollbar-thumb {
-  background: var(--text-light);
-  border-radius: 4px;
-}
-.progress-wrap {
-  width: 100%;
-  height: 6px;
-  background: var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.progress-wrap .progress-bar {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 4px;
-  transition: width 0.5s ease;
-}
-.product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-.data-table { border-collapse: collapse; }
-.data-table th { border-bottom: 2px solid var(--border); color: var(--text-light); font-weight: 600; }
-.data-table td { border-bottom: 1px solid var(--border); color: var(--text); }
-.data-table tbody tr:hover { background: var(--hover-bg); }
-.product-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 12px; cursor: pointer; text-align: left; }
-.product-card:hover { border-color: var(--accent); transform: translateY(-3px); box-shadow: 0 6px 20px rgba(0,0,0,0.08); }
-.product-card.disabled { opacity: 0.4; cursor: not-allowed; }
-.product-card .pname { font-weight: 600; font-size: 13px; margin-bottom: 6px; line-height: 1.4; }
-.product-card .pprice { color: var(--accent); font-weight: 700; font-size: 14px; }
-.product-card .pqty { color: var(--text-light); font-size: 11px; margin-top: 4px; }
+/* .sale-layout / .sale-right / .product-card / .product-grid / .progress-wrap /
+   .data-table / 스크롤바는 static/style.css(HYPER-GLASS)에서 관리한다.
+   이 화면은 이동 바구니가 짧아도 되므로 높이만 따로 잡는다. */
+.sale-right { max-height: 520px; }
 @media (max-width: 768px) {
-  .sale-layout { flex-direction: column; }
-  .sale-right { width: 100%; position: static; max-height: none; }
+  .sale-right { max-height: none; }
 }
 </style>
 {% endblock %}

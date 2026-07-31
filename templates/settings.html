@@ -23,7 +23,7 @@
     <div style="flex: 1; min-width: 200px;">
       <label style="display: block; font-size: 12px; color: var(--text-light); margin-bottom: 4px;">목표 금액 (원)</label>
       <input type="number" id="monthlyTargetRevenue" step="10000" min="0" placeholder="0" 
-             style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--input-bg); color: var(--text);">
+             style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--text);">
     </div>
     <div>
       <button class="primary" onclick="saveSettings()" style="padding: 8px 20px;">💾 저장</button>
@@ -110,12 +110,12 @@
     발급된 키는 <b>발급 직후 한 번만</b> 화면에 표시되며, 이후에는 앞자리만 확인할 수 있습니다.
   </div>
 
-  <div style="background:var(--input-bg); border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:14px; font-size:12px; color:var(--text-light);">
+  <div style="background:var(--input-bg); border:1px solid var(--border); border-radius:var(--radius); padding:12px; margin-bottom:14px; font-size:12px; color:var(--text-light);">
     <div style="font-weight:600; color:var(--text); margin-bottom:6px;">📮 연동 엔드포인트</div>
     <div>주문 등록(재고 자동 차감): <code>POST /api/webhook/order</code> — 헤더 <code>X-API-Key: 발급받은키</code></div>
     <div style="margin-top:4px;">연결 테스트(URL 검증용): <code>POST /api/webhook/test</code></div>
     <div style="margin-top:8px;">요청 예시:</div>
-    <pre style="background:var(--bg); padding:8px; border-radius:6px; overflow:auto; margin:4px 0 0;">{
+    <pre style="background:var(--bg); padding:8px; border-radius:var(--radius); overflow:auto; margin:4px 0 0;">{
   "channel": "smartstore",
   "external_order_id": "20240730-0001",
   "store_id": 1,
@@ -163,7 +163,7 @@
 <div class="card">
   <h3 style="color:var(--text);">🛠️ 유지보수</h3>
   <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-    <a href="/maintenance/orphaned-cancellations" style="display:inline-block; padding:8px 14px; border:1px solid var(--border); border-radius:6px; text-decoration:none; color:var(--text);">🧹 매출 오류 기록 정리</a>
+    <a href="/maintenance/orphaned-cancellations" style="display:inline-block; padding:8px 14px; border:1px solid var(--border); border-radius:var(--radius); text-decoration:none; color:var(--text);">🧹 매출 오류 기록 정리</a>
     <span style="font-size:12px; color:var(--text-light);">원본 판매 기록이 삭제되어 짝을 잃은 "판매취소" 기록을 정리합니다. (매출이 원인 모르게 마이너스로 나올 때 사용)</span>
   </div>
 </div>

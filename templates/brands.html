@@ -77,7 +77,7 @@
 
 <!-- 브랜드 수정 모달 -->
 <div id="editBrandModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
-  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:450px; width:92%; box-shadow:var(--shadow);">
+  <div style="background:var(--card-bg); border-radius:var(--radius-card); padding:26px; max-width:450px; width:92%; box-shadow:var(--shadow);">
     <h3 style="color:var(--text); margin-top:0;">✏️ 브랜드 수정</h3>
     <input type="hidden" id="editBrandId">
     <div class="form-field" style="margin-bottom:12px;">
@@ -108,7 +108,7 @@
 
 <!-- 일괄 수정 모달 -->
 <div id="batchEditBrandModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
-  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:450px; width:92%; box-shadow:var(--shadow);">
+  <div style="background:var(--card-bg); border-radius:var(--radius-card); padding:26px; max-width:450px; width:92%; box-shadow:var(--shadow);">
     <h3 style="color:var(--text); margin-top:0;">✏️ 브랜드 일괄 수정</h3>
     <p style="font-size:13px; color:var(--text-light);"><span id="batchEditCount">0</span>개 선택</p>
     <div class="form-field" style="margin-bottom:12px;">
@@ -201,7 +201,7 @@ function renderBrands() {
         <td><span class="row-number">${idx + 1}</span></td>
         <td><span class="brand-tag" style="background:${b.color || '#8a8f98'};">${escapeHtml(b.name)}</span></td>
         <td>${b.category_name ? escapeHtml(b.category_name) : '<span style="color:var(--text-light);">미지정</span>'}</td>
-        <td><span style="display:inline-block; width:24px; height:24px; border-radius:4px; background:${b.color || '#8a8f98'}; border:1px solid var(--border);"></span></td>
+        <td><span style="display:inline-block; width:24px; height:24px; border-radius:var(--radius-pill); background:${b.color || '#8a8f98'}; border:1px solid var(--glass-border); box-shadow:inset 0 1px 0 rgba(255,255,255,0.45), 0 2px 8px -3px rgba(0,0,0,0.4);"></span></td>
         <td><span class="badge ${statusClass}">${statusLabel}</span></td>
         <td>${b.product_count || 0}</td>
         <td>
@@ -470,15 +470,6 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 
-<style>
-.brand-tag {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
-  color: white;
-}
-.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-</style>
+<!-- .brand-tag / .table-wrap 스타일은 static/style.css(HYPER-GLASS)에서 관리한다.
+     여기서 다시 선언하면 나중에 오는 이 블록이 디자인 시스템을 덮어써버린다. -->
 {% endblock %}

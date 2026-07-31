@@ -56,7 +56,7 @@ def inject_asset_version():
     global _ASSET_VERSION
     if _ASSET_VERSION is None:
         newest = 0
-        for name in ("common.js", "style.css"):
+        for name in ("common.js", "style.css", "immersive.js"):
             try:
                 newest = max(newest, int(os.path.getmtime(os.path.join(BASE_DIR, "static", name))))
             except OSError:

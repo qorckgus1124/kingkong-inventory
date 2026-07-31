@@ -51,7 +51,7 @@
       <input type="file" id="uploadInput" accept=".csv" style="display:none" onchange="uploadCsv(event)">
     </div>
   </div>
-  <div id="stocktakeUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:6px; background:var(--card-bg); border:1px solid var(--border); min-height:20px; display:none;"></div>
+  <div id="stocktakeUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:var(--radius); background:var(--card-bg); border:1px solid var(--border); min-height:20px; display:none;"></div>
 </div>
 
 <!-- ============================================================ -->
@@ -93,17 +93,8 @@
 </div>
 
 <style>
-.page-btn {
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--card-bg);
-  color: var(--text);
-  cursor: pointer;
-}
-.page-btn:hover { background: var(--hover-bg); }
-.page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-#prevPageBtn:disabled, #nextPageBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* .page-btn 스타일은 static/style.css(HYPER-GLASS)에서 관리한다. */
+#prevPageBtn:disabled, #nextPageBtn:disabled { opacity: 0.35; cursor: not-allowed; }
 </style>
 
 <script>

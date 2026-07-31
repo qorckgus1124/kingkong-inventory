@@ -91,9 +91,9 @@
   </label>
   <button onclick="downloadTemplate()">📥 템플릿</button>
   <button onclick="location.href='/maintenance/duplicates'" title="이름이 같은 제품이 두 번 등록됐는지 확인하고 하나로 합칩니다.">🔗 중복 정리</button>
-  <span style="display:inline-flex; align-items:center; gap:6px; background:var(--hover-bg); padding:4px 10px; border-radius:6px; border:1px solid var(--border);">
+  <span style="display:inline-flex; align-items:center; gap:6px; background:var(--hover-bg); padding:4px 10px; border-radius:var(--radius); border:1px solid var(--border);">
     <label style="font-size:12px; color:var(--text-light);">📤 업로드 매장</label>
-    <select id="uploadStoreSelect" style="padding:4px 6px; font-size:12px; border:1px solid var(--border); border-radius:4px; background:var(--input-bg);">
+    <select id="uploadStoreSelect" style="padding:4px 6px; font-size:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg);">
       <option value="">전체</option>
     </select>
     <button onclick="document.getElementById('excelUpload').click()" class="primary" style="padding:4px 10px; font-size:12px;">업로드</button>
@@ -102,7 +102,7 @@
   <button onclick="exportProducts(event)">📊 다운로드</button>
 </div>
 
-<div id="uploadResult" style="margin:8px 0; font-size:13px; padding:8px 12px; border-radius:6px; background:var(--card-bg); border:1px solid var(--border); min-height:20px; max-height:200px; overflow-y:auto; display:none;"></div>
+<div id="uploadResult" style="margin:8px 0; font-size:13px; padding:8px 12px; border-radius:var(--radius); background:var(--card-bg); border:1px solid var(--border); min-height:20px; max-height:200px; overflow-y:auto; display:none;"></div>
 
 <!-- 일괄 작업 바: 체크박스 선택 시에만 노출 -->
 <div id="bulkBar" class="bulk-bar" style="display:none;">
@@ -141,7 +141,7 @@
 
 <!-- 제품 상세/수정 모달 -->
 <div id="productModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
-  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:560px; width:92%; max-height:85vh; overflow-y:auto; position:relative; box-shadow:var(--shadow);">
+  <div style="background:var(--card-bg); border-radius:var(--radius-card); padding:26px; max-width:560px; width:92%; max-height:85vh; overflow-y:auto; position:relative; box-shadow:var(--shadow);">
     <button onclick="closeModal()" style="position:absolute; top:12px; right:16px; border:none; background:none; font-size:24px; cursor:pointer; color:var(--text);">✕</button>
     <h2 id="modalTitle" style="color:var(--text); margin-top:0;">📦 제품 수정</h2>
     <div id="modalBody"></div>
@@ -154,12 +154,12 @@
 
 <!-- 대량 가격 변경 모달 -->
 <div id="batchPriceModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
-  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:400px; width:92%; box-shadow:var(--shadow);">
+  <div style="background:var(--card-bg); border-radius:var(--radius-card); padding:26px; max-width:400px; width:92%; box-shadow:var(--shadow);">
     <h3 style="color:var(--text); margin-top:0;">💰 대량 가격 변경</h3>
     <p style="font-size:13px; color:var(--text-light); margin-bottom:12px;"><span id="selectedCountDisplay">0</span>개 제품 선택됨</p>
     <div class="form-field" style="margin-bottom:12px;">
       <label>변경 대상</label>
-      <select id="batchField" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+      <select id="batchField" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius);">
         <option value="cost_price">원가</option>
         <option value="card_cost_price">카드원가</option>
         <option value="sale_price">판매가</option>
@@ -167,14 +167,14 @@
     </div>
     <div class="form-field" style="margin-bottom:12px;">
       <label>방식</label>
-      <select id="batchOperation" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;" onchange="toggleBatchValueLabel()">
+      <select id="batchOperation" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius);" onchange="toggleBatchValueLabel()">
         <option value="set">특정 값으로 설정</option>
         <option value="percent">% 증감</option>
       </select>
     </div>
     <div class="form-field" style="margin-bottom:16px;">
       <label id="batchValueLabel">값</label>
-      <input type="number" id="batchValue" placeholder="0" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+      <input type="number" id="batchValue" placeholder="0" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius);">
     </div>
     <div style="display:flex; gap:8px; justify-content:flex-end;">
       <button onclick="closeBatchPriceModal()" style="padding:8px 16px;">취소</button>
@@ -185,7 +185,7 @@
 
 <!-- 일괄 수정 모달 -->
 <div id="batchEditModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
-  <div style="background:var(--card-bg); border-radius:12px; padding:24px; max-width:450px; width:92%; box-shadow:var(--shadow);">
+  <div style="background:var(--card-bg); border-radius:var(--radius-card); padding:26px; max-width:450px; width:92%; box-shadow:var(--shadow);">
     <h3 style="color:var(--text); margin-top:0;">✏️ 일괄 수정</h3>
     <p style="font-size:13px; color:var(--text-light); margin-bottom:12px;"><span id="batchEditCount">0</span>개 제품 선택됨</p>
     <div class="form-field" style="margin-bottom:12px;">
@@ -194,17 +194,17 @@
     </div>
     <div class="form-field" style="margin-bottom:12px;">
       <label>카테고리</label>
-      <select id="batchEditCategory" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+      <select id="batchEditCategory" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius);">
         <option value="">변경 안 함</option>
       </select>
     </div>
     <div class="form-field" style="margin-bottom:12px;">
       <label>원가</label>
-      <input type="number" id="batchEditCost" placeholder="변경 안 함" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+      <input type="number" id="batchEditCost" placeholder="변경 안 함" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius);">
     </div>
     <div class="form-field" style="margin-bottom:12px;">
       <label>판매가</label>
-      <input type="number" id="batchEditSale" placeholder="변경 안 함" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+      <input type="number" id="batchEditSale" placeholder="변경 안 함" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius);">
     </div>
     <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
       <button onclick="closeBatchEditModal()" style="padding:8px 16px;">취소</button>
@@ -814,41 +814,41 @@ async function showProductDetail(id) {
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:12px 0;">
         <div class="form-field" style="grid-column: span 2;">
           <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">제품명 *</label>
-          <input type="text" id="edit_name" value="${escapeHtml(product.name)}" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          <input type="text" id="edit_name" value="${escapeHtml(product.name)}" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
         </div>
         <div class="form-field">
           <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">브랜드</label>
-          <input type="text" id="edit_brand_new" placeholder="브랜드명 직접 입력" value="${escapeHtml(product.brand_name || '')}" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          <input type="text" id="edit_brand_new" placeholder="브랜드명 직접 입력" value="${escapeHtml(product.brand_name || '')}" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
         </div>
         <div class="form-field">
           <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">카테고리</label>
-          <select id="edit_category" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          <select id="edit_category" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
             <option value="">미분류</option>
             ${catOpts}
           </select>
         </div>
         <div class="form-field">
           <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">상태</label>
-          <select id="edit_status" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          <select id="edit_status" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
             <option value="1" ${product.is_active ? 'selected' : ''}>✅ 활성</option>
             <option value="0" ${!product.is_active ? 'selected' : ''}>❌ 비활성</option>
           </select>
         </div>
         <div class="form-field">
           <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">원가</label>
-          <input type="number" id="edit_cost" value="${product.cost_price || 0}" oninput="autoCalcCardCostModal()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          <input type="number" id="edit_cost" value="${product.cost_price || 0}" oninput="autoCalcCardCostModal()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
         </div>
         <div class="form-field">
           <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">카드원가 (자동 계산)</label>
-          <input type="number" id="edit_cardcost" value="${product.card_cost_price || 0}" readonly style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          <input type="number" id="edit_cardcost" value="${product.card_cost_price || 0}" readonly style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
         </div>
         <div class="form-field">
           <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">판매가</label>
-          <input type="number" id="edit_sale" value="${product.sale_price || 0}" oninput="autoCalcCardCostModal()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          <input type="number" id="edit_sale" value="${product.sale_price || 0}" oninput="autoCalcCardCostModal()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
         </div>
         <div class="form-field" style="grid-column: span 2;">
           <label style="font-size:12px; color:var(--text-light); display:block; margin-bottom:4px;">메모</label>
-          <input type="text" id="edit_memo" value="${escapeHtml(product.memo || '')}" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text);">
+          <input type="text" id="edit_memo" value="${escapeHtml(product.memo || '')}" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
         </div>
         <div style="grid-column: span 2; display:flex; gap:8px; margin-top:8px;">
           <button class="primary" onclick="saveProductEdit()" style="flex:1;">💾 저장</button>
@@ -892,7 +892,7 @@ async function renderVariantsSection(product) {
 
   if (product.is_variant) {
     box.innerHTML = `
-      <div style="background:var(--hover-bg); border-radius:8px; padding:10px 12px; font-size:12px; color:var(--text-light);">
+      <div style="background:var(--hover-bg); border-radius:var(--radius); padding:10px 12px; font-size:12px; color:var(--text-light);">
         🔗 이 제품은 <strong style="color:var(--text);">${escapeHtml(product.parent_name || '상위 제품')}</strong>의 옵션(<strong style="color:var(--text);">${escapeHtml(product.option_name || '')}</strong>)입니다.
       </div>
     `;
@@ -902,13 +902,13 @@ async function renderVariantsSection(product) {
   try {
     const variants = await api(`/api/products?parent_id=${product.id}&show_inactive=1`);
     box.innerHTML = `
-      <div style="border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:4px;">
+      <div style="border:1px solid var(--border); border-radius:var(--radius); padding:12px; margin-top:4px;">
         <div style="font-weight:600; color:var(--text); margin-bottom:8px;">🎨 옵션(맛/용량 등) 관리 ${variants.length > 0 ? `(${variants.length}개)` : ''}</div>
         ${variants.length === 0
           ? '<div style="font-size:12px; color:var(--text-light); margin-bottom:8px;">등록된 옵션이 없습니다. 맛/용량/색상별로 재고를 따로 관리하려면 옵션을 추가하세요.</div>'
           : `<div style="display:flex; flex-direction:column; gap:6px; margin-bottom:10px;">
               ${variants.map(v => `
-                <div style="display:flex; align-items:center; justify-content:space-between; background:var(--hover-bg); border-radius:6px; padding:6px 10px; ${v.is_active ? '' : 'opacity:0.5;'}">
+                <div style="display:flex; align-items:center; justify-content:space-between; background:var(--hover-bg); border-radius:var(--radius); padding:6px 10px; ${v.is_active ? '' : 'opacity:0.5;'}">
                   <span style="font-size:13px; color:var(--text); cursor:pointer;" onclick="showProductDetail(${v.id})">${escapeHtml(v.option_name || v.name)} <span style="color:var(--text-light); font-size:11px;">(재고 ${fmt(v.qty)})</span></span>
                   <button class="danger" style="padding:2px 8px; font-size:11px;" onclick="deleteVariantProduct(${v.id}, ${product.id})">삭제</button>
                 </div>
@@ -916,7 +916,7 @@ async function renderVariantsSection(product) {
             </div>`
         }
         <div style="display:flex; gap:6px;">
-          <input type="text" id="newVariantName" placeholder="옵션명 (예: 딸기맛 30ml)" style="flex:1; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--text); font-size:12px;" onkeydown="if(event.key==='Enter'){addVariantOption(${product.id});}">
+          <input type="text" id="newVariantName" placeholder="옵션명 (예: 딸기맛 30ml)" style="flex:1; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text); font-size:12px;" onkeydown="if(event.key==='Enter'){addVariantOption(${product.id});}">
           <button class="primary" style="padding:6px 14px; font-size:12px;" onclick="addVariantOption(${product.id})">+ 옵션 추가</button>
         </div>
       </div>
@@ -1127,7 +1127,7 @@ async function uploadExcel(event) {
       if (data.failed > 0) {
         html += `<div style="color:var(--danger); font-weight:600;">❌ 실패: ${data.failed}건</div>`;
         if (data.errors && data.errors.length > 0) {
-          html += `<div style="margin-top:6px; font-size:12px; max-height:100px; overflow-y:auto; background:var(--hover-bg); padding:6px 10px; border-radius:4px;">`;
+          html += `<div style="margin-top:6px; font-size:12px; max-height:100px; overflow-y:auto; background:var(--hover-bg); padding:6px 10px; border-radius:var(--radius);">`;
           data.errors.slice(0, 10).forEach(err => {
             html += `<div style="padding:2px 0; border-bottom:1px solid var(--border);">${escapeHtml(err)}</div>`;
           });
