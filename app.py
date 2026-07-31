@@ -2227,6 +2227,168 @@ def api_products_search():
         print(f"⚠️ 제품 검색 오류 (q={q}): {e}")
         return jsonify([])
 
+# ---------------------------------------------------------------------------
+# API - 중복 제품 탐지 / 병합
+# ---------------------------------------------------------------------------
+# 같은 제품이 두 번 등록되면 재고와 판매 기록이 둘로 갈린다. 이름을 기준으로
+# (공백 제거 + 대소문자 무시) 겹치는 것을 찾아 보여주고, 하나로 합칠 수 있게 한다.
+
+@app.route("/api/products/duplicates")
+def api_products_duplicates():
+    try:
+        get_db()
+        cur = g.cursor
+        cur.execute("""
+            WITH dup AS (
+                SELECT lower(replace(name, ' ', '')) AS k
+                FROM products
+                WHERE is_active = 1
+                GROUP BY lower(replace(name, ' ', ''))
+                HAVING COUNT(*) > 1
+            )
+            SELECT p.id, p.name, p.brand_id, p.category_id, p.cost_price, p.card_cost_price,
+                   p.sale_price, p.parent_product_id, p.created_at,
+                   b.name AS brand_name, c.name AS category_name,
+                   lower(replace(p.name, ' ', '')) AS group_key,
+                   COALESCE(st.qty, 0) AS qty,
+                   COALESCE(tx.cnt, 0) AS transaction_count
+            FROM products p
+            JOIN dup ON dup.k = lower(replace(p.name, ' ', ''))
+            LEFT JOIN brands b ON b.id = p.brand_id
+            LEFT JOIN categories c ON c.id = p.category_id
+            LEFT JOIN (SELECT product_id, SUM(qty) AS qty FROM store_stock GROUP BY product_id) st
+                   ON st.product_id = p.id
+            LEFT JOIN (SELECT product_id, COUNT(*) AS cnt FROM stock_transactions GROUP BY product_id) tx
+                   ON tx.product_id = p.id
+            WHERE p.is_active = 1
+            ORDER BY group_key, p.id
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+
+        groups = {}
+        for r in rows:
+            groups.setdefault(r["group_key"], []).append(r)
+
+        result = []
+        for key, items in groups.items():
+            # 브랜드까지 같으면 "확실한 중복", 브랜드가 다르면 "확인 필요"로 표시한다.
+            brand_names = {(it["brand_name"] or "") for it in items}
+            category_names = {(it["category_name"] or "") for it in items}
+            result.append({
+                "group_key": key,
+                "display_name": items[0]["name"],
+                "same_brand": len(brand_names) == 1,
+                "same_category": len(category_names) == 1,
+                "total_qty": sum((it["qty"] or 0) for it in items),
+                "items": items,
+            })
+        # 재고/기록이 많은 그룹을 위로 (합칠 가치가 큰 순서)
+        result.sort(key=lambda gr: (-sum((it["transaction_count"] or 0) for it in gr["items"]), gr["display_name"]))
+        return jsonify({"count": len(result), "groups": result})
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 중복 제품 조회 오류: {e}")
+        return jsonify({"error": f"중복 제품을 확인하는 중 오류가 발생했습니다: {e}"}), 500
+
+
+@app.route("/api/products/merge", methods=["POST"])
+def api_products_merge():
+    """여러 제품을 하나(target_id)로 합친다.
+
+    - 재고: 매장별로 더해서 대상 제품으로 옮긴다
+    - 입출고/가격이력/선결제항목/이동내역: 대상 제품을 가리키도록 바꾼다 (기록 보존)
+    - 옵션(하위 제품): 대상 제품 아래로 옮긴다
+    - 합쳐진 제품은 삭제하지 않고 비활성으로 두어, 잘못 합쳤을 때 확인할 수 있게 한다
+    """
+    conn = get_db()
+    cur = g.cursor
+    data = request.get_json(force=True, silent=True) or {}
+    target_id = data.get("target_id")
+    source_ids = data.get("source_ids") or []
+
+    try:
+        target_id = int(target_id)
+        source_ids = [int(s) for s in source_ids if int(s) != target_id]
+    except (TypeError, ValueError):
+        return jsonify({"error": "합칠 제품을 올바르게 선택해주세요."}), 400
+    if not source_ids:
+        return jsonify({"error": "합쳐질 제품을 1개 이상 선택해주세요."}), 400
+
+    try:
+        cur.execute("SELECT id, name FROM products WHERE id = %s", (target_id,))
+        target = cur.fetchone()
+        if not target:
+            return jsonify({"error": "남길 제품을 찾을 수 없습니다."}), 404
+
+        cur.execute("SELECT id, name FROM products WHERE id = ANY(%s)", (source_ids,))
+        sources = cur.fetchall()
+        if len(sources) != len(source_ids):
+            return jsonify({"error": "합쳐질 제품 중 존재하지 않는 것이 있습니다."}), 404
+
+        # 1) 재고 합치기 (같은 매장 재고는 더하고, 최소재고는 큰 값을 유지)
+        cur.execute(
+            """SELECT store_id, SUM(qty) AS qty, MAX(min_qty) AS min_qty
+               FROM store_stock WHERE product_id = ANY(%s) GROUP BY store_id""",
+            (source_ids,),
+        )
+        moved_stock = [dict(r) for r in cur.fetchall()]
+        for row in moved_stock:
+            cur.execute(
+                """INSERT INTO store_stock (store_id, product_id, qty, min_qty)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (store_id, product_id) DO UPDATE
+                   SET qty = store_stock.qty + excluded.qty,
+                       min_qty = GREATEST(store_stock.min_qty, excluded.min_qty)""",
+                (row["store_id"], target_id, row["qty"] or 0, row["min_qty"] or 0),
+            )
+        cur.execute("DELETE FROM store_stock WHERE product_id = ANY(%s)", (source_ids,))
+
+        # 2) 기록 이관 (매출/입출고 이력이 사라지지 않게)
+        cur.execute("UPDATE stock_transactions SET product_id = %s WHERE product_id = ANY(%s)", (target_id, source_ids))
+        moved_transactions = cur.rowcount
+        cur.execute("UPDATE price_history SET product_id = %s WHERE product_id = ANY(%s)", (target_id, source_ids))
+        cur.execute("UPDATE pre_order_items SET product_id = %s WHERE product_id = ANY(%s)", (target_id, source_ids))
+        cur.execute("UPDATE stock_movements SET product_id = %s WHERE product_id = ANY(%s)", (target_id, source_ids))
+
+        # 3) 옵션(하위 제품)은 대상 제품 아래로
+        cur.execute(
+            "UPDATE products SET parent_product_id = %s WHERE parent_product_id = ANY(%s)",
+            (target_id, source_ids),
+        )
+
+        # 4) 합쳐진 제품은 비활성 처리 + 메모 남기기
+        merged_note = f"[병합] #{target_id} {target['name']} 으로 합쳐짐 ({now_kst().strftime('%Y-%m-%d %H:%M')})"
+        cur.execute(
+            """UPDATE products
+               SET is_active = 0,
+                   parent_product_id = NULL,
+                   memo = CASE WHEN COALESCE(memo, '') = '' THEN %s ELSE memo || ' / ' || %s END,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ANY(%s)""",
+            (merged_note, merged_note, source_ids),
+        )
+
+        conn.commit()
+        return jsonify({
+            "ok": True,
+            "target_id": target_id,
+            "target_name": target["name"],
+            "merged_count": len(source_ids),
+            "merged_names": [s["name"] for s in sources],
+            "moved_transactions": moved_transactions,
+            "moved_stock": moved_stock,
+        })
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 제품 병합 오류: {e}")
+        return jsonify({"error": f"제품을 합치는 중 오류가 발생했습니다: {e}"}), 500
+
+
+@app.route("/maintenance/duplicates")
+def maintenance_duplicates_page():
+    return render_template("maintenance_duplicates.html", active="products")
+
+
 @app.route("/api/products/<int:pid>", methods=["GET", "PUT", "DELETE"])
 def api_product_detail(pid):
     conn = get_db()
