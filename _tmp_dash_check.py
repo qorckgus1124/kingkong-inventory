@@ -1,7 +1,27 @@
 # -*- coding: utf-8 -*-
 """임시 검증 (실행 후 삭제): 대시보드 재고 원가 총액 카드 확인"""
+import io
 import os
 import re
+import sys
+
+# 콘솔 인코딩(cp949) 때문에 한글 출력이 실패하는 것을 막기 위해 결과를 UTF-8 파일로 직접 쓴다.
+_BUF = io.StringIO()
+
+
+def print(*args, **kwargs):  # noqa: A001
+    _BUF.write(" ".join(str(a) for a in args) + "\n")
+
+
+import atexit
+
+
+@atexit.register
+def _flush():
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "_tmp_dash.txt"), "w", encoding="utf-8") as f:
+        f.write(_BUF.getvalue())
+
+
 import psycopg2
 import psycopg2.pool
 

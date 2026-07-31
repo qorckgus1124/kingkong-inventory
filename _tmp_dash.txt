@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "C:\Users\qorck\Downloads\kingkongvape\app.py", line 603, in init_db
+    load_brand_mapping_from_csv()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\qorck\Downloads\kingkongvape\app.py", line 639, in load_brand_mapping_from_csv
+    print(f"\u26a0\ufe0f 브랜드 CSV 파일을 찾을 수 없습니다: {BRAND_CSV_PATH}")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'cp949' codec can't encode character '\u26a0' in position 0: illegal multibyte sequence
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\qorck\Downloads\kingkongvape\_tmp_dash_check.py", line 83, in <module>
+    import app as appmod  # noqa: E402
+    ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\qorck\Downloads\kingkongvape\app.py", line 668, in <module>
+    init_db()
+    ~~~~~~~^^
+  File "C:\Users\qorck\Downloads\kingkongvape\app.py", line 608, in init_db
+    print(f"\u274c DB 초기화 오류: {e}")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'cp949' codec can't encode character '\u274c' in position 0: illegal multibyte sequence
