@@ -1669,19 +1669,12 @@ def api_products():
                 sort_col = allowed_sort.get(sort, "id")
                 order_sql = "DESC" if order.lower() == "desc" else "ASC"
                 sql += f" ORDER BY {sort_col} {order_sql}"
+                if limit:
+                    sql += " LIMIT %s"
+                    params.append(limit)
                 cur.execute(sql, params)
                 rows = cur.fetchall()
-                result = []
-                for r in rows:
-                    try:
-                        result.append(product_row_to_dict(conn, r, store_id))
-                    except Exception as e:
-                        print(f"⚠️ 제품 #{r['id']} 변환 오류: {e}")
-                        d = dict(r)
-                        d["qty"] = 0
-                        d["min_qty"] = 0
-                        d["margin_rate"] = None
-                        result.append(d)
+                result = enrich_product_rows(rows, store_id)
                 if min_qty_warning:
                     result = [p for p in result if p.get("qty", 0) <= p.get("min_qty", 0)]
                 return jsonify(result)
