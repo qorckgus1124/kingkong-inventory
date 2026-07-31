@@ -4315,6 +4315,87 @@ def get_settings_cache():
         g._settings_cache = {r["key"]: r["value"] for r in rows}
     return g._settings_cache
 
+@app.route("/api/today_revenue")
+def api_today_revenue():
+    """오늘 매출/이익만 가볍게 돌려준다 (플로팅 패널 + 대시보드 오늘 카드 실시간 갱신용).
+
+    ⚡ 예전에는 플로팅 패널이 무거운 /api/dashboard 전체를 불러와서 오늘 매출만 꺼내 썼다.
+    이 엔드포인트는 집계 두 번만 실행하므로 자주 호출해도 부담이 없고,
+    캐시를 전혀 쓰지 않으므로 판매를 등록하면 바로 반영된다.
+    """
+    try:
+        get_db()
+        cur = g.cursor
+        today = now_kst().date()
+        month_start = today.replace(day=1)
+
+        store_id = request.args.get("store_id")
+        if store_id:
+            try:
+                store_id = int(store_id)
+            except (TypeError, ValueError):
+                store_id = None
+
+        # 오늘: 항상 실시간
+        today_totals = compute_sales_totals(store_id, single_date=today)
+        if store_id:
+            cur.execute(
+                "SELECT override_amount FROM daily_revenue_override WHERE store_id = %s AND target_date = %s",
+                (store_id, today.strftime("%Y-%m-%d")),
+            )
+            override = cur.fetchone()
+            if override and override["override_amount"] is not None:
+                today_totals["revenue"] = override["override_amount"]
+
+        # 이번달: 지난 날짜는 집계표, 오늘은 실시간
+        month_totals = get_sales_totals_cached(store_id, month_start, today)
+        month_revenue = month_totals["revenue"]
+        month_profit = month_totals["profit"]
+        if store_id:
+            cur.execute(
+                """SELECT COALESCE(SUM(override_amount), 0) AS total FROM daily_revenue_override
+                   WHERE store_id = %s AND target_date >= %s AND target_date <= %s""",
+                (store_id, month_start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")),
+            )
+            row = cur.fetchone()
+            override_total = (row["total"] if row else 0) or 0
+            if override_total > 0:
+                ratio = (month_profit / month_revenue) if month_revenue > 0 and month_profit > 0 else 0
+                month_revenue = override_total
+                month_profit = int(override_total * ratio)
+
+        settings = get_settings_cache()
+        monthly_target = int(settings.get("monthly_target_revenue", 0)) if settings else 0
+
+        import calendar
+        total_days = calendar.monthrange(today.year, today.month)[1]
+        days_elapsed = today.day
+        remaining_days = max(total_days - days_elapsed, 0)
+        remaining_amount = max(monthly_target - month_revenue, 0)
+        is_achieved = monthly_target > 0 and month_revenue >= monthly_target
+
+        return jsonify({
+            "today": today_totals,
+            "month": {"qty": month_totals["qty"], "revenue": month_revenue, "profit": month_profit},
+            "monthly_target": {
+                "target": monthly_target,
+                "total_days": total_days,
+                "days_elapsed": days_elapsed,
+                "remaining_days": remaining_days,
+                "current_revenue": month_revenue,
+                "remaining_amount": remaining_amount,
+                "daily_avg_needed": (remaining_amount / remaining_days) if remaining_days > 0 and remaining_amount > 0 else 0,
+                "progress_percent": (month_revenue / monthly_target * 100) if monthly_target > 0 else 0,
+                "is_achieved": is_achieved,
+            },
+            "server_time": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 오늘 매출 조회 오류: {e}")
+        return jsonify({"error": "오늘 매출을 불러오지 못했습니다."}), 500
+
+
 @app.route("/api/dashboard")
 def api_dashboard():
     try:
