@@ -423,6 +423,8 @@ async function saveMultiProducts() {
 async function loadBrands() {
   try {
     brands = await api('/api/brands');
+    if (!Array.isArray(brands)) brands = [];
+    rebuildLookupMaps();
     document.getElementById('filterBrand').innerHTML = '<option value="">전체 브랜드</option>' + 
       brands.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
   } catch (e) {
