@@ -535,14 +535,26 @@ function loadAll() {
   load();
 }
 
+// ⚡ 행마다 brands.find()/categories.find()로 훑으면 (제품 2,000개 × 브랜드 300개)만큼
+// 비교가 일어나 표 그리기가 눈에 띄게 느려진다. id로 바로 찾는 Map을 만들어 쓴다.
+const _brandMap = new Map();
+const _categoryMap = new Map();
+
+function rebuildLookupMaps() {
+  _brandMap.clear();
+  _categoryMap.clear();
+  (Array.isArray(brands) ? brands : []).forEach(b => _brandMap.set(b.id, b));
+  (Array.isArray(categories) ? categories : []).forEach(c => _categoryMap.set(c.id, c));
+}
+
 function categoryChip(id) {
-  const c = categories.find(c => c.id === id);
+  const c = _categoryMap.get(id);
   if (!c) return '<span style="color:var(--text-light)">미분류</span>';
   return `<span class="chip" style="background:${c.color}">${escapeHtml(c.name)}</span>`;
 }
 
 function brandTag(id) {
-  const b = brands.find(b => b.id === id);
+  const b = _brandMap.get(id);
   if (!b) return '<span style="color:var(--text-light)">-</span>';
   return `<span class="brand-tag" style="background:${b.color || '#8a8f98'};">${escapeHtml(b.name)}</span>`;
 }
