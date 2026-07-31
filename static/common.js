@@ -35,6 +35,10 @@ async function api(url, options, retries = 3) {
   // 쓰기 요청(POST/PUT/DELETE)은 재시도하지 않는다. 서버에서 이미 처리된 요청을
   // 다시 보내면 판매/입출고가 중복 등록될 수 있기 때문이다.
   const maxAttempts = method === 'GET' ? retries : 1;
+  if (method !== 'GET') {
+    // 데이터가 바뀌면 검색 캐시는 즉시 버린다 (오래된 결과가 보이지 않도록)
+    try { clearSearchCache(); } catch (e) {}
+  }
 
   for (let i = 0; i < maxAttempts; i++) {
     try {
@@ -335,8 +339,8 @@ async function apiSearch(url) {
     return hit.d;
   }
   const data = await api(url);
-  // 실패한 응답(__apiError)은 캐시하지 않는다.
-  if (data && !data.__apiError) {
+  // 정상적으로 받아온 목록만 캐시한다 (오류 응답은 캐시하지 않음).
+  if (Array.isArray(data) && !data.__apiError) {
     if (_searchCache.size >= SEARCH_CACHE_MAX) {
       _searchCache.delete(_searchCache.keys().next().value);
     }
