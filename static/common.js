@@ -296,9 +296,53 @@ function normalizeSearchText(s) {
   return (s || '').replace(/\s+/g, '').toLowerCase();
 }
 
-function matchesSearch(text, query) {
-  if (!query) return true;
-  return normalizeSearchText(text).includes(normalizeSearchText(query));
+// 검색어를 공백 기준 낱말로 나눈다. 예) "밤 백향" -> ["밤", "백향"]
+function searchTokens(query) {
+  return String(query || '')
+    .trim()
+    .split(/\s+/)
+    .map(t => normalizeSearchText(t))
+    .filter(t => t.length > 0);
+}
+
+// 낱말이 "전부" 들어있어야 일치로 본다 (서버 검색 규칙과 동일).
+// 여러 항목(제품명, 브랜드명 등)을 넘기면 그중 어디에 있어도 인정한다.
+//   matchesSearch('백향과', '밤 백향', '펀치밤')  -> true
+//   matchesSearch('v21', '2%')                    -> false ("2%"라는 글자가 없으므로)
+function matchesSearch(text, query, ...extraTexts) {
+  const tokens = searchTokens(query);
+  if (tokens.length === 0) return true;
+  const haystacks = [text, ...extraTexts].map(t => normalizeSearchText(t));
+  return tokens.every(token => haystacks.some(h => h.includes(token)));
+}
+
+// ---------------------------------------------------------------------------
+// 검색 결과 임시 캐시 (같은 검색어를 다시 치거나 한 글자 지웠다 되돌릴 때 즉시 표시)
+// ⚡ 서버 왕복을 건너뛰기 때문에 체감 대기시간이 0에 가까워진다.
+//    메모리에만 두고 30초만 유지하며, 데이터가 바뀌는 요청이 나가면 통째로 버린다.
+// ---------------------------------------------------------------------------
+const SEARCH_CACHE_TTL_MS = 30 * 1000;
+const SEARCH_CACHE_MAX = 60;
+const _searchCache = new Map();
+
+function clearSearchCache() {
+  _searchCache.clear();
+}
+
+async function apiSearch(url) {
+  const hit = _searchCache.get(url);
+  if (hit && (Date.now() - hit.t) < SEARCH_CACHE_TTL_MS) {
+    return hit.d;
+  }
+  const data = await api(url);
+  // 실패한 응답(__apiError)은 캐시하지 않는다.
+  if (data && !data.__apiError) {
+    if (_searchCache.size >= SEARCH_CACHE_MAX) {
+      _searchCache.delete(_searchCache.keys().next().value);
+    }
+    _searchCache.set(url, { t: Date.now(), d: data });
+  }
+  return data;
 }
 
 // ---------------------------------------------------------------------------
