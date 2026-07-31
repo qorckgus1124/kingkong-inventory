@@ -4423,6 +4423,28 @@ def api_dashboard():
         total_days = calendar.monthrange(today.year, today.month)[1]
         days_elapsed = today.day
 
+        # ⚡ 무거운 항목(재고 가치/카테고리 비교/회전율 등)은 몇 분간 재사용한다.
+        #    단, "오늘 매출·이익"은 캐시에 넣지 않고 항상 새로 계산해서 실시간으로 보이게 한다.
+        #    판매·입출고가 등록되면 after_request에서 이 캐시를 즉시 버린다.
+        cache_key = (store_id or 0, today.isoformat())
+        want_fresh = request.args.get("fresh", "0") == "1"
+        cached = None if want_fresh else dashboard_cache_get(cache_key)
+        if cached is not None:
+            payload = dict(cached)
+            # 오늘 매출/이익은 지금 값으로 다시 채운다 (실시간)
+            live_today = compute_sales_totals(store_id, single_date=today)
+            if store_id:
+                cur.execute(
+                    "SELECT override_amount FROM daily_revenue_override WHERE store_id = %s AND target_date = %s",
+                    (store_id, today.strftime("%Y-%m-%d")),
+                )
+                override = cur.fetchone()
+                if override and override["override_amount"] is not None:
+                    live_today["revenue"] = override["override_amount"]
+            payload["today"] = live_today
+            payload["cached"] = True
+            return jsonify(payload)
+
         default_response = {
             "today": {"qty": 0, "revenue": 0, "profit": 0},
             "month": {"qty": 0, "revenue": 0, "profit": 0},
