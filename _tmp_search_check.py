@@ -150,11 +150,33 @@ if params2 != ["%2\\%%"] or "ESCAPE" not in cond2:
     fails.append("2% 이스케이프")
 
 # ---------------------------------------------------------------- 2. 실제 SQL 생성
+def find_main_query(keyword="FROM products p"):
+    """get_db()의 헬스체크/타임존 설정 등을 건너뛰고 실제 목록 조회 SQL을 찾는다."""
+    for sql, params in QUERIES:
+        if keyword in sql and "SELECT p.*" in sql:
+            return sql, params
+    for sql, params in QUERIES:
+        if keyword in sql:
+            return sql, params
+    return "", []
+
+
+def count_real_queries():
+    """헬스체크(SELECT 1) / SET TIME ZONE 같은 부수 쿼리를 뺀 개수"""
+    n = 0
+    for sql, _ in QUERIES:
+        low = sql.lower()
+        if low.startswith("select 1") or low.startswith("set time zone"):
+            continue
+        n += 1
+    return n
+
+
 log("\n=== 2. 제품 검색 API가 만드는 SQL ===")
 QUERIES.clear()
 r = client.get("/api/products?q=" + "%EB%B0%A4%20%EB%B0%B1%ED%96%A5" + "&hide_zero_stock=1")
-log("   status:", r.status_code, "| 실행 쿼리 수:", len(QUERIES))
-main_sql, main_params = QUERIES[0] if QUERIES else ("", [])
+log("   status:", r.status_code, "| 실행 쿼리 수(부수 제외):", count_real_queries())
+main_sql, main_params = find_main_query()
 log("   토큰 조건 2개 포함:", main_sql.count("ESCAPE") >= 4)
 log("   재고0 숨김(EXISTS) 포함:", "EXISTS ( SELECT 1 FROM store_stock" in main_sql or "EXISTS (SELECT 1 FROM store_stock" in main_sql)
 log("   파라미터:", main_params)
