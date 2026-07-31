@@ -56,9 +56,26 @@
   <aside class="sidebar" id="sidebar">
     <div class="brand"><span class="brand-mark"><i class="ti ti-box"></i></span>재고·판매관리</div>
     <div class="store-selector" style="padding: 0 2px; margin-bottom: 8px; flex-shrink: 0;">
+      <!-- 매장 목록을 서버에서 미리 넣어둔다 (열자마자 바로 보이고, 요청 한 번이 줄어든다) -->
       <select id="globalStoreSelect" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:13px; cursor:pointer;">
         <option value="">매장 선택</option>
+        {% for s in global_stores %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
       </select>
+      <script>
+        // 저장된 귀속 매장을 화면이 그려지기 전에 곧바로 적용한다.
+        // (DOMContentLoaded까지 기다리면 "매장 선택"이 한 번 스쳐 보인다)
+        (function () {
+          try {
+            var sel = document.getElementById('globalStoreSelect');
+            var saved = localStorage.getItem('global_store_id');
+            if (sel && saved) {
+              for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === String(saved)) { sel.value = String(saved); break; }
+              }
+            }
+          } catch (e) {}
+        })();
+      </script>
     </div>
     <div class="nav-search">
       <i class="ti ti-search"></i>
