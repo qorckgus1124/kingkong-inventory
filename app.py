@@ -4279,6 +4279,70 @@ def api_statistics():
             "year": "YYYY"
         }
         fmt = fmt_map[period]
+
+        # ⚡ 지난 날짜는 일별 집계표에서 바로 합산한다 (거래 전체를 훑지 않으므로 즉시 응답).
+        #    오늘 날짜는 집계표에 없으므로 아래에서 실시간으로 계산해 더한다.
+        today_date = now_kst().date()
+        start_d = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_d = datetime.strptime(end_date, "%Y-%m-%d").date()
+        past_end = min(end_d, today_date - timedelta(days=1))
+
+        rows = []
+        if start_d <= past_end:
+            try:
+                ensure_daily_rollup(start_d, past_end)
+                cur.execute(
+                    f"""SELECT to_char(sale_date, '{fmt}') as period_key,
+                               COALESCE(SUM(qty), 0) as sold_qty,
+                               COALESCE(SUM(revenue), 0) as revenue,
+                               COALESCE(SUM(profit), 0) as profit
+                        FROM daily_sales_rollup
+                        WHERE sale_date >= %s AND sale_date <= %s
+                        GROUP BY period_key ORDER BY period_key ASC""",
+                    (start_d, past_end),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+            except Exception as e:
+                rollback_quietly()
+                print(f"⚠️ 통계 집계표 사용 실패, 직접 계산으로 대체: {e}")
+                rows = []
+
+        if not rows and start_d <= past_end:
+            # 집계표를 쓸 수 없을 때를 위한 예비 경로 (예전과 동일한 직접 계산)
+            cur.execute(
+                f"""
+                SELECT to_char(date_time, '{fmt}') as period_key,
+                       {SALES_QTY_SQL} as sold_qty, {SALES_REVENUE_SQL} as revenue, {SALES_PROFIT_SQL} as profit
+                FROM stock_transactions t
+                WHERE t.type IN %s AND date(t.date_time) >= date(%s) AND date(t.date_time) <= date(%s)
+                GROUP BY period_key ORDER BY period_key ASC
+                """,
+                (SALES_TYPES, start_d, past_end),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+
+        # 오늘이 조회 범위에 들어있으면 실시간 값을 같은 기간 칸에 더한다 (실시간 반영)
+        if start_d <= today_date <= end_d:
+            live = compute_sales_totals(single_date=today_date)
+            cur.execute(f"SELECT to_char(%s::date, '{fmt}') as period_key", (today_date,))
+            today_key = cur.fetchone()["period_key"]
+            merged = False
+            for r in rows:
+                if r["period_key"] == today_key:
+                    r["sold_qty"] = (r["sold_qty"] or 0) + live["qty"]
+                    r["revenue"] = (r["revenue"] or 0) + live["revenue"]
+                    r["profit"] = (r["profit"] or 0) + live["profit"]
+                    merged = True
+                    break
+            if not merged:
+                rows.append({
+                    "period_key": today_key,
+                    "sold_qty": live["qty"],
+                    "revenue": live["revenue"],
+                    "profit": live["profit"],
+                })
+            rows.sort(key=lambda r: r["period_key"])
+
         sql = f"""
         SELECT
             to_char(date_time, '{fmt}') as period_key,
@@ -4720,6 +4784,8 @@ def api_dashboard():
         except Exception as e:
             print(f"❌ 카테고리 비교/예상 매출 오류: {e}")
 
+        # 무거운 계산 결과를 캐시에 담아둔다 (오늘 매출은 다음 요청에서 다시 계산됨)
+        dashboard_cache_set(cache_key, default_response)
         return jsonify(default_response)
     except Exception as e:
         print(f"❌ 대시보드 오류: {e}")
