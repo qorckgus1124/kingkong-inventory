@@ -327,13 +327,14 @@ async function loadProducts() {
   const params = new URLSearchParams({ 
     store_id, 
     sort: 'qty', 
-    order: 'desc'
+    order: 'desc',
+    hide_zero_stock: '1'   // 재고가 없는 제품은 이동할 수 없으므로 숨긴다
   });
   if (q) params.append('q', q);
 
   const myToken = transferSearchGuard.next();
   try {
-    const result = await api('/api/products?' + params.toString());
+    const result = await apiSearch('/api/products?' + params.toString());
     if (!transferSearchGuard.isCurrent(myToken)) return;
     products = result;
     renderProductGrid();
