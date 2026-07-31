@@ -1771,35 +1771,61 @@ def api_products():
 
 @app.route("/api/products/search")
 def api_products_search():
-    conn = get_db()
+    """자동완성용 제품 검색. 검색 규칙은 /api/products와 동일하다.
+    hide_zero_stock=1을 넘기면 재고가 없는 제품을 제외한다.
+    (입고 등록처럼 재고 0인 제품도 찾아야 하는 화면이 있어서 기본값은 '포함'이다)"""
+    get_db()
     cur = g.cursor
     q = request.args.get("q", "").strip()
     store_id = request.args.get("store_id")
+    hide_zero_stock = request.args.get("hide_zero_stock", "0") == "1"
+    try:
+        limit = min(max(int(request.args.get("limit", "15") or 15), 1), 50)
+    except (TypeError, ValueError):
+        limit = 15
     if not q:
         return jsonify([])
-    q_norm = normalize_search(q)
+
+    name_col = "lower(replace(p.name, ' ', ''))"
+    brand_col = "lower(replace(COALESCE(b.name, ''), ' ', ''))"
+    cond, cond_params = build_token_match_sql(q, [name_col, brand_col])
+    if not cond:
+        return jsonify([])
+
+    sql = f"""
+        SELECT p.*, b.name as brand_name, b.color as brand_color,
+               c.name as category_name, c.color as category_color
+        FROM products p
+        LEFT JOIN brands b ON b.id = p.brand_id
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.is_active = 1 AND {cond}
+    """
+    params = list(cond_params)
+    if hide_zero_stock:
+        if store_id:
+            sql += " AND EXISTS (SELECT 1 FROM store_stock ss WHERE ss.product_id = p.id AND ss.store_id = %s AND ss.qty > 0)"
+            params.append(store_id)
+        else:
+            sql += " AND EXISTS (SELECT 1 FROM store_stock ss WHERE ss.product_id = p.id AND ss.qty > 0)"
+
+    # 검색어가 붙어서 그대로 들어있는 제품을 먼저 보여준다 (관련도 높은 순)
+    joined = normalize_search(q)
+    sql += f"""
+        ORDER BY
+            CASE WHEN {name_col} LIKE %s ESCAPE '\\' THEN 0
+                 WHEN {brand_col} LIKE %s ESCAPE '\\' THEN 1
+                 ELSE 2 END,
+            p.name
+        LIMIT %s
+    """
+    params.extend([f"%{escape_like(joined)}%", f"%{escape_like(joined)}%", limit])
+
     try:
-        cur.execute("""
-            SELECT p.*, b.name as brand_name, b.color as brand_color,
-                   c.name as category_name, c.color as category_color
-            FROM products p
-            LEFT JOIN brands b ON b.id = p.brand_id
-            LEFT JOIN categories c ON c.id = p.category_id
-            WHERE p.is_active = 1 AND (
-                REPLACE(p.name, ' ', '') ILIKE %s
-                OR REPLACE(COALESCE(b.name, ''), ' ', '') ILIKE %s
-            )
-            ORDER BY p.name LIMIT 15
-        """, (f"%{q_norm}%", f"%{q_norm}%"))
+        cur.execute(sql, params)
         rows = cur.fetchall()
-        result = []
-        for r in rows:
-            try:
-                result.append(product_row_to_dict(conn, r, store_id))
-            except:
-                result.append(dict(r))
-        return jsonify(result)
+        return jsonify(enrich_product_rows(rows, store_id))
     except Exception as e:
+        rollback_quietly()
         print(f"⚠️ 제품 검색 오류 (q={q}): {e}")
         return jsonify([])
 
