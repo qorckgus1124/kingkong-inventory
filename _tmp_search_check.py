@@ -184,14 +184,15 @@ if r.status_code != 200:
     fails.append("제품 검색 API 실패")
 if "store_stock" not in main_sql:
     fails.append("재고0 숨김 조건 없음")
-if len(QUERIES) > 6:
-    fails.append(f"쿼리 과다({len(QUERIES)}건)")
+if count_real_queries() > 6:
+    fails.append(f"쿼리 과다({count_real_queries()}건)")
 
 log("\n   재고0 숨김 해제 시:")
 QUERIES.clear()
 client.get("/api/products?q=test&hide_zero_stock=0")
-log("   store_stock 조건 포함:", "store_stock" in QUERIES[0][0])
-if "store_stock" in QUERIES[0][0]:
+main_sql2, _ = find_main_query()
+log("   store_stock 조건 포함:", "store_stock" in main_sql2)
+if "store_stock" in main_sql2:
     fails.append("hide_zero_stock=0인데 조건이 들어감")
 
 log("\n=== 3. 자동완성(/api/products/search) ===")
