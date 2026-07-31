@@ -64,21 +64,22 @@ class FakeCursor:
 
     def fetchall(self):
         s = self.sql.lower()
-        if "from products p" in s and "select p." in s:
-            return [Row(p) for p in PRODUCTS]
+        # 집계 쿼리를 먼저 판별해야 한다 (일반 제품 조회 패턴과 겹치기 때문)
+        if "group by p.brand_id, c.name" in s:
+            return [Row({"brand_id": 1, "category_name": "액상", "cnt": 5}),
+                    Row({"brand_id": 1, "category_name": "일회용", "cnt": 2})]
+        if "group by brand_id" in s:
+            return [Row({"brand_id": 1, "cnt": 7})]
+        if "parent_product_id" in s and "group by" in s:
+            return []
         if "from store_stock" in s:
             return [Row({"product_id": p["id"], "qty": 3, "min_qty": 1}) for p in PRODUCTS]
+        if "from products p" in s and "select p." in s:
+            return [Row(p) for p in PRODUCTS]
         if "from brands" in s and "group by" not in s:
             return [Row({"id": 1, "name": "펀치밤", "color": "#111", "category_id": 2, "status": "approved"})]
         if "from categories" in s:
             return [Row({"id": 2, "name": "액상", "color": "#222"})]
-        if "group by brand_id" in s:
-            return [Row({"brand_id": 1, "cnt": 7})]
-        if "group by p.brand_id, c.name" in s:
-            return [Row({"brand_id": 1, "category_name": "액상", "cnt": 5}),
-                    Row({"brand_id": 1, "category_name": "일회용", "cnt": 2})]
-        if "parent_product_id" in s and "group by" in s:
-            return []
         return []
 
     def close(self):
