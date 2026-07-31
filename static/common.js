@@ -36,8 +36,13 @@ async function api(url, options, retries = 3) {
   // 다시 보내면 판매/입출고가 중복 등록될 수 있기 때문이다.
   const maxAttempts = method === 'GET' ? retries : 1;
   if (method !== 'GET') {
-    // 데이터가 바뀌면 검색 캐시는 즉시 버린다 (오래된 결과가 보이지 않도록)
+    // 데이터가 바뀌면 검색/매장 캐시는 즉시 버린다 (오래된 결과가 보이지 않도록)
     try { clearSearchCache(); } catch (e) {}
+    try { clearStoreListCache(); } catch (e) {}
+  } else if (url === '/api/stores') {
+    // 매장 목록은 저장해둔 값이 있으면 기다리지 않고 바로 돌려준다
+    const cached = readStoreListCache(STORE_LIST_TTL_MS);
+    if (cached) return cached;
   }
 
   for (let i = 0; i < maxAttempts; i++) {
@@ -318,6 +323,46 @@ function matchesSearch(text, query, ...extraTexts) {
   if (tokens.length === 0) return true;
   const haystacks = [text, ...extraTexts].map(t => normalizeSearchText(t));
   return tokens.every(token => haystacks.some(h => h.includes(token)));
+}
+
+// ---------------------------------------------------------------------------
+// 매장 목록 캐시 (선택한 매장이 "귀속"된 것처럼 유지되게 만드는 핵심)
+// ⚡ 매장 목록은 거의 바뀌지 않는데도 화면을 옮길 때마다 여러 번 다시 불러왔다.
+//    그 사이 드롭다운이 "매장 선택"으로 비어 보였다가 값이 채워지면서 두 단계로
+//    바뀌고, 그 과정에서 목록 조회가 한 번 더 실행돼 느려졌다.
+//    목록을 브라우저에 저장해두면 다음 화면에서는 기다림 없이 바로 채워진다.
+//    매장을 추가/수정/삭제하면(쓰기 요청) 캐시를 즉시 버린다.
+// ---------------------------------------------------------------------------
+const STORE_LIST_CACHE_KEY = 'stores_cache_v1';
+const STORE_LIST_TTL_MS = 10 * 60 * 1000;   // 10분
+
+function readStoreListCache(maxAgeMs) {
+  try {
+    const raw = localStorage.getItem(STORE_LIST_CACHE_KEY);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (!entry || !Array.isArray(entry.d) || entry.d.length === 0) return null;
+    if (maxAgeMs !== undefined && (Date.now() - entry.t) > maxAgeMs) return null;
+    return entry.d;
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeStoreListCache(list) {
+  try {
+    if (!Array.isArray(list) || list.length === 0) return;
+    localStorage.setItem(STORE_LIST_CACHE_KEY, JSON.stringify({ t: Date.now(), d: list }));
+  } catch (e) { /* 저장 공간 문제는 무시 (캐시는 없어도 동작함) */ }
+}
+
+function clearStoreListCache() {
+  try { localStorage.removeItem(STORE_LIST_CACHE_KEY); } catch (e) {}
+}
+
+// 저장해둔 매장 목록을 즉시(네트워크 없이) 돌려준다. 없으면 null.
+function getStoresInstant() {
+  return readStoreListCache();
 }
 
 // ---------------------------------------------------------------------------
