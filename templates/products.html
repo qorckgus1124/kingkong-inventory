@@ -443,6 +443,7 @@ async function getOrCreateBrandId(name) {
   if (existing) return existing.id;
   const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: trimmed }) });
   brands.push({ id: result.id, name: trimmed });
+  rebuildLookupMaps();
   return result.id;
 }
 
@@ -454,6 +455,8 @@ async function loadCategories() {
 
   try {
     categories = await api('/api/categories');
+    if (!Array.isArray(categories)) categories = [];
+    rebuildLookupMaps();
     const opts = categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
     catSelect.innerHTML = '<option value="">미분류</option>' + opts;
     filterSelect.innerHTML = '<option value="">전체 카테고리</option>' + opts;
