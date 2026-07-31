@@ -5822,25 +5822,21 @@ def api_import_products():
                 brand_name = row.get("브랜드", "").strip()
                 brand_id = None
                 if brand_name:
-                    cur.execute("SELECT id FROM brands WHERE name = %s", (brand_name,))
-                    brand_row = cur.fetchone()
-                    if brand_row:
-                        brand_id = brand_row["id"]
-                    else:
+                    brand_id = brand_map.get(brand_name)
+                    if brand_id is None:
                         cur.execute("INSERT INTO brands (name, status) VALUES (%s, 'pending') RETURNING id", (brand_name,))
                         brand_id = cur.fetchone()["id"]
+                        brand_map[brand_name] = brand_id
                         print(f"✅ 새 브랜드 생성: {brand_name} (ID: {brand_id})")
 
                 category_name = row.get("카테고리", "").strip()
                 category_id = None
                 if category_name:
-                    cur.execute("SELECT id FROM categories WHERE name = %s", (category_name,))
-                    cat_row = cur.fetchone()
-                    if cat_row:
-                        category_id = cat_row["id"]
-                    else:
+                    category_id = category_map.get(category_name)
+                    if category_id is None:
                         cur.execute("INSERT INTO categories (name, color) VALUES (%s, '#8a8f98') RETURNING id", (category_name,))
                         category_id = cur.fetchone()["id"]
+                        category_map[category_name] = category_id
                         print(f"✅ 새 카테고리 생성: {category_name} (ID: {category_id})")
 
                 cost_price = parse_number(row.get("원가", 0))
