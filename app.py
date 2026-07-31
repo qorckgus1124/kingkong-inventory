@@ -1199,20 +1199,66 @@ def api_brands():
                 conditions.append("b.status = %s")
                 params.append(status_filter)
             if search:
-                conditions.append("REPLACE(b.name, ' ', '') ILIKE %s")
-                params.append(f"%{normalize_search(search)}%")
+                # 🔍 브랜드 검색창에서도 제품명으로 찾을 수 있게 한다.
+                #    낱말 전부가 (브랜드명) 또는 (그 브랜드에 속한 제품명)에 있으면 매칭.
+                #    예) "밤 백향" -> 브랜드 "펀치밤"의 제품 "백향과"가 있으면 펀치밤이 나온다.
+                brand_col = "lower(replace(b.name, ' ', ''))"
+                product_col = "lower(replace(bp.name, ' ', ''))"
+                tokens = search_tokens(search)
+                token_conds = []
+                for token in tokens:
+                    pattern = f"%{escape_like(token)}%"
+                    token_conds.append(
+                        f"""({brand_col} LIKE %s ESCAPE '\\'
+                             OR EXISTS (SELECT 1 FROM products bp
+                                        WHERE bp.brand_id = b.id AND bp.is_active = 1
+                                          AND {product_col} LIKE %s ESCAPE '\\'))"""
+                    )
+                    params.append(pattern)
+                    params.append(pattern)
+                if token_conds:
+                    conditions.append("(" + " AND ".join(token_conds) + ")")
             if conditions:
                 sql += " WHERE " + " AND ".join(conditions)
             sql += " ORDER BY b.name"
             cur.execute(sql, params)
             rows = cur.fetchall()
-            result = []
-            for r in rows:
-                d = dict(r)
-                cur.execute("SELECT COUNT(*) as cnt FROM products WHERE brand_id = %s", (r["id"],))
-                count = cur.fetchone()
-                d["product_count"] = count["cnt"] if count else 0
-                result.append(d)
+
+            # ⚡ 예전에는 브랜드 1건마다 제품 수를 세는 쿼리를 따로 던졌다(브랜드 300개면 301번).
+            #    지금은 제품 수와 카테고리 구성을 각각 한 번에 모아서 붙인다.
+            result = [dict(r) for r in rows]
+            if result:
+                brand_ids = [d["id"] for d in result]
+                cur.execute(
+                    "SELECT brand_id, COUNT(*) AS cnt FROM products WHERE brand_id = ANY(%s) GROUP BY brand_id",
+                    (brand_ids,),
+                )
+                count_map = {r["brand_id"]: (r["cnt"] or 0) for r in cur.fetchall()}
+
+                # 같은 브랜드 안에서도 제품이 액상/일회용으로 나뉠 수 있으므로,
+                # 실제 제품 기준의 카테고리 구성을 함께 내려준다 (화면에 칩으로 표시).
+                cur.execute(
+                    """SELECT p.brand_id, c.name AS category_name, COUNT(*) AS cnt
+                       FROM products p
+                       LEFT JOIN categories c ON c.id = p.category_id
+                       WHERE p.brand_id = ANY(%s) AND p.is_active = 1
+                       GROUP BY p.brand_id, c.name
+                       ORDER BY COUNT(*) DESC""",
+                    (brand_ids,),
+                )
+                cat_map = {}
+                for r in cur.fetchall():
+                    cat_map.setdefault(r["brand_id"], []).append({
+                        "name": r["category_name"] or "미분류",
+                        "count": r["cnt"] or 0,
+                    })
+
+                for d in result:
+                    d["product_count"] = count_map.get(d["id"], 0)
+                    d["categories"] = cat_map.get(d["id"], [])
+                    # 브랜드에 지정된 카테고리가 없으면 제품 기준 대표 카테고리로 채워준다.
+                    if not d.get("category_name") and d["categories"]:
+                        d["category_name"] = d["categories"][0]["name"]
             return jsonify(result)
         except Exception as e:
             print(f"⚠️ 브랜드 조회 오류: {e}")
