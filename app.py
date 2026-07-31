@@ -4514,26 +4514,11 @@ def api_dashboard():
 
         # ---------- 이번달 매출 ----------
         try:
-            month_q = """
-                SELECT
-                    COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity
-                                  WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END), 0) as qty,
-                    COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0)
-                                  WHEN t.type = '판매취소' THEN -COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0) ELSE 0 END), 0) as revenue,
-                    COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0) * (COALESCE(t.unit_price, 0) - COALESCE(t.unit_cost, 0))
-                                  WHEN t.type = '판매취소' THEN -COALESCE(t.quantity, 0) * (COALESCE(t.unit_price, 0) - COALESCE(t.unit_cost, 0)) ELSE 0 END), 0) as profit
-                FROM stock_transactions t
-                WHERE t.type IN ('판매출고', '판매취소', '선결예약')
-                  AND date(t.date_time) >= date(%s)
-            """
-            params = [month_start.strftime("%Y-%m-%d")]
-            if store_id:
-                month_q += " AND t.store_id = %s"
-                params.append(store_id)
-            cur.execute(month_q, params)
-            month_sales = cur.fetchone()
-            month_revenue = month_sales["revenue"] if month_sales else 0
-            default_response["month"] = dict(month_sales) if month_sales else default_response["month"]
+            # ⚡ 지난 날짜는 일별 집계표에서 읽고, 오늘은 실시간으로 계산해서 더한다.
+            #    (계산식은 예전과 동일하므로 숫자가 달라지지 않는다)
+            month_sales = get_sales_totals_cached(store_id, month_start, today)
+            month_revenue = month_sales["revenue"]
+            default_response["month"] = dict(month_sales)
 
             if store_id:
                 cur.execute("SELECT target_date, override_amount FROM daily_revenue_override WHERE store_id = %s AND target_date >= %s AND target_date <= %s", (store_id, month_start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")))
