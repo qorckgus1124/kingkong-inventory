@@ -658,17 +658,50 @@ def init_db():
 def create_indexes():
     conn = get_db()
     cur = g.cursor
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_date ON stock_transactions(date_time);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_type ON stock_transactions(type);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_store ON stock_transactions(store_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_product ON stock_transactions(product_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_store_product ON store_stock(store_id, product_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_pre_orders_store ON pre_orders(store_id);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_pre_orders_status ON pre_orders(status);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_movements_status ON stock_movements(status);")
-    conn.commit()
+    statements = [
+        "CREATE INDEX IF NOT EXISTS idx_transactions_date ON stock_transactions(date_time);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_type ON stock_transactions(type);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_store ON stock_transactions(store_id);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_product ON stock_transactions(product_id);",
+        "CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);",
+        "CREATE INDEX IF NOT EXISTS idx_stock_store_product ON store_stock(store_id, product_id);",
+        "CREATE INDEX IF NOT EXISTS idx_pre_orders_store ON pre_orders(store_id);",
+        "CREATE INDEX IF NOT EXISTS idx_pre_orders_status ON pre_orders(status);",
+        "CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name);",
+        "CREATE INDEX IF NOT EXISTS idx_movements_status ON stock_movements(status);",
+        # ⚡ 검색 속도용
+        # 제품 목록은 항상 활성 제품만 보고, 카테고리/브랜드로 걸러서 본다.
+        "CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active);",
+        "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);",
+        "CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand_id);",
+        # 재고 합계/재고 0 숨김은 product_id 기준으로 훑는다.
+        "CREATE INDEX IF NOT EXISTS idx_stock_product ON store_stock(product_id);",
+        "CREATE INDEX IF NOT EXISTS idx_stock_product_qty ON store_stock(product_id, qty);",
+    ]
+    for stmt in statements:
+        try:
+            cur.execute(stmt)
+            conn.commit()
+        except Exception as e:
+            # 하나가 실패해도(권한/버전 차이 등) 나머지는 계속 만든다.
+            conn.rollback()
+            print(f"⚠️ 인덱스 생성 건너뜀: {e}")
+
+    # ⚡ 이름 부분검색(LIKE '%..%') 가속용 trgm 인덱스.
+    # pg_trgm 확장이 없거나 설치 권한이 없으면 조용히 건너뛴다 (검색은 그대로 동작한다).
+    trgm_statements = [
+        "CREATE EXTENSION IF NOT EXISTS pg_trgm;",
+        "CREATE INDEX IF NOT EXISTS idx_products_name_trgm ON products USING gin (lower(replace(name, ' ', '')) gin_trgm_ops);",
+        "CREATE INDEX IF NOT EXISTS idx_brands_name_trgm ON brands USING gin (lower(replace(name, ' ', '')) gin_trgm_ops);",
+    ]
+    for stmt in trgm_statements:
+        try:
+            cur.execute(stmt)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"ℹ️ 검색 가속 인덱스 건너뜀 (없어도 동작함): {e}")
+            break
 
 
 # ---------------------------------------------------------------------------
