@@ -865,6 +865,215 @@ def csv_download_response(header, rows, filename):
     return resp
 
 
+# ---------------------------------------------------------------------------
+# 집계 캐시 & 일별 매출 집계 (성능)
+# ---------------------------------------------------------------------------
+# 대시보드는 무거운 조회를 여러 개 실행한다. 그중 "오늘 매출"만 빼고(실시간이어야 하므로)
+# 나머지는 몇 분간 재사용한다. 판매/입출고가 등록되면 즉시 버리므로 오래된 값이 남지 않는다.
+DASHBOARD_CACHE_TTL_SEC = float(os.environ.get("DASHBOARD_CACHE_TTL", "300"))  # 기본 5분
+_DASHBOARD_CACHE = {}
+
+# 매출 집계에 영향을 주는 엔드포인트 (이 요청이 성공하면 집계 캐시/집계표를 갱신 대상으로 본다)
+SALES_WRITE_PATHS = ("/api/sales", "/api/transactions", "/api/pre_orders", "/api/import/transactions")
+
+
+def invalidate_aggregate_caches(path=""):
+    """쓰기 요청 후 호출. 대시보드 캐시를 비우고, 과거 일자 집계표도 필요하면 지운다."""
+    _DASHBOARD_CACHE.clear()
+    if not path or not any(path.startswith(p) for p in SALES_WRITE_PATHS):
+        return
+    # 과거 날짜의 거래가 바뀌었을 수 있으므로 일별 집계표를 비워 다시 계산하게 한다.
+    # (오늘 날짜는 집계표에 저장하지 않으므로 대부분의 판매 등록은 여기 영향이 없다)
+    try:
+        conn = g.get("db")
+        if conn is None:
+            return
+        cur = g.cursor
+        cur.execute("DELETE FROM daily_sales_rollup")
+        conn.commit()
+    except Exception as e:
+        rollback_quietly()
+        print(f"⚠️ 일별 집계표 초기화 건너뜀: {e}")
+
+
+def dashboard_cache_get(key):
+    entry = _DASHBOARD_CACHE.get(key)
+    if not entry:
+        return None
+    ts, payload = entry
+    if (time.monotonic() - ts) > DASHBOARD_CACHE_TTL_SEC:
+        _DASHBOARD_CACHE.pop(key, None)
+        return None
+    return payload
+
+
+def dashboard_cache_set(key, payload):
+    # 매장 수만큼만 쌓이므로 크기 제한은 넉넉하게
+    if len(_DASHBOARD_CACHE) > 50:
+        _DASHBOARD_CACHE.clear()
+    _DASHBOARD_CACHE[key] = (time.monotonic(), payload)
+
+
+# 매출 계산식 (모든 집계에서 똑같이 써야 숫자가 어긋나지 않는다)
+SALES_QTY_SQL = """COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity
+                                     WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END), 0)"""
+SALES_REVENUE_SQL = """COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0)
+                                         WHEN t.type = '판매취소' THEN -COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0) ELSE 0 END), 0)"""
+SALES_PROFIT_SQL = """COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0) * (COALESCE(t.unit_price, 0) - COALESCE(t.unit_cost, 0))
+                                        WHEN t.type = '판매취소' THEN -COALESCE(t.quantity, 0) * (COALESCE(t.unit_price, 0) - COALESCE(t.unit_cost, 0)) ELSE 0 END), 0)"""
+SALES_TYPES = ('판매출고', '판매취소', '선결예약')
+
+
+def compute_sales_totals(store_id=None, start_date=None, end_date=None, single_date=None):
+    """기간(또는 특정 하루)의 판매 수량/매출/이익을 계산한다. 항상 실시간 계산."""
+    cur = g.cursor
+    sql = f"""
+        SELECT {SALES_QTY_SQL} AS qty, {SALES_REVENUE_SQL} AS revenue, {SALES_PROFIT_SQL} AS profit
+        FROM stock_transactions t
+        WHERE t.type IN %s
+    """
+    params = [SALES_TYPES]
+    if single_date:
+        sql += " AND date(t.date_time) = date(%s)"
+        params.append(single_date)
+    else:
+        if start_date:
+            sql += " AND date(t.date_time) >= date(%s)"
+            params.append(start_date)
+        if end_date:
+            sql += " AND date(t.date_time) <= date(%s)"
+            params.append(end_date)
+    if store_id:
+        sql += " AND t.store_id = %s"
+        params.append(store_id)
+    cur.execute(sql, params)
+    row = cur.fetchone()
+    return {
+        "qty": (row["qty"] if row else 0) or 0,
+        "revenue": (row["revenue"] if row else 0) or 0,
+        "profit": (row["profit"] if row else 0) or 0,
+    }
+
+
+def ensure_daily_rollup(start_date, end_date, store_id=None):
+    """[start_date, end_date] 구간의 "지난 날짜" 매출을 집계표에 채운다.
+
+    오늘 날짜는 계속 바뀌므로 집계표에 넣지 않는다(항상 실시간 계산).
+    이미 채워진 날짜는 건너뛰고, 빠진 구간만 한 번의 쿼리로 계산해서 넣는다.
+    """
+    conn = g.get("db")
+    cur = g.cursor
+    today = now_kst().date()
+    last = min(end_date, today - timedelta(days=1))
+    if start_date > last:
+        return
+
+    # 이미 집계된 날짜 확인
+    if store_id:
+        cur.execute(
+            "SELECT DISTINCT sale_date FROM daily_sales_rollup WHERE sale_date BETWEEN %s AND %s AND store_id = %s",
+            (start_date, last, store_id),
+        )
+    else:
+        cur.execute(
+            "SELECT DISTINCT sale_date FROM daily_sales_rollup WHERE sale_date BETWEEN %s AND %s",
+            (start_date, last),
+        )
+    have = {r["sale_date"] for r in cur.fetchall()}
+
+    need = []
+    d = start_date
+    while d <= last:
+        if d not in have:
+            need.append(d)
+        d += timedelta(days=1)
+    if not need:
+        return
+
+    fill_from, fill_to = min(need), max(need)
+    sql = f"""
+        SELECT t.store_id, date(t.date_time) AS sale_date,
+               {SALES_QTY_SQL} AS qty, {SALES_REVENUE_SQL} AS revenue, {SALES_PROFIT_SQL} AS profit
+        FROM stock_transactions t
+        WHERE t.type IN %s AND date(t.date_time) BETWEEN %s AND %s
+    """
+    params = [SALES_TYPES, fill_from, fill_to]
+    if store_id:
+        sql += " AND t.store_id = %s"
+        params.append(store_id)
+    sql += " GROUP BY t.store_id, date(t.date_time)"
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+
+    # 매출이 없던 날도 "계산 완료" 표시로 0을 넣어야 매번 다시 계산하지 않는다.
+    if store_id:
+        store_ids = [int(store_id)]
+    else:
+        cur.execute("SELECT id FROM stores ORDER BY id")
+        store_ids = [r["id"] for r in cur.fetchall()]
+
+    have_pairs = {(r["store_id"], r["sale_date"]) for r in rows}
+    values = [(r["store_id"], r["sale_date"], r["qty"] or 0, r["revenue"] or 0, r["profit"] or 0) for r in rows]
+    for sid in store_ids:
+        for day in need:
+            if (sid, day) not in have_pairs:
+                values.append((sid, day, 0, 0, 0))
+
+    if values:
+        psycopg2.extras.execute_values(
+            cur,
+            """INSERT INTO daily_sales_rollup (store_id, sale_date, qty, revenue, profit)
+               VALUES %s
+               ON CONFLICT (store_id, sale_date) DO UPDATE
+               SET qty = excluded.qty, revenue = excluded.revenue,
+                   profit = excluded.profit, updated_at = CURRENT_TIMESTAMP""",
+            values,
+        )
+        conn.commit()
+
+
+def get_sales_totals_cached(store_id=None, start_date=None, end_date=None):
+    """기간 매출 합계 = (지난 날짜는 집계표) + (오늘은 실시간 계산).
+    거래가 쌓여도 리포트 속도가 유지된다."""
+    cur = g.cursor
+    today = now_kst().date()
+    totals = {"qty": 0, "revenue": 0, "profit": 0}
+
+    past_end = min(end_date, today - timedelta(days=1))
+    if start_date <= past_end:
+        try:
+            ensure_daily_rollup(start_date, past_end, store_id)
+            sql = """SELECT COALESCE(SUM(qty),0) AS qty, COALESCE(SUM(revenue),0) AS revenue,
+                            COALESCE(SUM(profit),0) AS profit
+                     FROM daily_sales_rollup WHERE sale_date BETWEEN %s AND %s"""
+            params = [start_date, past_end]
+            if store_id:
+                sql += " AND store_id = %s"
+                params.append(store_id)
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            if row:
+                totals["qty"] += row["qty"] or 0
+                totals["revenue"] += row["revenue"] or 0
+                totals["profit"] += row["profit"] or 0
+        except Exception as e:
+            # 집계표에 문제가 있으면 예전처럼 직접 계산해서라도 값을 보여준다.
+            rollback_quietly()
+            print(f"⚠️ 일별 집계표 사용 실패, 직접 계산으로 대체: {e}")
+            direct = compute_sales_totals(store_id, start_date, past_end)
+            totals["qty"] += direct["qty"]
+            totals["revenue"] += direct["revenue"]
+            totals["profit"] += direct["profit"]
+
+    if end_date >= today >= start_date:
+        live = compute_sales_totals(store_id, single_date=today)
+        totals["qty"] += live["qty"]
+        totals["revenue"] += live["revenue"]
+        totals["profit"] += live["profit"]
+
+    return totals
+
+
 def rollback_quietly():
     """오류가 난 트랜잭션을 되돌린다. 커넥션 풀로 재사용되는 연결이 'current transaction
     is aborted' 상태로 남아 다음 요청까지 전부 실패하는 것을 막는다."""
