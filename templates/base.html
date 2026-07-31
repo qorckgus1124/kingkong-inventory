@@ -36,7 +36,7 @@
 <link rel="stylesheet" href="/static/style.css">
 <!-- ?v= 값을 올리면 브라우저가 캐시된 예전 파일 대신 새 파일을 반드시 받아온다.
      (다운로드 로직이 common.js에 있어서, 캐시된 옛 버전이 남아 있으면 수정이 반영되지 않는다) -->
-<script src="/static/common.js?v=5"></script>
+<script src="/static/common.js?v={{ asset_version }}"></script>
 </head>
 <body data-page="{{ active }}">
 <script>
@@ -416,6 +416,7 @@ document.addEventListener('DOMContentLoaded', function() {
   updateThemeToggleUI();
 
   loadFloatingRevenue();
+  startTodayRevenueAutoRefresh();
   restoreFloatingPanelState();
   loadHandoverMemo();
   loadGlobalStoreSelect();
