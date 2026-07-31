@@ -1,0 +1,17 @@
+=== A. 정상 상황 ===
+   status: 200 | {'month': {'profit': 10000, 'qty': 4, 'revenue': 24690}, 'monthly_target': {'current_revenue': 24690, 'daily_avg_needed': 0, 'days_elapsed': 31, 'is_achieved': False, 'progress_percent': 0, 'remaining
+
+=== B. 집계표(daily_sales_rollup)가 아직 없는 상황 ===
+   status: 200 | {'month': {'profit': 10000, 'qty': 4, 'revenue': 24690}, 'monthly_target': {'current_revenue': 24690, 'daily_avg_needed': 0, 'days_elapsed': 31, 'is_achieved': False, 'progress_percent': 0, 'remaining
+   store_id=1 -> status: 200 | {'month': {'profit': 10000, 'qty': 4, 'revenue': 24690}, 'monthly_target': {'current_revenue': 24690, 'daily_avg_needed': 0, 'days_elapsed': 31, 'is_achieved': False, 'progress_percent': 0, 'remaining
+   /api/statistics -> status: 200 | 건수: 1
+   /api/dashboard -> status: 200 | today: {'profit': 5000, 'qty': 2, 'revenue': 12345, 'total': 0}
+
+=== C. 목표 설정값이 빈 문자열인 상황 ===
+   status: 500 | {'error': '오늘 매출을 불러오지 못했습니다.'}
+
+=== D. 목표 설정값이 소수점 문자열인 상황 ===
+   status: 500 | {'error': '오늘 매출을 불러오지 못했습니다.'}
+
+=== E. 라우트 등록 확인 ===
+    ['/api/today_revenue']
