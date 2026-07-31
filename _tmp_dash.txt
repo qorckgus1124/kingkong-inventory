@@ -1,22 +1,28 @@
-Traceback (most recent call last):
-  File "C:\Users\qorck\Downloads\kingkongvape\app.py", line 603, in init_db
-    load_brand_mapping_from_csv()
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
-  File "C:\Users\qorck\Downloads\kingkongvape\app.py", line 639, in load_brand_mapping_from_csv
-    print(f"\u26a0\ufe0f �귣�� CSV ������ ã�� �� �����ϴ�: {BRAND_CSV_PATH}")
-    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-UnicodeEncodeError: 'cp949' codec can't encode character '\u26a0' in position 0: illegal multibyte sequence
+=== 1. API가 재고 원가 총액을 내려주는지 ===
+   status: 200
+   stock_value: {'total_cost_value': 80000, 'total_profit_potential': 70000, 'total_sale_value': 150000}
 
-During handling of the above exception, another exception occurred:
+=== 2. 매장 선택 시에도 정상 응답 ===
+   status: 200 | stock_value: {'total_cost_value': 80000, 'total_profit_potential': 70000, 'total_sale_value': 150000}
 
-Traceback (most recent call last):
-  File "C:\Users\qorck\Downloads\kingkongvape\_tmp_dash_check.py", line 83, in <module>
-    import app as appmod  # noqa: E402
-    ^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\qorck\Downloads\kingkongvape\app.py", line 668, in <module>
-    init_db()
-    ~~~~~~~^^
-  File "C:\Users\qorck\Downloads\kingkongvape\app.py", line 608, in init_db
-    print(f"\u274c DB �ʱ�ȭ ����: {e}")
-    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
-UnicodeEncodeError: 'cp949' codec can't encode character '\u274c' in position 0: illegal multibyte sequence
+=== 3. 실제 실행된 재고 원가 쿼리 (매장 필터 포함 여부) ===
+   원가 합계 쿼리 존재: True
+   매장 필터 코드 존재: True
+
+=== 4. 대시보드 화면에 카드가 그려지는지 ===
+   status: 200
+   [OK ] 카드 영역(id=stockCostValue)
+   [OK ] 범위 표시(id=stockCostScope)
+   [OK ] 라벨(재고 원가 총액)
+   [OK ] 값 채우는 스크립트
+
+=== 5. 다른 대시보드 요소가 깨지지 않았는지 ===
+   [OK ] id="todayRevenue"
+   [OK ] id="monthProfit"
+   [OK ] id="forecastRevenue"
+   [OK ] id="warningList"
+   [OK ] id="categoryDoughnutChart"
+   [OK ] id="trendChart"
+   [OK ] id="dashboardMemoContent"
+
+결과: 모두 통과
