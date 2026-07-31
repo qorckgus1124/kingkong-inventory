@@ -397,7 +397,8 @@ function onProductInput(inputEl) {
   inputEl._acTimer = setTimeout(async () => {
     const myToken = inputEl._acGuard.next();
     try {
-      const response = await api('/api/products/search?q=' + encodeURIComponent(q));
+      // 입출고는 입고(재고 0에서 채우기)도 하므로 재고 0인 제품도 검색된다.
+      const response = await apiSearch('/api/products/search?q=' + encodeURIComponent(q));
       if (!inputEl._acGuard.isCurrent(myToken)) return;
       if (response && Array.isArray(response) && response.length > 0) {
         row._acItems = response;

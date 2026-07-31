@@ -110,7 +110,7 @@ qioInput.addEventListener('input', () => {
   qioAcTimer = setTimeout(async () => {
     const myToken = qioAcGuard.next();
     const storeId = document.getElementById('qioStoreSelect').value;
-    const res = await api('/api/products/search?q=' + encodeURIComponent(q) + (storeId ? '&store_id=' + storeId : ''));
+    const res = await apiSearch('/api/products/search?q=' + encodeURIComponent(q) + (storeId ? '&store_id=' + storeId : ''));
     if (!qioAcGuard.isCurrent(myToken)) return;
     qioRenderAc(res || []);
   }, 200);
