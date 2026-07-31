@@ -592,6 +592,38 @@ async function loadFloatingRevenue() {
   }
 }
 
+// ==============================================================
+// 오늘 매출 실시간 갱신
+// ==============================================================
+// 1) 20초마다 자동 갱신 (다른 기기에서 판매가 등록돼도 반영된다)
+// 2) 화면을 다시 보는 순간 즉시 갱신 (탭 전환 후 옛 숫자가 남지 않도록)
+// 3) 판매/입출고 등록 직후 즉시 갱신 (common.js의 api()가 호출해 준다)
+// 화면이 가려져 있을 때는 요청을 보내지 않아 불필요한 부하가 없다.
+const TODAY_REVENUE_REFRESH_MS = 20000;
+let _todayRevenueTimer = null;
+let _todayRevenueBusy = false;
+
+async function refreshTodayRevenue() {
+  if (_todayRevenueBusy) return;
+  if (document.visibilityState === 'hidden') return;
+  _todayRevenueBusy = true;
+  try {
+    await loadFloatingRevenue();
+  } finally {
+    _todayRevenueBusy = false;
+  }
+}
+window.refreshTodayRevenue = refreshTodayRevenue;
+
+function startTodayRevenueAutoRefresh() {
+  if (_todayRevenueTimer) clearInterval(_todayRevenueTimer);
+  _todayRevenueTimer = setInterval(refreshTodayRevenue, TODAY_REVENUE_REFRESH_MS);
+}
+
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible') refreshTodayRevenue();
+});
+
 // 키보드 단축키
 document.addEventListener('keydown', function(e) {
   if (e.ctrlKey && e.key === 'Enter') {
