@@ -198,14 +198,14 @@ if "store_stock" in main_sql2:
 log("\n=== 3. 자동완성(/api/products/search) ===")
 QUERIES.clear()
 r = client.get("/api/products/search?q=%EB%B0%A4%20%EB%B0%B1%ED%96%A5&store_id=1")
-log("   status:", r.status_code, "| 쿼리 수:", len(QUERIES), "| 반환:", len(r.get_json() or []))
-sql0 = QUERIES[0][0] if QUERIES else ""
+log("   status:", r.status_code, "| 쿼리 수(부수 제외):", count_real_queries(), "| 반환:", len(r.get_json() or []))
+sql0, _ = find_main_query()
 log("   관련도 정렬(ORDER BY CASE) 포함:", "ORDER BY CASE WHEN" in sql0)
 log("   LIMIT 포함:", "LIMIT" in sql0)
 if r.status_code != 200 or "ORDER BY CASE WHEN" not in sql0:
     fails.append("자동완성 SQL 이상")
-if len(QUERIES) > 6:
-    fails.append(f"자동완성 쿼리 과다({len(QUERIES)}건)")
+if count_real_queries() > 6:
+    fails.append(f"자동완성 쿼리 과다({count_real_queries()}건)")
 
 log("\n=== 4. 브랜드 검색(제품명 매칭 + 카테고리) ===")
 QUERIES.clear()
