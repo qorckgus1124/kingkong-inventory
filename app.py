@@ -42,14 +42,55 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-producti
 
 
 def normalize_search(text):
-    """검색어/대상 문자열의 공백을 모두 제거해 정규화한다.
-    예) "드 알" -> "드알" / "파드 알로에그레이프" -> "파드알로에그레이프"
-    이렇게 하면 검색어의 각 글자가 서로 붙어서(연속으로) 등장하는 제품만
-    찾게 되어, 단어 경계를 넘나드는 부분 일치(예: "파드" + "알로에")는 잡아내고
-    이름 안에서 멀리 떨어진 글자들이 우연히 둘 다 포함된 경우(예: "레드" ...
-    "알로에")는 걸러낸다.
+    """검색어/대상 문자열의 공백을 모두 제거하고 소문자로 맞춘다.
+    예) "펀치밤 백향과" -> "펀치밤백향과"
+    공백을 없애기 때문에 단어 경계를 넘나드는 부분 일치(예: "파드" + "알로에")도
+    잡을 수 있다.
     """
-    return re.sub(r"\s+", "", text or "")
+    return re.sub(r"\s+", "", (text or "")).lower()
+
+
+# ---------------------------------------------------------------------------
+# 검색 규칙 (제품/브랜드 공통)
+# ---------------------------------------------------------------------------
+# 규칙 1) 검색어에 들어있는 %, _, \ 는 "글자 그대로" 취급한다.
+#         예전에는 이걸 그냥 LIKE 패턴에 넣어서, "2%"를 검색하면 %가 와일드카드로
+#         해석되어 "2"만 들어있어도 전부 걸렸다(그래서 v21 같은 제품이 떴다).
+# 규칙 2) 공백으로 나뉜 낱말(토큰)은 "전부" 들어있어야 한다(AND).
+#         브랜드명과 제품명 중 어느 쪽에 있어도 인정한다.
+#         예) "밤 백향" -> 브랜드 "펀치밤" + 제품명 "백향과" 조합이 검색된다.
+#         반대로 두 낱말 중 하나라도 없으면 결과에서 제외된다.
+
+def escape_like(text):
+    """LIKE 패턴에서 특수문자를 글자 그대로 찾도록 이스케이프한다."""
+    return (text or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def search_tokens(q):
+    """검색어를 공백으로 잘라 정규화한 낱말 목록을 만든다. 예) "밤 백향" -> ["밤", "백향"]"""
+    return [normalize_search(t) for t in re.split(r"\s+", (q or "").strip()) if t.strip()]
+
+
+def build_token_match_sql(q, columns):
+    """모든 낱말이 columns 중 한 곳 이상에 포함되어야 하는 조건을 만든다.
+
+    columns: 비교 대상 SQL 표현식 목록. 각 표현식은 이미 "공백 제거 + 소문자"된
+             형태여야 한다. (예: "lower(replace(p.name, ' ', ''))")
+    반환: (조건 SQL, 파라미터 목록). 검색어가 없으면 (None, []).
+    """
+    tokens = search_tokens(q)
+    if not tokens or not columns:
+        return None, []
+    and_parts = []
+    params = []
+    for token in tokens:
+        pattern = f"%{escape_like(token)}%"
+        or_parts = []
+        for col in columns:
+            or_parts.append(f"{col} LIKE %s ESCAPE '\\'")
+            params.append(pattern)
+        and_parts.append("(" + " OR ".join(or_parts) + ")")
+    return "(" + " AND ".join(and_parts) + ")", params
 
 
 def upsert_customer(cur, name, phone, address=None):
