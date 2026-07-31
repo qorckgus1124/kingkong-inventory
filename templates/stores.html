@@ -929,7 +929,8 @@ function renderTransferGrid() {
   }
 
   if (q) {
-    list = list.filter(p => matchesSearch(p.name || '', q) || matchesSearch(p.brand_name || '', q));
+    // 낱말 전부가 제품명 또는 브랜드명에 있어야 일치 ("밤 백향" -> 펀치밤 백향과)
+    list = list.filter(p => matchesSearch(p.name || '', q, p.brand_name || ''));
   }
 
   if (list.length === 0) {

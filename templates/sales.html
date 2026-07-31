@@ -678,13 +678,14 @@ async function loadPreProducts(forceLoad = false) {
     return;
   }
 
-  const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc' });
+  // 선결제도 실제 재고에서 출고되므로 재고 0인 제품은 숨긴다
+  const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc', hide_zero_stock: '1' });
   if (q) params.append('q', q);
   if (brandQ) params.append('brand_q', brandQ);
 
   const myToken = preSearchGuard.next();
   try {
-    const result = await api('/api/products?' + params.toString());
+    const result = await apiSearch('/api/products?' + params.toString());
     if (!preSearchGuard.isCurrent(myToken)) {
       console.log('⏭️ 오래된 선결제 검색 응답 무시 (더 최신 검색이 이미 진행됨)');
       return;
