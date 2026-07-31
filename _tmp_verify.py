@@ -154,10 +154,13 @@ def check(label, cond, extra=""):
 
 
 log("=== 1. gzip 압축 + 정적 파일 버전 ===")
-r = client.get("/api/products", headers={"Accept-Encoding": "gzip"})
-plain = client.get("/api/products")
-check("gzip 적용", r.headers.get("Content-Encoding") == "gzip",
+r = client.get("/dashboard", headers={"Accept-Encoding": "gzip"})
+plain = client.get("/dashboard")
+check("gzip 적용(HTML)", r.headers.get("Content-Encoding") == "gzip",
       f"| 압축 {len(r.get_data())}B vs 원본 {len(plain.get_data())}B")
+small = client.get("/api/products", headers={"Accept-Encoding": "gzip"})
+check("작은 응답은 압축 생략", small.headers.get("Content-Encoding") is None,
+      f"| {len(small.get_data())}B")
 html = client.get("/dashboard").get_data(as_text=True)
 check("common.js 버전 붙음", re.search(r"common\.js\?v=\d+", html) is not None)
 check("style.css 버전 붙음", re.search(r"style\.css\?v=\d+", html) is not None)

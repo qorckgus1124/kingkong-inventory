@@ -1,0 +1,55 @@
+=== 1. gzip 압축 + 정적 파일 버전 ===
+   [FAIL] gzip 적용 | 압축 3B vs 원본 3B
+   [OK ] common.js 버전 붙음
+   [OK ] style.css 버전 붙음
+   [OK ] CSV 다운로드는 압축 영향 없음
+
+=== 2. 오늘 매출 전용 엔드포인트 (실시간) ===
+   [OK ] /api/today_revenue 200
+   [OK ] today 포함 {'profit': 4000, 'qty': 3, 'revenue': 10000}
+   [OK ] monthly_target 포함
+   [OK ] 쿼리 수가 적다(<=8) | 8건
+
+=== 3. 대시보드 캐시 + 오늘 매출은 캐시 제외 ===
+   [OK ] 첫 호출 cached 표시 없음
+   [OK ] 두 번째 호출은 캐시 사용
+   [OK ] 캐시를 써도 오늘 매출은 최신값 | {'profit': 4000, 'qty': 3, 'revenue': 77777}
+   [OK ] 무거운 항목은 재사용됨
+   [OK ] 쓰기 후 캐시 초기화
+
+=== 4. 일별 매출 집계표 ===
+   [OK ] 집계표 생성 구문
+   [OK ] 오늘은 집계표에 넣지 않음
+   [OK ] /api/statistics 200
+   [OK ] 집계표에서 읽음
+   [OK ] 오늘 값이 합산됨 | [{'period_key': '2026-07-30', 'profit': 2000, 'revenue': 5000, 'sold_qty': 1}, {'period_key': '2026-07-31', 'profit': 4000, 'revenue': 77777, 'sold_qty': 3}]
+   [OK ] 쓰기 후 집계표 초기화 구문
+
+=== 5. 중복 제품 탐지/병합 ===
+   [OK ] /api/products/duplicates 200
+   [OK ] 그룹으로 묶임 | 1그룹
+   [OK ] 브랜드 동일 표시
+   [OK ] 카테고리 다름 표시
+   [OK ] 재고 합계 | 7
+   [OK ] 병합 200 {'merged_count': 1, 'merged_names': ['백 향과'], 'moved_stock': [{'min_qty': 0, 'qty': 2, 'store_id': 1}], 'moved_transacti
+   [OK ] 재고 이관
+   [OK ] 입출고 기록 이관
+   [OK ] 가격이력 이관
+   [OK ] 선결제항목 이관
+   [OK ] 이동내역 이관
+   [OK ] 옵션 재지정
+   [OK ] 원본은 비활성 처리
+   [OK ] 자기 자신 병합은 거부
+   [OK ] 중복 정리 화면 200
+   [OK ] 제품 관리에 진입 버튼
+
+=== 6. 엑셀 업로드 배치 처리 ===
+   [OK ] 업로드 200 {'errors': [], 'failed': 0, 'success': 50}
+   [OK ] 재고를 한 번에 저장 | VALUES(1행) INSERT INTO store_stock (store_id, product_id, qt
+   [OK ] 50줄 업로드 쿼리 수 감소(<=60) | 56건
+   [OK ] 브랜드/카테고리 미리 로드
+
+=== 7. 화면 렌더 ===
+   [OK ] 22개 화면 모두 200
+
+결과: 실패 ['gzip 적용']
