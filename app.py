@@ -42,6 +42,28 @@ BRAND_CSV_PATH = os.path.join(BASE_DIR, "카테고리 상품별 브랜드 정리
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 
+# ⚡ 정적 파일(css/js/아이콘)은 브라우저가 오래 캐시해도 되도록 만료 기간을 길게 준다.
+# 대신 asset_version()으로 파일이 바뀌면 주소(?v=...)가 자동으로 바뀌므로,
+# 새로 배포한 내용이 반영되지 않는 문제는 생기지 않는다.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 30  # 30일
+
+_ASSET_VERSION = None
+
+
+@app.context_processor
+def inject_asset_version():
+    """css/js 주소에 붙일 버전 문자열. 파일 수정 시각을 쓰므로 배포하면 자동으로 바뀐다."""
+    global _ASSET_VERSION
+    if _ASSET_VERSION is None:
+        newest = 0
+        for name in ("common.js", "style.css"):
+            try:
+                newest = max(newest, int(os.path.getmtime(os.path.join(BASE_DIR, "static", name))))
+            except OSError:
+                pass
+        _ASSET_VERSION = str(newest or int(time.time()))
+    return {"asset_version": _ASSET_VERSION}
+
 
 def normalize_search(text):
     """검색어/대상 문자열의 공백을 모두 제거하고 소문자로 맞춘다.
