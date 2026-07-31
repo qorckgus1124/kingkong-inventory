@@ -86,6 +86,9 @@
   <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;">
     <input type="checkbox" id="showInactive" onchange="load()" style="width:auto;"> 비활성 제품도 보기
   </label>
+  <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;" title="검색 결과에서 재고가 0인 제품은 기본으로 숨겨집니다.">
+    <input type="checkbox" id="includeZeroStock" onchange="load()" style="width:auto;"> 재고 0도 보기
+  </label>
   <button onclick="downloadTemplate()">📥 템플릿</button>
   <span style="display:inline-flex; align-items:center; gap:6px; background:var(--hover-bg); padding:4px 10px; border-radius:6px; border:1px solid var(--border);">
     <label style="font-size:12px; color:var(--text-light);">📤 업로드 매장</label>
