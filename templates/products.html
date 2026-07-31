@@ -576,9 +576,13 @@ async function load() {
     const brand_id = document.getElementById('filterBrand').value;
     const show_inactive = document.getElementById('showInactive').checked ? '1' : '0';
     const store_id = document.getElementById('storeSelect').value;
-    const params = new URLSearchParams({ q, category_id, brand_id, sort: sortState.col, order: sortState.order, show_inactive });
+    // 재고 0인 제품은 기본으로 숨긴다 ("재고 0도 보기"를 켜면 함께 표시)
+    const includeZero = document.getElementById('includeZeroStock')?.checked ? '1' : '0';
+    const hide_zero_stock = includeZero === '1' ? '0' : '1';
+    const params = new URLSearchParams({ q, category_id, brand_id, sort: sortState.col, order: sortState.order, show_inactive, hide_zero_stock });
     if (store_id) params.append('store_id', store_id);
-    const result = await api('/api/products?' + params.toString());
+    // apiSearch: 같은 조건을 다시 조회할 때는 서버 왕복 없이 즉시 표시 (30초 캐시)
+    const result = await apiSearch('/api/products?' + params.toString());
     if (!productsSearchGuard.isCurrent(myToken)) return;
     products = result;
     render();
