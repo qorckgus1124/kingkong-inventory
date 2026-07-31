@@ -64,8 +64,15 @@
       <script>
         // 저장된 귀속 매장을 화면이 그려지기 전에 곧바로 적용한다.
         // (DOMContentLoaded까지 기다리면 "매장 선택"이 한 번 스쳐 보인다)
+        window.__GLOBAL_STORES = {{ global_stores | tojson }};
         (function () {
           try {
+            // 각 화면의 매장 드롭다운도 이 목록을 그대로 쓰도록 캐시에 넣어둔다.
+            // (화면마다 /api/stores를 다시 호출하지 않게 되어 그만큼 빨라진다)
+            if (Array.isArray(window.__GLOBAL_STORES) && window.__GLOBAL_STORES.length > 0
+                && typeof writeStoreListCache === 'function') {
+              writeStoreListCache(window.__GLOBAL_STORES);
+            }
             var sel = document.getElementById('globalStoreSelect');
             var saved = localStorage.getItem('global_store_id');
             if (sel && saved) {
