@@ -5873,20 +5873,14 @@ def api_import_products():
                     product_id = cur.fetchone()["id"]
 
                     if store_id:
-                        cur.execute(
-                            """INSERT INTO store_stock (store_id, product_id, qty, min_qty)
-                               VALUES (%s, %s, %s, %s)
-                               ON CONFLICT(store_id, product_id) DO UPDATE SET qty = excluded.qty, min_qty = excluded.min_qty""",
-                            (store_id, product_id, initial_qty, min_qty)
-                        )
+                        pending_stock[(store_id, product_id)] = (initial_qty, min_qty)
                     else:
+                        # 매장을 지정하지 않은 신규 등록은 첫 매장에만 초기 재고를 넣고
+                        # 나머지 매장은 0으로 만들어 둔다 (예전과 같은 동작).
                         for idx, s in enumerate(stores):
-                            qty = initial_qty if idx == 0 else 0
-                            cur.execute(
-                                """INSERT INTO store_stock (store_id, product_id, qty, min_qty)
-                                   VALUES (%s, %s, %s, %s)
-                                   ON CONFLICT(store_id, product_id) DO UPDATE SET qty = excluded.qty, min_qty = excluded.min_qty""",
-                                (s["id"], product_id, qty, min_qty if idx == 0 else 0)
+                            pending_stock[(s["id"], product_id)] = (
+                                initial_qty if idx == 0 else 0,
+                                min_qty if idx == 0 else 0,
                             )
 
                 results["success"] += 1
