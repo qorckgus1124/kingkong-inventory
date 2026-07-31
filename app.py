@@ -5800,6 +5800,17 @@ def api_import_products():
                 stores = [{"id": new_id}]
                 print("✅ 기본 매장 '본점'이 생성되었습니다.")
 
+        # ⚡ 업로드 속도: 예전에는 한 줄마다 브랜드/카테고리를 조회하고 매장별 재고를
+        # 따로 저장해서, 1,000줄이면 수천 번 DB를 왕복했다. 브랜드·카테고리 목록을
+        # 미리 한 번에 읽어두고, 재고는 마지막에 한 번에 묶어서 저장한다.
+        cur.execute("SELECT id, name FROM brands")
+        brand_map = {(r["name"] or "").strip(): r["id"] for r in cur.fetchall()}
+        cur.execute("SELECT id, name FROM categories")
+        category_map = {(r["name"] or "").strip(): r["id"] for r in cur.fetchall()}
+        # (store_id, product_id) -> (qty, min_qty). 같은 제품이 파일에 두 번 나오면
+        # 나중 값이 이기도록(예전 동작과 동일) 덮어쓴다.
+        pending_stock = {}
+
         for row_num, row in enumerate(reader, start=2):
             try:
                 name = row.get("제품명", "").strip()
