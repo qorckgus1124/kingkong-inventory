@@ -417,22 +417,9 @@ async function saveMultiProducts() {
 }
 
 // ---------- 브랜드/카테고리/매장 로드 ----------
-// ⚡ 목록을 그릴 때 행마다 brands.find()/categories.find()로 훑으면
-// (제품 2,000개 × 브랜드 300개) 만큼 비교가 일어나 표 그리기가 느려진다.
-// id로 바로 찾을 수 있는 Map을 만들어 쓴다.
-let brandMap = new Map();
-let categoryMap = new Map();
-
-function rebuildLookupMaps() {
-  brandMap = new Map((brands || []).map(b => [b.id, b]));
-  categoryMap = new Map((categories || []).map(c => [c.id, c]));
-}
-
 async function loadBrands() {
   try {
     brands = await api('/api/brands');
-    if (!Array.isArray(brands)) brands = [];
-    rebuildLookupMaps();
     document.getElementById('filterBrand').innerHTML = '<option value="">전체 브랜드</option>' + 
       brands.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
   } catch (e) {
@@ -451,7 +438,6 @@ async function getOrCreateBrandId(name) {
   if (existing) return existing.id;
   const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: trimmed }) });
   brands.push({ id: result.id, name: trimmed });
-  rebuildLookupMaps();
   return result.id;
 }
 
@@ -463,8 +449,6 @@ async function loadCategories() {
 
   try {
     categories = await api('/api/categories');
-    if (!Array.isArray(categories)) categories = [];
-    rebuildLookupMaps();
     const opts = categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
     catSelect.innerHTML = '<option value="">미분류</option>' + opts;
     filterSelect.innerHTML = '<option value="">전체 카테고리</option>' + opts;
@@ -549,13 +533,13 @@ function loadAll() {
 }
 
 function categoryChip(id) {
-  const c = categoryMap.get(id);
+  const c = categories.find(c => c.id === id);
   if (!c) return '<span style="color:var(--text-light)">미분류</span>';
   return `<span class="chip" style="background:${c.color}">${escapeHtml(c.name)}</span>`;
 }
 
 function brandTag(id) {
-  const b = brandMap.get(id);
+  const b = brands.find(b => b.id === id);
   if (!b) return '<span style="color:var(--text-light)">-</span>';
   return `<span class="brand-tag" style="background:${b.color || '#8a8f98'};">${escapeHtml(b.name)}</span>`;
 }
@@ -1104,7 +1088,6 @@ async function uploadExcel(event) {
 
   try {
     const res = await fetch('/api/import/products', { method: 'POST', body: formData });
-    clearApiCache();  // 업로드로 브랜드/카테고리가 늘어날 수 있으므로 캐시를 비운다
     const data = await res.json();
     if (data.error) {
       resultDiv.innerHTML = `<span style="color:var(--danger);">❌ ${data.error}</span>`;

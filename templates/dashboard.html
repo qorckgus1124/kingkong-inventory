@@ -30,6 +30,15 @@
   </div>
 </div>
 
+<!-- 재고 원가 총액: 현재 보유 재고를 원가로 환산한 금액 (= 재고에 묶여 있는 돈) -->
+<div class="summary-cards">
+  <div class="summary-card">
+    <div class="label">📦 재고 원가 총액</div>
+    <div class="value" id="stockCostValue">-</div>
+    <div style="font-size:11px; color:var(--text-light); margin-top:4px;" id="stockCostScope">-</div>
+  </div>
+</div>
+
 <!-- 카테고리별 출고 수량 비교 -->
 <div class="card">
   <h3>📦 카테고리별 출고 수량 비교 (이번달 vs 저번달)</h3>
@@ -191,6 +200,15 @@ async function loadDashboard() {
     document.getElementById('monthProfit').textContent = fmt(data.month?.profit ?? 0) + '원';
     document.getElementById('forecastRevenue').textContent = fmt(data.forecast?.forecast_revenue ?? 0) + '원';
     document.getElementById('forecastProfit').textContent = fmt(data.forecast?.forecast_profit ?? 0) + '원';
+
+    // 재고 원가 총액 = Σ(보유 수량 × 원가). 활성 제품 기준이며, 매장을 선택하면 그 매장만 합산한다.
+    const stockCost = data.stock_value?.total_cost_value ?? 0;
+    document.getElementById('stockCostValue').textContent = fmt(stockCost) + '원';
+    const storeSel = document.getElementById('storeSelect');
+    const scopeName = (storeSel && storeSel.value)
+      ? storeSel.options[storeSel.selectedIndex].text
+      : '전체 매장';
+    document.getElementById('stockCostScope').textContent = `${scopeName} · 활성 제품 재고 기준`;
 
     // 카테고리별 출고 수량 비교
     const thisMonth = data.category_comparison?.this_month_quantity || {};

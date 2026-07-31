@@ -876,7 +876,6 @@ async function processUpload(file, adjustStock, resultDivId, storeSelectId) {
       method: 'POST',
       body: formData
     });
-    clearApiCache();  // 업로드로 제품/브랜드가 새로 생길 수 있으므로 캐시를 비운다
     const data = await res.json();
 
     if (data.error) {

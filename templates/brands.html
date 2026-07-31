@@ -449,7 +449,6 @@ async function uploadBrandsCSV(event) {
   
   try {
     const res = await fetch('/api/import/brands', { method: 'POST', body: formData });
-    clearApiCache();  // 업로드로 브랜드/카테고리가 바뀌므로 캐시를 비운다
     const data = await res.json();
     if (data.error) {
       toast(data.error, true, '⚠️');

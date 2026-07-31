@@ -10,8 +10,6 @@ import csv
 import re
 import secrets
 import hashlib
-import gzip
-import time
 from functools import wraps
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -41,34 +39,6 @@ BRAND_CSV_PATH = os.path.join(BASE_DIR, "카테고리 상품별 브랜드 정리
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
-
-# ⚡ 정적 파일(css/js/아이콘)은 브라우저가 오래 캐시해도 되도록 만료 기간을 길게 준다.
-# 대신 아래 asset_version()으로 파일이 바뀌면 주소(?v=...)가 자동으로 바뀌므로,
-# 새로 배포한 내용이 반영되지 않는 문제는 생기지 않는다.
-app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 30  # 30일
-
-
-def _compute_asset_version():
-    """정적 파일들의 수정 시각을 합쳐 캐시 무효화용 버전 문자열을 만든다."""
-    newest = 0
-    for name in ("common.js", "style.css"):
-        path = os.path.join(BASE_DIR, "static", name)
-        try:
-            newest = max(newest, int(os.path.getmtime(path)))
-        except OSError:
-            pass
-    return str(newest or int(time.time()))
-
-
-ASSET_VERSION = None  # 첫 요청 때 계산해서 재사용 (매 요청 파일 stat을 피한다)
-
-
-@app.context_processor
-def inject_asset_version():
-    global ASSET_VERSION
-    if ASSET_VERSION is None:
-        ASSET_VERSION = _compute_asset_version()
-    return {"asset_version": ASSET_VERSION}
 
 
 def normalize_search(text):
@@ -140,11 +110,6 @@ app.json = _ISODateJSONProvider(app)
 
 _DB_POOL = None
 
-# 연결별 마지막 헬스체크 시각 (backend_pid -> monotonic 시간).
-# 이 시간이 지난 연결만 SELECT 1로 살아있는지 확인한다.
-_CONN_LAST_CHECKED = {}
-CONN_HEALTHCHECK_IDLE_SEC = float(os.environ.get("DB_HEALTHCHECK_IDLE_SEC", "45"))
-
 
 def _get_database_url():
     database_url = os.environ.get("DATABASE_URL")
@@ -170,9 +135,6 @@ def _create_pool():
         port=result.port,
         sslmode='require',  # Render에서는 'require'로 자동 설정됨
         connect_timeout=10,
-        # ⚡ 연결을 맺을 때 세션 타임존을 함께 지정한다. 이렇게 하면 요청마다
-        # "SET TIME ZONE" 쿼리를 보내지 않아도 되므로 원격 DB 왕복이 줄어든다.
-        options="-c timezone=Asia/Seoul",
     )
 
 
@@ -197,14 +159,6 @@ def _reset_pool():
     return _DB_POOL
 
 
-def _conn_key(conn):
-    """연결을 구분하는 키. get_backend_pid()는 로컬 캐시값이라 DB 왕복이 없다."""
-    try:
-        return conn.get_backend_pid()
-    except Exception:
-        return id(conn)
-
-
 def get_db():
     if "db" not in g:
         pool = _init_pool()
@@ -215,74 +169,31 @@ def get_db():
             # 서버를 재시작하지 않아도 스스로 새 풀을 만들어 복구를 시도한다.
             pool = _reset_pool()
             conn = pool.getconn()
-
-        # ⚡ 성능: 예전에는 요청마다 헬스체크(SELECT 1) + SET TIME ZONE + commit을 실행해서
-        # 원격 DB를 3번이나 더 왕복했다. 화면 하나가 API를 5~10개 호출하니 그 자체로
-        # 수백 ms가 낭비됐다. 타임존은 연결 시 옵션으로 지정하고(위 _create_pool),
-        # 헬스체크는 "한동안 쓰이지 않아 끊겼을 가능성이 있는 연결"에만 수행한다.
-        now = time.monotonic()
-        key = _conn_key(conn)
-        last_used = _CONN_LAST_CHECKED.get(key, 0)
-        needs_probe = conn.closed or (now - last_used) > CONN_HEALTHCHECK_IDLE_SEC
-        if needs_probe:
-            try:
-                with conn.cursor() as probe:
-                    probe.execute("SELECT 1")
-            except Exception:
-                _CONN_LAST_CHECKED.pop(key, None)
-                pool.putconn(conn, close=True)
-                conn = pool.getconn()
-                key = _conn_key(conn)
-        _CONN_LAST_CHECKED[key] = now
-        # 오래된 항목이 무한히 쌓이지 않게 정리 (연결 수만큼만 유지되면 충분하다)
-        if len(_CONN_LAST_CHECKED) > 200:
-            for k, t in list(_CONN_LAST_CHECKED.items()):
-                if now - t > 600:
-                    _CONN_LAST_CHECKED.pop(k, None)
-        # 참고: 연결의 세션 타임존(Asia/Seoul)은 _create_pool()의 options로 이미 지정되어
-        # 있으므로 매 요청마다 SET TIME ZONE을 보낼 필요가 없다. autocommit도 기본값
-        # (False)이라 따로 만질 필요가 없다.
+        try:
+            # 풀에 오래 유지된 연결이 원격에서 끊겼을 수 있으므로 가벼운 헬스체크 후,
+            # 죽어있으면 버리고 새 연결을 받아온다.
+            with conn.cursor() as probe:
+                probe.execute("SELECT 1")
+        except Exception:
+            pool.putconn(conn, close=True)
+            conn = pool.getconn()
+        # 참고: 새로 만들어진 연결은 원래 autocommit이 기본값 False라서
+        # 여기서 다시 설정할 필요가 없다. 오히려 방금 위 헬스체크(SELECT 1)로
+        # 트랜잭션이 열린 상태에서 이 값을 다시 대입하면
+        # "set_session cannot be used inside a transaction" 에러가 난다.
+        # (예전에는 Aiven 연결이 자주 끊겨서 매번 새 연결을 받아왔고,
+        #  그 새 연결엔 헬스체크를 안 태워서 우연히 안 터졌을 뿐이다.)
+        # 커넥션 풀에서 재사용되는 연결이라도 세션 타임존을 한국시간(KST)으로 맞춰준다.
+        # (psycopg2 connection 객체는 임의 속성을 못 붙이는 타입이라 "한 번만 설정" 캐싱은
+        #  AttributeError를 일으킨다. SET TIME ZONE 자체는 매우 가벼운 명령이라 매 요청마다
+        #  실행해도 성능에 문제가 없다.)
+        with conn.cursor() as tz_cur:
+            tz_cur.execute("SET TIME ZONE 'Asia/Seoul'")
+        conn.commit()
         g.db = conn
         g.cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         g._db_pool_ref = pool
     return g.db
-
-
-# ---------------------------------------------------------------------------
-# 응답 압축 (gzip)
-# ---------------------------------------------------------------------------
-# ⚡ 제품/거래 목록 같은 JSON은 수백 KB가 되기도 한다. 모바일 회선에서는 이 전송
-# 시간이 체감 렉의 큰 부분이다. gzip을 씌우면 보통 1/5~1/10 크기로 줄어든다.
-# 파일 다운로드(send_file)처럼 스트리밍으로 내려가는 응답은 건드리지 않는다.
-GZIP_MIN_SIZE = 1024
-GZIP_TYPES = ("application/json", "text/html", "text/css", "application/javascript", "text/javascript", "text/plain")
-
-
-@app.after_request
-def compress_response(response):
-    try:
-        if response.direct_passthrough or response.status_code >= 300:
-            return response
-        if "gzip" not in (request.headers.get("Accept-Encoding") or "").lower():
-            return response
-        if response.headers.get("Content-Encoding"):
-            return response
-        ctype = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if ctype not in GZIP_TYPES:
-            return response
-        data = response.get_data()
-        if len(data) < GZIP_MIN_SIZE:
-            return response
-        compressed = gzip.compress(data, compresslevel=6)
-        if len(compressed) >= len(data):
-            return response
-        response.set_data(compressed)
-        response.headers["Content-Encoding"] = "gzip"
-        response.headers["Content-Length"] = str(len(compressed))
-        response.headers.add("Vary", "Accept-Encoding")
-    except Exception as e:
-        print(f"⚠️ 응답 압축 건너뜀: {e}")
-    return response
 
 
 @app.teardown_appcontext
@@ -706,45 +617,17 @@ def init_db():
 def create_indexes():
     conn = get_db()
     cur = g.cursor
-    statements = [
-        "CREATE INDEX IF NOT EXISTS idx_transactions_date ON stock_transactions(date_time);",
-        "CREATE INDEX IF NOT EXISTS idx_transactions_type ON stock_transactions(type);",
-        "CREATE INDEX IF NOT EXISTS idx_transactions_store ON stock_transactions(store_id);",
-        "CREATE INDEX IF NOT EXISTS idx_transactions_product ON stock_transactions(product_id);",
-        "CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);",
-        "CREATE INDEX IF NOT EXISTS idx_stock_store_product ON store_stock(store_id, product_id);",
-        "CREATE INDEX IF NOT EXISTS idx_pre_orders_store ON pre_orders(store_id);",
-        "CREATE INDEX IF NOT EXISTS idx_pre_orders_status ON pre_orders(status);",
-        "CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name);",
-        "CREATE INDEX IF NOT EXISTS idx_movements_status ON stock_movements(status);",
-        # ⚡ 아래는 실제 화면들이 쓰는 조회 패턴에 맞춘 복합 인덱스.
-        # 매출/판매실적/대시보드/타임머신은 "특정 매장 + 기간" 또는 "특정 유형 + 기간"으로
-        # 거래를 훑기 때문에, 컬럼 하나씩 걸린 인덱스만으로는 테이블 전체를 읽는 경우가 많았다.
-        "CREATE INDEX IF NOT EXISTS idx_transactions_store_date ON stock_transactions(store_id, date_time);",
-        "CREATE INDEX IF NOT EXISTS idx_transactions_product_date ON stock_transactions(product_id, date_time);",
-        "CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON stock_transactions(type, date_time);",
-        # 제품 목록은 항상 "활성 제품"만, 그리고 카테고리/브랜드로 걸러서 본다.
-        "CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active);",
-        "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);",
-        "CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand_id);",
-        # 재고 합계는 제품 기준으로 모으므로 product_id 선행 인덱스가 필요하다.
-        "CREATE INDEX IF NOT EXISTS idx_stock_product ON store_stock(product_id);",
-        "CREATE INDEX IF NOT EXISTS idx_brands_category ON brands(category_id);",
-        "CREATE INDEX IF NOT EXISTS idx_pre_order_items_order ON pre_order_items(pre_order_id);",
-        # 일일 보고/리포트 화면은 date(t.date_time) = date(%s) 형태로 조회한다.
-        # 컬럼에 함수를 씌우면 일반 인덱스를 쓸 수 없으므로, 같은 식(expression)으로
-        # 인덱스를 만들어 준다. (date_time은 timestamp 타입이라 이 식은 불변이므로 색인 가능)
-        "CREATE INDEX IF NOT EXISTS idx_transactions_dateonly ON stock_transactions((date(date_time)));",
-        "CREATE INDEX IF NOT EXISTS idx_transactions_store_dateonly ON stock_transactions(store_id, (date(date_time)));",
-    ]
-    for stmt in statements:
-        try:
-            cur.execute(stmt)
-            conn.commit()
-        except Exception as e:
-            # 인덱스 하나가 실패해도(권한/버전 차이 등) 나머지는 계속 만든다.
-            conn.rollback()
-            print(f"⚠️ 인덱스 생성 건너뜀: {stmt.split(' ')[5] if len(stmt.split(' ')) > 5 else stmt} - {e}")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_date ON stock_transactions(date_time);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_type ON stock_transactions(type);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_store ON stock_transactions(store_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_product ON stock_transactions(product_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_store_product ON store_stock(store_id, product_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pre_orders_store ON pre_orders(store_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pre_orders_status ON pre_orders(status);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_movements_status ON stock_movements(status);")
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -958,109 +841,80 @@ def auto_assign_brand_and_category(product_name, user_brand_id=None, user_catego
             category_id = auto_cat_id
     return brand_id, category_id
 
-# ---------------------------------------------------------------------------
-# 제품 행 가공 (재고/브랜드/카테고리/옵션 정보 붙이기)
-# ---------------------------------------------------------------------------
-# ⚡ 성능: 예전에는 제품 1건마다 재고·브랜드·카테고리·옵션수·상위제품명을 각각
-# 따로 조회해서, 제품이 500개면 2,500번 넘게 DB를 왕복했다(N+1 문제). 원격 DB는
-# 한 번 왕복에 수십 ms가 걸리므로 목록 한 번 여는 데 수십 초가 걸렸다.
-# 이제 몇 건이든 "묶어서 5번"만 조회한다. 반환하는 항목(키)은 예전과 완전히 동일하다.
-
-def enrich_product_rows(rows, store_id=None):
-    """제품 행 목록에 부가 정보를 한꺼번에 붙여서 dict 리스트로 돌려준다."""
-    if not rows:
-        return []
-
-    cur = g.cursor
-    items = [dict(r) for r in rows]
-    product_ids = [it["id"] for it in items]
-
-    # ---------- 1) 재고 (매장 지정 시 그 매장만, 없으면 전체 매장 합계) ----------
-    stock_map = {}
-    try:
-        if store_id:
-            cur.execute(
-                """SELECT product_id, SUM(qty) AS qty, SUM(min_qty) AS min_qty
-                   FROM store_stock WHERE product_id = ANY(%s) AND store_id = %s
-                   GROUP BY product_id""",
-                (product_ids, store_id),
-            )
-        else:
-            cur.execute(
-                """SELECT product_id, SUM(qty) AS qty, SUM(min_qty) AS min_qty
-                   FROM store_stock WHERE product_id = ANY(%s)
-                   GROUP BY product_id""",
-                (product_ids,),
-            )
-        for r in cur.fetchall():
-            stock_map[r["product_id"]] = (r["qty"] or 0, r["min_qty"] or 0)
-    except Exception as e:
-        print(f"⚠️ 재고 일괄 조회 오류: {e}")
-
-    # ---------- 2) 브랜드 / 3) 카테고리 ----------
-    brand_ids = [it["brand_id"] for it in items if it.get("brand_id")]
-    category_ids = [it["category_id"] for it in items if it.get("category_id")]
-    brand_map = {}
-    category_map = {}
-    try:
-        if brand_ids:
-            cur.execute("SELECT id, name, color FROM brands WHERE id = ANY(%s)", (list(set(brand_ids)),))
-            brand_map = {r["id"]: (r["name"], r["color"]) for r in cur.fetchall()}
-        if category_ids:
-            cur.execute("SELECT id, name, color FROM categories WHERE id = ANY(%s)", (list(set(category_ids)),))
-            category_map = {r["id"]: (r["name"], r.get("color")) for r in cur.fetchall()}
-    except Exception as e:
-        print(f"⚠️ 브랜드/카테고리 일괄 조회 오류: {e}")
-
-    # ---------- 4) 옵션(변형) 개수 / 5) 상위 제품명 ----------
-    variant_map = {}
-    parent_name_map = {}
-    parent_ids = [it["parent_product_id"] for it in items if it.get("parent_product_id")]
-    try:
-        cur.execute(
-            """SELECT parent_product_id, COUNT(*) AS cnt FROM products
-               WHERE parent_product_id = ANY(%s) AND is_active = 1
-               GROUP BY parent_product_id""",
-            (product_ids,),
-        )
-        variant_map = {r["parent_product_id"]: (r["cnt"] or 0) for r in cur.fetchall()}
-        if parent_ids:
-            cur.execute("SELECT id, name FROM products WHERE id = ANY(%s)", (list(set(parent_ids)),))
-            parent_name_map = {r["id"]: r["name"] for r in cur.fetchall()}
-    except Exception as e:
-        print(f"⚠️ 옵션 정보 일괄 조회 오류: {e}")
-
-    # ---------- 조합 ----------
-    for d in items:
-        qty, min_qty = stock_map.get(d["id"], (0, 0))
-        d["qty"] = qty
-        d["min_qty"] = min_qty
-
-        sale = d.get("sale_price") or 0
-        cost = d.get("cost_price") or 0
-        d["margin_rate"] = round((sale - cost) / sale * 100, 1) if sale > 0 else None
-
-        brand = brand_map.get(d.get("brand_id"))
-        d["brand_name"] = brand[0] if brand else None
-        d["brand_color"] = brand[1] if brand else None
-
-        category = category_map.get(d.get("category_id"))
-        d["category_name"] = category[0] if category else None
-        d["category_color"] = category[1] if category else None
-
-        # 🔥 옵션별 재고 관리 ("묶어보기"): 옵션을 몇 개 갖고 있는지 / 자신이 옵션인지
-        d["variant_count"] = variant_map.get(d["id"], 0)
-        d["is_variant"] = bool(d.get("parent_product_id"))
-        d["parent_name"] = parent_name_map.get(d.get("parent_product_id")) if d["is_variant"] else None
-
-    return items
-
-
 def product_row_to_dict(db, row, store_id=None):
-    """단일 제품 행용 (내부적으로 enrich_product_rows를 사용하므로 결과 형식이 동일하다)."""
     if row is None:
         return None
-    return enrich_product_rows([row], store_id)[0]
+    d = dict(row)
+    cur = g.cursor
+    try:
+        if store_id:
+            cur.execute("SELECT qty, min_qty FROM store_stock WHERE store_id=%s AND product_id=%s", (store_id, row["id"]))
+            stock = cur.fetchone()
+            d["qty"] = stock["qty"] if stock else 0
+            d["min_qty"] = stock["min_qty"] if stock else 0
+        else:
+            cur.execute("SELECT COALESCE(SUM(qty),0) as total FROM store_stock WHERE product_id=%s", (row["id"],))
+            total = cur.fetchone()
+            d["qty"] = total["total"] if total else 0
+            cur.execute("SELECT COALESCE(SUM(min_qty),0) as total_min FROM store_stock WHERE product_id=%s", (row["id"],))
+            min_sum = cur.fetchone()
+            d["min_qty"] = min_sum["total_min"] if min_sum else 0
+    except Exception as e:
+        print(f"⚠️ 재고 조회 오류 (product_id={row['id']}): {e}")
+        d["qty"] = 0
+        d["min_qty"] = 0
+
+    sale = row["sale_price"] or 0
+    cost = row["cost_price"] or 0
+    d["margin_rate"] = round((sale - cost) / sale * 100, 1) if sale > 0 else None
+
+    if d.get("brand_id"):
+        cur.execute("SELECT name, color FROM brands WHERE id = %s", (d["brand_id"],))
+        brand = cur.fetchone()
+        if brand:
+            d["brand_name"] = brand["name"]
+            d["brand_color"] = brand["color"]
+        else:
+            d["brand_name"] = None
+            d["brand_color"] = None
+    else:
+        d["brand_name"] = None
+        d["brand_color"] = None
+
+    if d.get("category_id"):
+        cur.execute("SELECT name, color FROM categories WHERE id = %s", (d["category_id"],))
+        category = cur.fetchone()
+        if category:
+            d["category_name"] = category["name"]
+            d["category_color"] = category["color"] if "color" in category.keys() else None
+        else:
+            d["category_name"] = None
+            d["category_color"] = None
+    else:
+        d["category_name"] = None
+        d["category_color"] = None
+
+    # 🔥 옵션별 재고 관리 ("묶어보기"): 이 제품이 옵션(변형)을 몇 개 갖고 있는지 / 자신이 옵션인지
+    try:
+        cur.execute(
+            "SELECT COUNT(*) as cnt FROM products WHERE parent_product_id=%s AND is_active=1",
+            (row["id"],)
+        )
+        d["variant_count"] = cur.fetchone()["cnt"] or 0
+    except Exception:
+        d["variant_count"] = 0
+    d["is_variant"] = bool(d.get("parent_product_id"))
+    if d["is_variant"]:
+        try:
+            cur.execute("SELECT name FROM products WHERE id=%s", (d["parent_product_id"],))
+            parent = cur.fetchone()
+            d["parent_name"] = parent["name"] if parent else None
+        except Exception:
+            d["parent_name"] = None
+    else:
+        d["parent_name"] = None
+
+    return d
 
 def _apply_stock_delta(db, store_id, product_id, ttype, quantity):
     # 선결예약(예약주문)은 실제 재고 이동이 아니라 "나중에 출고하기로 한 매출 기록"일
@@ -1282,18 +1136,13 @@ def api_brands():
             sql += " ORDER BY b.name"
             cur.execute(sql, params)
             rows = cur.fetchall()
-            # ⚡ 성능: 예전에는 브랜드 1건마다 제품 수를 세는 쿼리를 따로 던졌다.
-            # 브랜드가 300개면 301번 왕복했다. 지금은 한 번에 세서 붙인다.
-            result = [dict(r) for r in rows]
-            if result:
-                cur.execute(
-                    """SELECT brand_id, COUNT(*) AS cnt FROM products
-                       WHERE brand_id = ANY(%s) GROUP BY brand_id""",
-                    ([d["id"] for d in result],),
-                )
-                count_map = {r["brand_id"]: (r["cnt"] or 0) for r in cur.fetchall()}
-                for d in result:
-                    d["product_count"] = count_map.get(d["id"], 0)
+            result = []
+            for r in rows:
+                d = dict(r)
+                cur.execute("SELECT COUNT(*) as cnt FROM products WHERE brand_id = %s", (r["id"],))
+                count = cur.fetchone()
+                d["product_count"] = count["cnt"] if count else 0
+                result.append(d)
             return jsonify(result)
         except Exception as e:
             print(f"⚠️ 브랜드 조회 오류: {e}")
@@ -1711,7 +1560,17 @@ def api_products():
             if sort == "qty":
                 cur.execute(sql, params)
                 rows = cur.fetchall()
-                result = enrich_product_rows(rows, store_id)
+                result = []
+                for r in rows:
+                    try:
+                        result.append(product_row_to_dict(conn, r, store_id))
+                    except Exception as e:
+                        print(f"⚠️ 제품 #{r['id']} 변환 오류: {e}")
+                        d = dict(r)
+                        d["qty"] = 0
+                        d["min_qty"] = 0
+                        d["margin_rate"] = None
+                        result.append(d)
                 reverse = (order.lower() == "desc")
                 result.sort(key=lambda x: x.get("qty", 0), reverse=reverse)
                 if min_qty_warning:
@@ -1724,7 +1583,17 @@ def api_products():
                 sql += f" ORDER BY {sort_col} {order_sql}"
                 cur.execute(sql, params)
                 rows = cur.fetchall()
-                result = enrich_product_rows(rows, store_id)
+                result = []
+                for r in rows:
+                    try:
+                        result.append(product_row_to_dict(conn, r, store_id))
+                    except Exception as e:
+                        print(f"⚠️ 제품 #{r['id']} 변환 오류: {e}")
+                        d = dict(r)
+                        d["qty"] = 0
+                        d["min_qty"] = 0
+                        d["margin_rate"] = None
+                        result.append(d)
                 if min_qty_warning:
                     result = [p for p in result if p.get("qty", 0) <= p.get("min_qty", 0)]
                 return jsonify(result)
@@ -1842,7 +1711,13 @@ def api_products_search():
             ORDER BY p.name LIMIT 15
         """, (f"%{q_norm}%", f"%{q_norm}%"))
         rows = cur.fetchall()
-        return jsonify(enrich_product_rows(rows, store_id))
+        result = []
+        for r in rows:
+            try:
+                result.append(product_row_to_dict(conn, r, store_id))
+            except:
+                result.append(dict(r))
+        return jsonify(result)
     except Exception as e:
         print(f"⚠️ 제품 검색 오류 (q={q}): {e}")
         return jsonify([])
