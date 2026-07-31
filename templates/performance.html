@@ -80,6 +80,20 @@ async function loadBestsellerCategories() {
   }
 }
 
+// 브랜드 옆에 카테고리를 함께 보여준다.
+// 같은 브랜드 안에서도 제품이 액상/일회용으로 나뉠 수 있어, 실제 제품 기준 카테고리를 표시한다.
+function bestsellerBrandCategoryChips(b) {
+  const cats = Array.isArray(b.categories) ? b.categories : [];
+  if (cats.length === 0) {
+    return b.category_name
+      ? ` <span class="chip" style="background:#8a8f98; font-size:10px;">${escapeHtml(b.category_name)}</span>`
+      : '';
+  }
+  return ' ' + cats.slice(0, 3).map(c =>
+    `<span class="chip" style="background:#8a8f98; font-size:10px;">${escapeHtml(c.name)} ${fmt(c.count)}</span>`
+  ).join(' ');
+}
+
 // 🔥 브랜드명 자동완성 (직접 검색시 일치하는 브랜드명을 목록으로 보여줌)
 let _bestsellerBrandAcTimer = null;
 async function onBestsellerBrandInput() {
@@ -93,13 +107,14 @@ async function onBestsellerBrandInput() {
   }
   _bestsellerBrandAcTimer = setTimeout(async () => {
     try {
-      const brands = await api('/api/brands?search=' + encodeURIComponent(q));
-      if (!brands || brands.length === 0) {
+      // 브랜드명뿐 아니라 그 브랜드의 제품명으로도 검색된다 (예: "밤 백향" -> 펀치밤)
+      const brands = await apiSearch('/api/brands?search=' + encodeURIComponent(q));
+      if (!Array.isArray(brands) || brands.length === 0) {
         listEl.classList.remove('show');
       } else {
         listEl.innerHTML = brands.slice(0, 10).map(b => `
           <div class="autocomplete-item" onclick="pickBestsellerBrand('${escapeHtml(b.name).replace(/'/g, "\\'")}')">
-            ${escapeHtml(b.name)}
+            ${escapeHtml(b.name)}${bestsellerBrandCategoryChips(b)}
           </div>
         `).join('');
         listEl.classList.add('show');
