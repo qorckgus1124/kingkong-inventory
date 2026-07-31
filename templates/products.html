@@ -526,7 +526,7 @@ function debouncedLoad() {
       selectedProductIds.clear();
       updateSelectedCount();
     }
-  }, 250);
+  }, 150);  // ⚡ 입력이 멈춘 뒤 대기시간을 짧게 (250ms -> 150ms)
 }
 
 function loadAll() {
