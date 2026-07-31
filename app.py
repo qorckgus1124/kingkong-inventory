@@ -1048,6 +1048,27 @@ def _apply_stock_delta(db, store_id, product_id, ttype, quantity):
 # 라우트 (페이지)
 # ---------------------------------------------------------------------------
 
+@app.context_processor
+def inject_global_stores():
+    """화면 상단 전역 매장 드롭다운에 넣을 매장 목록을 서버에서 미리 만들어 준다.
+
+    ⚡ 예전에는 화면을 열 때마다 브라우저가 /api/stores를 따로 호출해서, 목록이 도착할
+    때까지 드롭다운이 "매장 선택"으로 비어 보였다가 값이 채워지는 2단계 변화가 있었다.
+    HTML에 처음부터 넣어두면 그 깜빡임과 요청 한 번이 사라진다.
+    (매장은 몇 개뿐이고 거의 바뀌지 않으므로 조회 비용이 거의 없다)
+    """
+    try:
+        get_db()
+        cur = g.cursor
+        cur.execute("SELECT id, name FROM stores ORDER BY id")
+        return {"global_stores": [dict(r) for r in cur.fetchall()]}
+    except Exception as e:
+        # 목록을 못 가져와도 화면은 정상 표시되어야 한다 (브라우저가 다시 요청해서 채운다)
+        rollback_quietly()
+        print(f"⚠️ 전역 매장 목록 준비 실패: {e}")
+        return {"global_stores": []}
+
+
 @app.route("/sw.js")
 def service_worker():
     # 서비스 워커는 자기가 위치한 경로 아래(/static/ 이하)만 기본적으로 제어할 수 있다.
