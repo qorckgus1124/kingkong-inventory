@@ -293,27 +293,54 @@ function toggleTheme() {
 // ==============================================================
 let _globalStoreSelectLoaded = false;
 
-async function loadGlobalStoreSelect() {
-  if (_globalStoreSelectLoaded) return;
-  try {
-    const stores = await api('/api/stores');
-    const sel = document.getElementById('globalStoreSelect');
-    if (!sel) return;
-    let options = '<option value="">매장 선택</option>';
-    stores.forEach(s => {
-      options += `<option value="${s.id}">${escapeHtml(s.name)}</option>`;
-    });
-    sel.innerHTML = options;
+// 선택한 매장은 브라우저에 저장되어 화면을 옮겨도 그대로 "귀속"된 상태로 유지된다.
+// 바뀌는 시점은 딱 하나, 사용자가 이 드롭다운에서 다른 매장을 직접 고를 때다.
+function applyGlobalStoreOptions(stores) {
+  const sel = document.getElementById('globalStoreSelect');
+  if (!sel || !Array.isArray(stores) || stores.length === 0) return null;
 
-    const savedId = localStorage.getItem('global_store_id');
-    if (savedId && stores.some(s => s.id == savedId)) {
-      sel.value = savedId;
-    } else if (stores.length > 0) {
-      sel.value = stores[0].id;
-      localStorage.setItem('global_store_id', stores[0].id);
-    }
+  const savedId = localStorage.getItem('global_store_id');
+  let options = '<option value="">매장 선택</option>';
+  stores.forEach(s => {
+    options += `<option value="${s.id}">${escapeHtml(s.name)}</option>`;
+  });
+
+  // 목록이 그대로면 다시 그리지 않는다 (화면 깜빡임 방지)
+  if (sel.innerHTML !== options) sel.innerHTML = options;
+
+  if (savedId && stores.some(s => s.id == savedId)) {
+    sel.value = savedId;
+  } else if (!savedId && stores.length > 0) {
+    // 한 번도 고른 적이 없을 때만 첫 매장으로 자동 귀속시킨다.
+    sel.value = stores[0].id;
+    localStorage.setItem('global_store_id', String(stores[0].id));
+  }
+  return sel.value || null;
+}
+
+async function loadGlobalStoreSelect() {
+  const sel = document.getElementById('globalStoreSelect');
+  if (!sel) return;
+
+  // 1단계: 저장해둔 목록으로 즉시 채운다 (네트워크 대기 없음 → "매장 선택"이 스쳐 보이지 않음)
+  const instant = (typeof getStoresInstant === 'function') ? getStoresInstant() : null;
+  if (instant) {
+    applyGlobalStoreOptions(instant);
+    // 각 화면의 매장 드롭다운도 같은 값으로 맞춰준다. 이때는 change를 발생시키지 않으므로
+    // 목록을 다시 불러오는 중복 조회가 생기지 않는다.
     syncAllStoreDropdowns(sel.value);
     _globalStoreSelectLoaded = true;
+  }
+
+  // 2단계: 최신 목록을 확인한다 (캐시가 살아있으면 api()가 즉시 돌려주므로 요청이 나가지 않는다)
+  try {
+    const stores = await api('/api/stores');
+    if (!Array.isArray(stores) || stores.length === 0) return;
+    const before = sel.value;
+    applyGlobalStoreOptions(stores);
+    _globalStoreSelectLoaded = true;
+    // 매장이 새로 추가/삭제되어 선택값이 실제로 바뀐 경우에만 다른 드롭다운을 맞춘다.
+    if (sel.value !== before) syncAllStoreDropdowns(sel.value);
   } catch (e) {
     console.error('전역 매장 로드 오류:', e);
   }

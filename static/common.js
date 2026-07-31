@@ -70,6 +70,7 @@ async function api(url, options, retries = 3) {
         toast('서버 응답을 읽지 못했습니다.', true, '⚠️');
         return apiFailure('빈 응답');
       }
+      if (method === 'GET' && url === '/api/stores') writeStoreListCache(data);
       return data;
     } catch (e) {
       // 여기까지 오는 것은 네트워크 단절/타임아웃 같은 전송 실패뿐이다.
