@@ -349,11 +349,18 @@ async function loadGlobalStoreSelect() {
 document.addEventListener('DOMContentLoaded', function() {
   const globalSel = document.getElementById('globalStoreSelect');
   if (globalSel) {
+    // 사용자가 직접 매장을 바꾼 순간에만 귀속 매장이 변경된다.
     globalSel.addEventListener('change', function() {
       const val = this.value;
       localStorage.setItem('global_store_id', val);
-      syncAllStoreDropdowns(val);
-      // 각 페이지의 load 함수 호출 (base.html에서 전역 이벤트로 처리)
+
+      // 화면의 매장 드롭다운에 change를 전달한다 (장바구니 매장 확인 등 후속 처리 포함).
+      // 그 드롭다운의 change 처리기가 이미 목록을 다시 불러오므로,
+      // 아래 load 함수들을 또 호출하면 같은 조회가 두 번 나간다.
+      const changed = syncAllStoreDropdowns(val, true);
+      if (changed > 0) return;
+
+      // 매장 드롭다운이 없는 화면(대시보드/일일보고 등)만 여기서 새로 불러온다.
       if (typeof load === 'function') load();
       if (typeof loadDashboard === 'function') loadDashboard();
       if (typeof loadProducts === 'function') loadProducts();
@@ -374,20 +381,31 @@ document.addEventListener('DOMContentLoaded', function() {
   loadGlobalStoreSelect();
 });
 
-function syncAllStoreDropdowns(storeId) {
-  if (!storeId) return;
+// 각 화면의 매장 드롭다운을 전역 선택값으로 맞춘다.
+//  - fireChange=false (기본): 값만 조용히 맞춘다. 화면을 열 때 쓰는 경로로,
+//    예전처럼 change 이벤트를 강제로 쏘지 않으므로 목록을 두 번 불러오지 않는다.
+//  - fireChange=true: 사용자가 전역 드롭다운에서 매장을 직접 바꾼 경우.
+//    값이 "실제로 달라진" 드롭다운에만 change를 보내서 각 화면의 후속 처리
+//    (장바구니 매장 확인, 검색어 초기화 등)가 한 번만 실행되게 한다.
+// 반환값: change를 실제로 발생시킨 드롭다운 개수
+function syncAllStoreDropdowns(storeId, fireChange) {
+  if (!storeId) return 0;
   const targetIds = [
     'f_store', 'pre_store', 'filterStore', 'storeSelect',
     'fromStore', 'toStore', 'movementStoreFilter',
     'uploadStoreSelect', 'recordStoreSelect', 'outboundStoreSelect'
   ];
+  let changed = 0;
   targetIds.forEach(id => {
     const el = document.getElementById(id);
     if (el && el.options.length > 0) {
       const exists = Array.from(el.options).some(opt => opt.value == storeId);
-      if (exists) {
+      if (exists && el.value != storeId) {
         el.value = storeId;
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        if (fireChange) {
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          changed++;
+        }
       }
     }
   });
@@ -397,6 +415,7 @@ function syncAllStoreDropdowns(storeId) {
       if (exists) el.value = storeId;
     }
   });
+  return changed;
 }
 
 // ==============================================================
