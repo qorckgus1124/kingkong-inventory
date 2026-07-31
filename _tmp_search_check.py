@@ -64,7 +64,12 @@ class FakeCursor:
 
     def fetchall(self):
         s = self.sql.lower()
-        # 집계 쿼리를 먼저 판별해야 한다 (일반 제품 조회 패턴과 겹치기 때문)
+        # 제품 목록 조회(select p.*)를 가장 먼저 판별한다.
+        # (재고 0 숨김 조건 때문에 SQL 안에 store_stock 문구가 함께 들어있어서
+        #  순서를 잘못 두면 엉뚱한 가짜 데이터가 반환된다)
+        if "select p.*" in s:
+            return [Row(p) for p in PRODUCTS]
+        # 집계 쿼리를 그 다음에 판별한다 (일반 제품 조회 패턴과 겹치기 때문)
         if "group by p.brand_id, c.name" in s:
             return [Row({"brand_id": 1, "category_name": "액상", "cnt": 5}),
                     Row({"brand_id": 1, "category_name": "일회용", "cnt": 2})]
@@ -227,9 +232,12 @@ if count_real_queries() > 4:
 log("\n=== 5. 제품 40건 조회 시 쿼리 수 (N+1 확인) ===")
 QUERIES.clear()
 r = client.get("/api/products?q=제품")
-log("   반환 건수:", len(r.get_json() or []), "| 쿼리 수:", len(QUERIES))
-if len(QUERIES) > 6:
-    fails.append(f"N+1 남아있음({len(QUERIES)}건)")
+log("   반환 건수:", len(r.get_json() or []), "| 쿼리 수(부수 제외):", count_real_queries())
+log("   실행된 쿼리 목록:")
+for sql, _p in QUERIES:
+    log("     -", sql[:90])
+if count_real_queries() > 6:
+    fails.append(f"N+1 남아있음({count_real_queries()}건)")
 keys = set((r.get_json() or [{}])[0].keys())
 need = {"qty", "min_qty", "margin_rate", "brand_name", "brand_color", "category_name",
         "category_color", "variant_count", "is_variant", "parent_name"}

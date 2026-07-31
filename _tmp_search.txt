@@ -6,26 +6,34 @@
    '2%' 파라미터: ['%2\\%%'] | ESCAPE 포함: True
 
 === 2. 제품 검색 API가 만드는 SQL ===
-   status: 200 | 실행 쿼리 수: 7
-   토큰 조건 2개 포함: False
-   재고0 숨김(EXISTS) 포함: False
-   파라미터: []
+   status: 200 | 실행 쿼리 수(부수 제외): 1
+   토큰 조건 2개 포함: True
+   재고0 숨김(EXISTS) 포함: True
+   파라미터: ['%밤%', '%밤%', '%백향%', '%백향%']
 
    재고0 숨김 해제 시:
    store_stock 조건 포함: False
 
 === 3. 자동완성(/api/products/search) ===
-   status: 200 | 쿼리 수: 7 | 반환: 40
-   관련도 정렬(ORDER BY CASE) 포함: False
-   LIMIT 포함: False
+   status: 200 | 쿼리 수(부수 제외): 5 | 반환: 40
+   관련도 정렬(ORDER BY CASE) 포함: True
+   LIMIT 포함: True
 
 === 4. 브랜드 검색(제품명 매칭 + 카테고리) ===
-   status: 200 | 쿼리 수: 5
-   제품명 EXISTS 매칭 포함: False
-   응답 예시: {'categories': [{'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}], 'category_id': 2, 'category_name': '미분류', 'color': '#111', 'id': 1, 'name': '펀치밤', 'product_count': 7, 'status': 'approved'}
+   status: 200 | 쿼리 수(부수 제외): 3
+   제품명 EXISTS 매칭 포함: True
+   응답 예시: {'categories': [{'count': 5, 'name': '액상'}, {'count': 2, 'name': '일회용'}], 'category_id': 2, 'category_name': '액상', 'color': '#111', 'id': 1, 'name': '펀치밤', 'product_count': 7, 'status': 'approved'}
 
 === 5. 제품 40건 조회 시 쿼리 수 (N+1 확인) ===
-   반환 건수: 40 | 쿼리 수: 7
+   반환 건수: 40 | 쿼리 수(부수 제외): 5
+   실행된 쿼리 목록:
+     - SELECT 1
+     - SET TIME ZONE 'Asia/Seoul'
+     - SELECT p.*, b.name as brand_name, b.color as brand_color FROM products p LEFT JOIN brands 
+     - SELECT product_id, SUM(qty) AS qty, SUM(min_qty) AS min_qty FROM store_stock WHERE product
+     - SELECT id, name, color FROM brands WHERE id = ANY(%s)
+     - SELECT id, name, color FROM categories WHERE id = ANY(%s)
+     - SELECT parent_product_id, COUNT(*) AS cnt FROM products WHERE parent_product_id = ANY(%s) 
    빠진 항목: 없음
 
 === 6. 화면 렌더 ===
@@ -42,4 +50,4 @@
    [OK ] 제품관리 화면에 hide_zero_stock
    [OK ] 제품관리 화면에 apiSearch(
 
-결과: 실패 ['재고0 숨김 조건 없음', '쿼리 과다(7건)', '자동완성 SQL 이상', '자동완성 쿼리 과다(7건)', '브랜드 검색이 제품명을 보지 않음', "카테고리 구성 이상: [{'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}, {'count': 0, 'name': '미분류'}]", '브랜드 쿼리 과다(5건)', 'N+1 남아있음(7건)']
+결과: 모두 통과
