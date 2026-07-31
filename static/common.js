@@ -71,6 +71,9 @@ async function api(url, options, retries = 3) {
         return apiFailure('빈 응답');
       }
       if (method === 'GET' && url === '/api/stores') writeStoreListCache(data);
+      // 판매/입출고 등 데이터가 바뀌는 요청이 성공하면 "오늘 매출"을 즉시 새로 불러온다.
+      // (플로팅 패널과 대시보드 오늘 카드가 실시간으로 보이게 하는 부분)
+      if (method !== 'GET') scheduleTodayRevenueRefresh();
       return data;
     } catch (e) {
       // 여기까지 오는 것은 네트워크 단절/타임아웃 같은 전송 실패뿐이다.
@@ -324,6 +327,20 @@ function matchesSearch(text, query, ...extraTexts) {
   if (tokens.length === 0) return true;
   const haystacks = [text, ...extraTexts].map(t => normalizeSearchText(t));
   return tokens.every(token => haystacks.some(h => h.includes(token)));
+}
+
+// ---------------------------------------------------------------------------
+// 오늘 매출 즉시 갱신 요청 (base.html의 refreshTodayRevenue를 짧게 묶어서 호출)
+// 장바구니를 여러 건 등록하면 요청이 연달아 나가므로, 0.4초 안의 호출은 한 번으로 합친다.
+// ---------------------------------------------------------------------------
+let _todayRevenueRefreshTimer = null;
+
+function scheduleTodayRevenueRefresh() {
+  if (typeof window.refreshTodayRevenue !== 'function') return;
+  clearTimeout(_todayRevenueRefreshTimer);
+  _todayRevenueRefreshTimer = setTimeout(() => {
+    try { window.refreshTodayRevenue(); } catch (e) {}
+  }, 400);
 }
 
 // ---------------------------------------------------------------------------
