@@ -210,8 +210,8 @@ if count_real_queries() > 6:
 log("\n=== 4. 브랜드 검색(제품명 매칭 + 카테고리) ===")
 QUERIES.clear()
 r = client.get("/api/brands?search=%EB%B0%A4%20%EB%B0%B1%ED%96%A5")
-log("   status:", r.status_code, "| 쿼리 수:", len(QUERIES))
-bsql = QUERIES[0][0] if QUERIES else ""
+log("   status:", r.status_code, "| 쿼리 수(부수 제외):", count_real_queries())
+bsql, _ = find_main_query("FROM brands b")
 log("   제품명 EXISTS 매칭 포함:", "FROM products bp" in bsql)
 data = r.get_json() or []
 log("   응답 예시:", data[0] if data else None)
@@ -221,8 +221,8 @@ if not data or "categories" not in data[0]:
     fails.append("브랜드 응답에 categories 없음")
 elif [c["name"] for c in data[0]["categories"]] != ["액상", "일회용"]:
     fails.append(f"카테고리 구성 이상: {data[0]['categories']}")
-if len(QUERIES) > 4:
-    fails.append(f"브랜드 쿼리 과다({len(QUERIES)}건)")
+if count_real_queries() > 4:
+    fails.append(f"브랜드 쿼리 과다({count_real_queries()}건)")
 
 log("\n=== 5. 제품 40건 조회 시 쿼리 수 (N+1 확인) ===")
 QUERIES.clear()
