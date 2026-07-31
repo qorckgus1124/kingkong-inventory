@@ -4343,26 +4343,9 @@ def api_statistics():
                 })
             rows.sort(key=lambda r: r["period_key"])
 
-        sql = f"""
-        SELECT
-            to_char(date_time, '{fmt}') as period_key,
-            SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0)
-                     WHEN t.type = '판매취소' THEN -COALESCE(t.quantity, 0) ELSE 0 END) as sold_qty,
-            SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0)
-                     WHEN t.type = '판매취소' THEN -COALESCE(t.quantity, 0) * COALESCE(t.unit_price, 0) ELSE 0 END) as revenue,
-            SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN COALESCE(t.quantity, 0) * (COALESCE(t.unit_price, 0) - COALESCE(t.unit_cost, 0))
-                     WHEN t.type = '판매취소' THEN -COALESCE(t.quantity, 0) * (COALESCE(t.unit_price, 0) - COALESCE(t.unit_cost, 0)) ELSE 0 END) as profit
-        FROM stock_transactions t
-        WHERE t.type IN ('판매출고', '판매취소', '선결예약')
-          AND date(t.date_time) >= date(%s)
-          AND date(t.date_time) <= date(%s)
-        GROUP BY period_key
-        ORDER BY period_key ASC
-        """
-        cur.execute(sql, (start_date, end_date))
-        rows = cur.fetchall()
-        return jsonify([dict(r) for r in rows])
+        return jsonify(rows)
     except Exception as e:
+        rollback_quietly()
         print(f"❌ 매출 통계 오류: {e}")
         return jsonify([])
 
