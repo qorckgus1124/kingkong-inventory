@@ -5860,20 +5860,10 @@ def api_import_products():
                         results["failed"] += 1
                         continue
                     if store_id:
-                        cur.execute(
-                            """INSERT INTO store_stock (store_id, product_id, qty, min_qty)
-                               VALUES (%s, %s, %s, %s)
-                               ON CONFLICT(store_id, product_id) DO UPDATE SET qty = excluded.qty, min_qty = excluded.min_qty""",
-                            (store_id, int(product_id), initial_qty, min_qty)
-                        )
+                        pending_stock[(store_id, int(product_id))] = (initial_qty, min_qty)
                     else:
                         for s in stores:
-                            cur.execute(
-                                """INSERT INTO store_stock (store_id, product_id, qty, min_qty)
-                                   VALUES (%s, %s, %s, %s)
-                                   ON CONFLICT(store_id, product_id) DO UPDATE SET qty = excluded.qty, min_qty = excluded.min_qty""",
-                                (s["id"], int(product_id), initial_qty, min_qty)
-                            )
+                            pending_stock[(s["id"], int(product_id))] = (initial_qty, min_qty)
                 else:
                     cur.execute(
                         """INSERT INTO products (name, brand_id, category_id, cost_price, card_cost_price, sale_price)
