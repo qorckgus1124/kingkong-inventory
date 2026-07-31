@@ -690,6 +690,25 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_created ON webhook_logs(created_at);")
 
         # ---------------------------------------------------------------
+        # 일별 매출 집계표 (성능)
+        # ---------------------------------------------------------------
+        # 통계/매출추이/예상매출은 매번 거래 전체를 훑어서, 거래가 쌓일수록 느려졌다.
+        # 하루 단위로 미리 합산해두고 읽기만 하면 리포트가 즉시 열린다.
+        # "오늘"은 계속 바뀌므로 이 표에 넣지 않고 항상 실시간으로 계산한다.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS daily_sales_rollup (
+                store_id INTEGER NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+                sale_date DATE NOT NULL,
+                qty INTEGER DEFAULT 0,
+                revenue BIGINT DEFAULT 0,
+                profit BIGINT DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (store_id, sale_date)
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_rollup_date ON daily_sales_rollup(sale_date);")
+
+        # ---------------------------------------------------------------
         # 오프라인 임시 입력 동기화 로그 (감사/중복방지용)
         # ---------------------------------------------------------------
         cur.execute("""
