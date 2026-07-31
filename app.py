@@ -5895,10 +5895,23 @@ def api_import_products():
                 results["errors"].append(f"{row_num}행: {str(e)}")
                 results["failed"] += 1
 
+        # ⚡ 모아둔 재고를 한 번에 저장한다 (줄 수와 무관하게 왕복 1회)
+        if pending_stock:
+            values = [(sid, pid, qty, min_q) for (sid, pid), (qty, min_q) in pending_stock.items()]
+            psycopg2.extras.execute_values(
+                cur,
+                """INSERT INTO store_stock (store_id, product_id, qty, min_qty) VALUES %s
+                   ON CONFLICT (store_id, product_id) DO UPDATE
+                   SET qty = excluded.qty, min_qty = excluded.min_qty""",
+                values,
+                page_size=500,
+            )
+
         conn.commit()
         return jsonify(results)
 
     except Exception as e:
+        rollback_quietly()
         return jsonify({"error": f"파일 처리 중 오류: {str(e)}"}), 400
 
 @app.route("/api/import/template")
