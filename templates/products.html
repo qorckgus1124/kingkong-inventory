@@ -597,7 +597,11 @@ async function load() {
 function render() {
   const tbody = document.getElementById('tbody');
   if (!products || products.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="13"><div class="empty"><span class="empty-icon">📦</span>등록된 제품이 없습니다.<div class="empty-hint">우측 상단의 📤 엑셀 업로드나 + 제품 등록 버튼을 이용해 추가하세요.</div></div></td></tr>';
+    const zeroHidden = !document.getElementById('includeZeroStock')?.checked;
+    const hint = zeroHidden
+      ? '재고가 0인 제품은 숨겨져 있습니다. 위 <strong>재고 0도 보기</strong>를 켜면 함께 표시됩니다.'
+      : '우측 상단의 📤 엑셀 업로드나 + 제품 등록 버튼을 이용해 추가하세요.';
+    tbody.innerHTML = `<tr><td colspan="13"><div class="empty"><span class="empty-icon">📦</span>조건에 맞는 제품이 없습니다.<div class="empty-hint">${hint}</div></div></td></tr>`;
     document.getElementById('selectAll').checked = false;
     document.getElementById('selectAll').disabled = true;
     return;
