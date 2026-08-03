@@ -48,19 +48,66 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- 3. 개별 등록 영역 (여러 제품 한번에 등록 가능) -->
+<!-- 3. 개별 등록 영역 (장바구니 방식) -->
 <!-- ============================================================ -->
 <div class="card">
-  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:6px;">
-    <div>
-      <strong>📝 개별 등록</strong>
-      <div style="font-size:12px; color:var(--text-light);">제품명을 입력하면 브랜드가 자동으로 표시됩니다. 카드를 추가해 여러 제품을 한 번에 접수할 수 있어요.</div>
-    </div>
-    <button onclick="addTxnRow()">➕ 카드 추가</button>
+  <div style="margin-bottom:12px;">
+    <strong>📝 입출고 등록</strong>
+    <div style="font-size:12px; color:var(--text-light); margin-top:2px;">제품을 클릭해 장바구니에 담고 유형·수량·메모를 설정한 뒤 등록하세요.</div>
   </div>
-  <div id="txnRows"></div>
-  <div style="display:flex; justify-content:flex-end; margin-top:6px;">
-    <button class="primary" onclick="registerAllTransactions()" id="registerAllBtn">전체 등록 (<span id="txnRowCount">1</span>건)</button>
+
+  <!-- 공통 설정: 매장 / 유형 / 담당자 -->
+  <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px;">
+    <div class="form-field" style="min-width:140px; margin:0;">
+      <label style="font-size:12px;">매장</label>
+      <select id="txnStore" onchange="onTxnStoreChange()"></select>
+    </div>
+    <div class="form-field" style="min-width:120px; margin:0;">
+      <label style="font-size:12px;">유형</label>
+      <select id="txnType">
+        <option value="입고">입고</option>
+        <option value="판매출고">판매출고</option>
+        <option value="반품">반품</option>
+        <option value="폐기">폐기</option>
+        <option value="조정">조정</option>
+      </select>
+    </div>
+    <div class="form-field" style="min-width:120px; margin:0;">
+      <label style="font-size:12px;">담당자</label>
+      <input type="text" id="txnStaff" placeholder="이름 (선택)">
+    </div>
+    <div class="form-field" style="min-width:180px; margin:0;">
+      <label style="font-size:12px;">메모 (전체 공통)</label>
+      <input type="text" id="txnMemo" placeholder="예: 시연, 불량 등">
+    </div>
+  </div>
+
+  <div class="sale-layout">
+    <!-- 좌: 제품 그리드 -->
+    <div class="sale-left">
+      <div class="toolbar" style="margin-bottom:12px; padding:0;">
+        <input type="text" id="txnSearchBox" placeholder="🔍 제품명 검색" autocomplete="off" oninput="onTxnSearchInput()" style="width:220px;">
+        <button onclick="txnLoadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
+      </div>
+      <div class="product-grid" id="txnProductGrid" style="grid-template-columns:repeat(auto-fill,minmax(130px,1fr));">
+        <div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 '전체 보기'를 클릭하세요.</div>
+      </div>
+    </div>
+
+    <!-- 우: 장바구니 -->
+    <div class="sale-right" style="width:300px;">
+      <div class="cart-title">🛒 등록 목록</div>
+      <div class="cart-items-wrap" style="flex:1; overflow-y:auto; max-height:320px;">
+        <div id="txnCartList"><div class="cart-empty">담긴 제품이 없습니다</div></div>
+      </div>
+      <div style="border-top:1px solid var(--border); padding-top:12px; margin-top:8px;">
+        <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--text-light); margin-bottom:10px;">
+          <span>총 <span id="txnCartCount">0</span>건</span>
+          <span id="txnCartTotal" style="font-weight:600; color:var(--text);"></span>
+        </div>
+        <button class="primary" style="width:100%; padding:12px; font-size:15px;" onclick="registerTxnCart()" id="registerTxnBtn">등록하기</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -244,10 +291,18 @@ async function loadStores() {
     // 이미 만들어진 등록 카드가 있다면 매장 목록을 채워준다.
     document.querySelectorAll('.f_store').forEach(sel => fillStoreSelect(sel));
 
+    // txnStore (장바구니 등록용 매장) 채우기
+    const txnStoreSel = document.getElementById('txnStore');
+    if (txnStoreSel) {
+      txnStoreSel.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    }
+
     // 🔥 전역 매장 ID 적용
     const globalStoreId = localStorage.getItem('global_store_id');
     if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
       document.getElementById('filterStore').value = globalStoreId;
+      const txnSel = document.getElementById('txnStore');
+      if (txnSel) txnSel.value = globalStoreId;
       localStorage.setItem(STORE_KEY, globalStoreId); // 기존 키도 함께 업데이트
     } else if (stores.length > 0) {
       document.getElementById('filterStore').value = stores[0].id;
@@ -295,251 +350,168 @@ document.addEventListener('change', function(e) {
 });
 
 // ================================================================
-// 📝 개별 등록 카드 (여러 제품 한번에 접수)
+// 📝 장바구니 방식 입출고 등록
 // ================================================================
-let txnRowSeq = 0;
+let txnCart = {};  // { productId: { product, qty } }
+let txnProducts = [];
+const txnSearchGuard = makeSearchGuard();
 
-function txnRowTemplate() {
-  return `
-    <div class="txn-row">
-      <button type="button" class="txn-remove-btn" onclick="removeTxnRow(this)" title="이 카드 삭제">✕</button>
-      <div class="form-grid">
-        <div class="form-field autocomplete-wrap">
-          <label>제품명 *</label>
-          <input type="text" class="f_product" placeholder="제품명을 입력하세요" autocomplete="off" oninput="onProductInput(this)">
-          <div class="autocomplete-list"></div>
-        </div>
-        <div class="form-field">
-          <label>브랜드</label>
-          <div class="f_brand_display">-</div>
-        </div>
-        <div class="form-field">
-          <label>매장</label>
-          <select class="f_store"></select>
-        </div>
-        <div class="form-field">
-          <label>유형 *</label>
-          <select class="f_type">
-            <option value="입고">입고</option>
-            <option value="판매출고">판매출고</option>
-            <option value="반품">반품</option>
-            <option value="폐기">폐기</option>
-            <option value="조정">조정</option>
-          </select>
-        </div>
-        <div class="form-field">
-          <label>수량 *</label>
-          <input type="number" class="f_qty" placeholder="0" min="1">
-        </div>
-        <div class="form-field">
-          <label>담당자</label>
-          <input type="text" class="f_staff" placeholder="이름">
-        </div>
-        <div class="form-field">
-          <label>일시 (선택, 비우면 현재시각)</label>
-          <input type="datetime-local" class="f_datetime">
-        </div>
-        <div class="form-field" style="grid-column: span 2;">
-          <label>메모</label>
-          <input type="text" class="f_memo" placeholder="선택 입력">
-        </div>
-      </div>
-      <div class="selectedInfo"></div>
-    </div>
-  `;
+// 매장 변경 → 장바구니 비움
+function onTxnStoreChange() {
+  const val = document.getElementById('txnStore').value;
+  if (val) localStorage.setItem('global_store_id', val);
+  txnCart = {};
+  renderTxnCart();
+  document.getElementById('txnProductGrid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
 }
 
-function addTxnRow() {
-  const container = document.getElementById('txnRows');
-  const wrap = document.createElement('div');
-  wrap.innerHTML = txnRowTemplate().trim();
-  const rowEl = wrap.firstElementChild;
-  rowEl.dataset.idx = txnRowSeq++;
-  container.appendChild(rowEl);
-  fillStoreSelect(rowEl.querySelector('.f_store'));
-  updateTxnRowUI();
-  return rowEl;
+// 검색
+function onTxnSearchInput() {
+  const q = document.getElementById('txnSearchBox').value.trim();
+  if (q) txnLoadProducts();
+  else document.getElementById('txnProductGrid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
 }
 
-function removeTxnRow(btn) {
-  const rows = document.querySelectorAll('.txn-row');
-  if (rows.length <= 1) { toast('최소 1개의 카드는 남아있어야 합니다.', true, '⚠️'); return; }
-  btn.closest('.txn-row').remove();
-  updateTxnRowUI();
+function txnLoadAllProducts() {
+  document.getElementById('txnSearchBox').value = '';
+  txnLoadProducts();
 }
 
-function updateTxnRowUI() {
-  const rows = document.querySelectorAll('.txn-row');
-  rows.forEach(r => {
-    const btn = r.querySelector('.txn-remove-btn');
-    if (btn) btn.style.display = rows.length > 1 ? '' : 'none';
-  });
-  const countEl = document.getElementById('txnRowCount');
-  if (countEl) countEl.textContent = rows.length;
-}
-
-// ---------- 제품 자동완성 (제품명을 입력하면 브랜드가 자동으로 표시됨) ----------
-function onProductInput(inputEl) {
-  const row = inputEl.closest('.txn-row');
-  const listEl = row.querySelector('.autocomplete-list');
-  const brandEl = row.querySelector('.f_brand_display');
-  const infoEl = row.querySelector('.selectedInfo');
-
-  row._selectedProduct = null;
-  infoEl.textContent = '';
-  brandEl.innerHTML = '-';
-
-  clearTimeout(inputEl._acTimer);
-  const q = inputEl.value.trim();
-  if (!q) { listEl.classList.remove('show'); return; }
-
-  if (!inputEl._acGuard) inputEl._acGuard = makeSearchGuard();
-  inputEl._acTimer = setTimeout(async () => {
-    const myToken = inputEl._acGuard.next();
-    try {
-      // 입출고는 입고(재고 0에서 채우기)도 하므로 재고 0인 제품도 검색된다.
-      const response = await apiSearch('/api/products/search?q=' + encodeURIComponent(q));
-      if (!inputEl._acGuard.isCurrent(myToken)) return;
-      if (response && Array.isArray(response) && response.length > 0) {
-        row._acItems = response;
-        renderAc(row);
-      } else {
-        row._acItems = [];
-        listEl.classList.remove('show');
-      }
-    } catch (e) {
-      if (!inputEl._acGuard.isCurrent(myToken)) return;
-      console.error('제품 검색 오류:', e);
-      row._acItems = [];
-      listEl.classList.remove('show');
-    }
-  }, 200);
-}
-
-function renderAc(row) {
-  const listEl = row.querySelector('.autocomplete-list');
-  const items = row._acItems || [];
-  if (items.length === 0) { listEl.classList.remove('show'); return; }
-  listEl.innerHTML = items.map((p, i) => `
-    <div class="autocomplete-item" onclick="pickProduct(this, ${i})">
-      ${escapeHtml(p.name)}
-      ${p.category_name ? `<span class="brand-tag" style="background:${p.category_color || '#8a8f98'}; margin-left:6px;">${escapeHtml(p.category_name)}</span>` : ''}
-      ${p.brand_name ? `<span class="brand-tag" style="background:${p.brand_color || '#8a8f98'}; margin-left:6px;">${escapeHtml(p.brand_name)}</span>` : ''}
-      <div class="meta">원가 ${fmt(p.cost_price)} · 판매가 ${fmt(p.sale_price)} · 전체재고 ${fmt(p.qty)}</div>
-    </div>
-  `).join('');
-  listEl.classList.add('show');
-}
-
-function pickProduct(el, i) {
-  const row = el.closest('.txn-row');
-  const items = row._acItems || [];
-  const p = items[i];
-  if (!p) return;
-  row._selectedProduct = p;
-
-  row.querySelector('.f_product').value = p.name;
-
-  const brandEl = row.querySelector('.f_brand_display');
-  brandEl.innerHTML = p.brand_name
-    ? `<span class="brand-tag" style="background:${p.brand_color || '#8a8f98'};">${escapeHtml(p.brand_name)}</span>`
-    : '<span style="color:var(--text-light);">브랜드 없음</span>';
-
-  row.querySelector('.selectedInfo').textContent =
-    `선택됨: ${p.name} (원가 ${fmt(p.cost_price)} / 판매가 ${fmt(p.sale_price)} / 전체재고 ${fmt(p.qty)})`;
-
-  row.querySelector('.autocomplete-list').classList.remove('show');
-}
-
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.autocomplete-wrap')) {
-    document.querySelectorAll('.autocomplete-list.show').forEach(el => el.classList.remove('show'));
+async function txnLoadProducts() {
+  const store_id = document.getElementById('txnStore').value;
+  const q = document.getElementById('txnSearchBox').value.trim();
+  const params = new URLSearchParams({ sort: 'qty', order: 'desc' });
+  if (store_id) params.append('store_id', store_id);
+  if (q) params.append('q', q);
+  const myToken = txnSearchGuard.next();
+  try {
+    const result = await apiSearch('/api/products?' + params.toString());
+    if (!txnSearchGuard.isCurrent(myToken)) return;
+    txnProducts = result;
+    renderTxnProductGrid();
+  } catch (e) {
+    if (!txnSearchGuard.isCurrent(myToken)) return;
+    console.error('제품 로드 오류:', e);
   }
-});
+}
 
-// ---------- 전체 등록 (카드에 입력된 여러 제품을 한번에 접수) ----------
-async function registerAllTransactions() {
-  const rows = Array.from(document.querySelectorAll('.txn-row'));
-  const jobs = [];
-  const problems = [];
-
-  rows.forEach(row => {
-    const product = row._selectedProduct;
-    const productInput = row.querySelector('.f_product');
-    const qtyVal = row.querySelector('.f_qty').value;
-    const qty = parseInt(qtyVal, 10);
-    const storeId = row.querySelector('.f_store').value;
-
-    const isBlank = !product && !productInput.value.trim() && !qtyVal;
-    if (isBlank && rows.length > 1) return; // 완전히 빈 카드는 여러 장일 때 건너뜀
-
-    if (!product) {
-      problems.push(`"${productInput.value || '(제품 미입력)'}" : 자동완성 목록에서 제품을 선택해주세요.`);
-      row.style.outline = '1px solid var(--danger)';
-      return;
-    }
-    if (!qty || qty <= 0) {
-      problems.push(`${product.name} : 수량을 올바르게 입력해주세요.`);
-      row.style.outline = '1px solid var(--danger)';
-      return;
-    }
-    if (!storeId) {
-      problems.push(`${product.name} : 매장을 선택해주세요.`);
-      row.style.outline = '1px solid var(--danger)';
-      return;
-    }
-
-    row.style.outline = '';
-    const dtVal = row.querySelector('.f_datetime').value;
-    jobs.push({
-      row,
-      payload: {
-        product_id: product.id,
-        store_id: storeId,
-        type: row.querySelector('.f_type').value,
-        quantity: qty,
-        staff: row.querySelector('.f_staff').value || null,
-        memo: row.querySelector('.f_memo').value || null,
-        date_time: dtVal ? dtVal.replace('T', ' ') + ':00' : null,
-      }
-    });
-  });
-
-  if (jobs.length === 0) {
-    toast(problems[0] || '등록할 내용을 입력해주세요.', true, '⚠️');
+function renderTxnProductGrid() {
+  const grid = document.getElementById('txnProductGrid');
+  if (!txnProducts || txnProducts.length === 0) {
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">📦</span>표시할 제품이 없습니다.</div>';
     return;
   }
+  grid.innerHTML = txnProducts.map(p => {
+    const inCart = txnCart[p.id] ? txnCart[p.id].qty : 0;
+    return `
+      <div class="product-card" onclick="addToTxnCart(${p.id})">
+        <div class="pname">${escapeHtml(p.name)}</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+          ${p.brand_name ? `<span class="brand-tag" style="background:${p.brand_color||'#8a8f98'}; font-size:10px;">${escapeHtml(p.brand_name)}</span>` : '<span></span>'}
+          <span class="pqty">재고 ${fmt(p.qty)}</span>
+        </div>
+        ${inCart > 0 ? `<div style="font-size:12px; color:var(--accent); margin-top:4px;">✓ ${inCart}개 담김</div>` : ''}
+      </div>`;
+  }).join('');
+}
 
-  const btn = document.getElementById('registerAllBtn');
+function addToTxnCart(pid) {
+  const p = txnProducts.find(p => p.id === pid);
+  if (!p) return;
+  if (txnCart[pid]) {
+    txnCart[pid].qty += 1;
+  } else {
+    txnCart[pid] = { product: p, qty: 1 };
+  }
+  renderTxnCart();
+  renderTxnProductGrid();
+}
+
+function changeTxnQty(pid, delta) {
+  if (!txnCart[pid]) return;
+  const newQty = txnCart[pid].qty + delta;
+  if (newQty <= 0) { delete txnCart[pid]; }
+  else { txnCart[pid].qty = newQty; }
+  renderTxnCart();
+  renderTxnProductGrid();
+}
+
+function setTxnQty(pid, value) {
+  const qty = parseInt(value);
+  if (!txnCart[pid]) return;
+  if (isNaN(qty) || qty < 1) { renderTxnCart(); return; }
+  txnCart[pid].qty = qty;
+  renderTxnCart();
+}
+
+function removeFromTxnCart(pid) {
+  delete txnCart[pid];
+  renderTxnCart();
+  renderTxnProductGrid();
+}
+
+function renderTxnCart() {
+  const list = document.getElementById('txnCartList');
+  const entries = Object.entries(txnCart);
+  if (entries.length === 0) {
+    list.innerHTML = '<div class="cart-empty">담긴 제품이 없습니다</div>';
+    document.getElementById('txnCartCount').textContent = '0';
+    document.getElementById('txnCartTotal').textContent = '';
+    return;
+  }
+  list.innerHTML = entries.map(([pid, item]) => `
+    <div class="cart-item">
+      <div class="ci-name">
+        ${escapeHtml(item.product.name)}
+        <div class="ci-sub">재고 ${fmt(item.product.qty)} · 원가 ${fmt(item.product.cost_price)}원</div>
+      </div>
+      <div class="qty-ctrl">
+        <button onclick="changeTxnQty(${pid}, -1)">-</button>
+        <input type="number" class="qty-input" value="${item.qty}" min="1"
+               onchange="setTxnQty(${pid}, this.value)" onfocus="this.select()">
+        <button onclick="changeTxnQty(${pid}, 1)">+</button>
+      </div>
+      <button onclick="removeFromTxnCart(${pid})" style="color:var(--danger); border:none; background:none; font-size:16px; padding:0 4px;">✕</button>
+    </div>
+  `).join('');
+  const totalQty = entries.reduce((s, [, it]) => s + it.qty, 0);
+  document.getElementById('txnCartCount').textContent = entries.length;
+  document.getElementById('txnCartTotal').textContent = `총 ${fmt(totalQty)}개`;
+}
+
+async function registerTxnCart() {
+  const entries = Object.entries(txnCart);
+  if (entries.length === 0) { toast('담긴 제품이 없습니다.', true, '⚠️'); return; }
+  const storeId = document.getElementById('txnStore').value;
+  if (!storeId) { toast('매장을 선택해주세요.', true, '⚠️'); return; }
+  const type = document.getElementById('txnType').value;
+  const staff = document.getElementById('txnStaff').value.trim() || null;
+  const memo = document.getElementById('txnMemo').value.trim() || null;
+
+  const btn = document.getElementById('registerTxnBtn');
   btn.disabled = true;
-
-  let successCount = 0;
-  const doneRows = [];
-  for (const job of jobs) {
+  let ok = 0, fail = 0;
+  for (const [pid, item] of entries) {
     try {
-      await api('/api/transactions', { method: 'POST', body: JSON.stringify(job.payload) });
-      successCount++;
-      doneRows.push(job.row);
+      await api('/api/transactions', { method: 'POST', body: JSON.stringify({
+        product_id: parseInt(pid), store_id: storeId, type, quantity: item.qty, staff, memo
+      })});
+      ok++;
     } catch (e) {
       console.error('등록 오류:', e);
-      problems.push(`${job.payload.product_id} 등록 실패`);
-      job.row.style.outline = '1px solid var(--danger)';
+      fail++;
     }
   }
-
-  // 등록 성공한 카드는 제거하고, 실패/미입력 카드는 남겨서 바로 수정할 수 있게 한다.
-  doneRows.forEach(r => r.remove());
-  if (document.querySelectorAll('.txn-row').length === 0) {
-    addTxnRow();
-  }
-  updateTxnRowUI();
   btn.disabled = false;
-
-  if (successCount > 0) {
-    toast(`✅ ${successCount}건 등록 완료` + (problems.length ? ` (확인 필요 ${problems.length}건)` : ''), problems.length > 0, problems.length ? '⚠️' : '✅');
+  if (ok > 0) {
+    toast(`✅ ${ok}건 등록 완료${fail ? ` (실패 ${fail}건)` : ''}`, fail > 0, fail ? '⚠️' : '✅');
+    txnCart = {};
+    renderTxnCart();
+    renderTxnProductGrid();
     load();
+    refreshTodayRevenue?.();
   } else {
-    toast(problems[0] || '등록 중 오류가 발생했습니다.', true, '⚠️');
+    toast('등록 중 오류가 발생했습니다.', true, '⚠️');
   }
 }
 
@@ -758,16 +730,16 @@ async function load() {
           actionCell = editBtn + deleteBtn + (editBtn || deleteBtn ? '' : '<span style="font-size:11px; color:var(--text-light);">-</span>');
         }
         return `
-          <tr>
+          <tr style="${isCancelled ? 'opacity:0.45;' : ''}">
             <td><input type="checkbox" class="row-checkbox" value="${t.id}" onchange="toggleCheckbox(${t.id})" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : ''}></td>
-            <td>${fmtDateTime(t.date_time)}</td>
-            <td>${escapeHtml(t.product_name)}</td>
+            <td style="white-space:nowrap; font-size:12px;">${fmtDateTime(t.date_time)}</td>
+            <td style="font-weight:${['입고','이동입고'].includes(t.type) ? '600' : 'normal'};">${escapeHtml(t.product_name)}</td>
             <td>${t.brand_name ? `<span class="brand-tag" style="background:${t.brand_color || '#8a8f98'};">${escapeHtml(t.brand_name)}</span>` : '-'}</td>
-            <td>${escapeHtml(t.store_name)}</td>
+            <td style="font-size:12px;">${escapeHtml(t.store_name)}</td>
             <td><span class="badge ${TYPE_CLASS[t.type] || 'badge-neutral'}">${t.type}</span></td>
-            <td>${fmt(t.quantity)}</td>
-            <td>${escapeHtml(t.staff || '-')}</td>
-            <td>${escapeHtml(t.memo || '-')}</td>
+            <td style="font-weight:700; text-align:right; padding-right:8px;">${fmt(t.quantity)}</td>
+            <td style="font-size:12px;">${escapeHtml(t.staff || '-')}</td>
+            <td style="font-size:12px; color:${t.memo && t.memo !== '-' ? 'var(--accent)' : 'var(--text-light)'}; font-weight:${t.memo && t.memo !== '-' ? '600' : 'normal'};">${escapeHtml(t.memo || '-')}</td>
             <td>${actionCell}</td>
           </tr>
         `;
