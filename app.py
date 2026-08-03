@@ -3813,22 +3813,26 @@ def api_daily_report():
                         for typ in sorted(cat_types):
                             if brand in grouped[cat][typ]:
                                 all_items.extend(grouped[cat][typ][brand])
-                        # 같은 제품명 + 같은 부가정보(이동 정보 등)는 수량을 합쳐서 한 줄로 표시
-                        # (예: 같은 제품을 결제 1개 + 서비스 1개로 나눠 등록해도 "제품명 2"로 합산됨)
-                        merged_qty = {}
-                        merged_order = []
+                        # 같은 제품명은 수량을 합산하되, extra(메모/이동정보)는 모아서 표시
+                        # 예) 딸기요거트 1(1개 시연용) + 딸기요거트 1 → 딸기요거트 2(1개 시연용)
+                        prod_qty = {}   # product -> total qty
+                        prod_extra = {}  # product -> set of non-empty extras
+                        prod_order = []
                         for product, qty, extra in all_items:
-                            key = (product, extra)
-                            if key not in merged_qty:
-                                merged_qty[key] = 0
-                                merged_order.append(key)
-                            merged_qty[key] += qty
-                        for product, extra in sorted(merged_order, key=lambda x: x[0]):
-                            qty = merged_qty[(product, extra)]
+                            if product not in prod_qty:
+                                prod_qty[product] = 0
+                                prod_extra[product] = []
+                                prod_order.append(product)
+                            prod_qty[product] += qty
+                            if extra and extra not in prod_extra[product]:
+                                prod_extra[product].append(extra)
+                        for product in sorted(prod_order):
+                            qty = prod_qty[product]
                             if qty == 0:
                                 continue
-                            if extra:
-                                block.append(f"{product} {qty}{extra}")
+                            extras = "".join(prod_extra[product])
+                            if extras:
+                                block.append(f"{product} {qty}{extras}")
                             else:
                                 block.append(f"{product} {qty}")
                         if idx != len(brand_order) - 1:
