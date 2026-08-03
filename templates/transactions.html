@@ -720,7 +720,7 @@ async function load() {
         const editableTypes = ['입고', '판매출고', '반품', '폐기', '조정', '실사조정', '이동출고', '이동입고', '선결예약'];
         const isEditable = !isCancelled && editableTypes.includes(t.type);
         const editBtn = isEditable ? `<button onclick="openEditModal(${t.id})" style="margin-right:4px;">✏️ 수정</button>` : '';
-        const deleteBtn = (!isCancelled && t.type === '판매출고')
+        const deleteBtn = (!isCancelled && ['판매출고', '출고'].includes(t.type))
           ? `<button class="danger" title="바로 삭제 (재고 복구 후 영구삭제)" onclick="deleteSingleTransaction(${t.id})">🗑️ 삭제</button>`
           : '';
         if (isCancelled) {
@@ -929,7 +929,6 @@ async function downloadTemplate(adjust) {
 document.addEventListener('DOMContentLoaded', async function() {
   await loadStores();
   loadStoreSelects();
-  addTxnRow();
   currentPage = 1;
   load();
 });

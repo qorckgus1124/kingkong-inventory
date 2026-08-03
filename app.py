@@ -2936,10 +2936,10 @@ def api_transactions_cancel_batch():
         placeholders = ','.join(['%s'] * len(ids))
         cur.execute(f"SELECT * FROM stock_transactions WHERE id IN ({placeholders})", ids)
         rows = cur.fetchall()
-        sale_rows = [r for r in rows if r["type"] == "판매출고"]
+        sale_rows = [r for r in rows if r["type"] in ("판매출고", "출고")]
 
         if not sale_rows:
-            return jsonify({"cancelled": 0, "failed": len(ids), "errors": ["선택한 항목 중 판매출고가 없습니다."]}), 400
+            return jsonify({"cancelled": 0, "failed": len(ids), "errors": ["선택한 항목 중 판매출고/출고가 없습니다."]}), 400
 
         # 이미 취소(판매취소) 처리된 판매출고 건은 삭제 대상에서 제외한다.
         # 원본을 지워버리면 짝이 맞아야 할 판매취소(-) 기록만 고아로 남아
@@ -2964,9 +2964,10 @@ def api_transactions_cancel_batch():
         if not valid_rows:
             return jsonify({"cancelled": 0, "failed": len(ids), "errors": errors or ["선택한 항목이 모두 이미 취소된 건입니다."]}), 400
 
-        # 판매출고를 완전히 삭제하기 전에 매장 재고를 판매 전 상태로 복구한다.
+        # 판매출고/출고 삭제 전 재고 복구
         for row in valid_rows:
-            _apply_stock_delta(conn, row["store_id"], row["product_id"], "판매취소", row["quantity"])
+            restore_type = "입고" if row["type"] == "출고" else "판매취소"
+            _apply_stock_delta(conn, row["store_id"], row["product_id"], restore_type, row["quantity"])
 
         valid_ids = [r["id"] for r in valid_rows]
         placeholders2 = ','.join(['%s'] * len(valid_ids))
