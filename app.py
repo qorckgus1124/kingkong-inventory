@@ -3763,6 +3763,10 @@ def api_daily_report():
                         elif typ == '판매출고':
                             extra_info = f"({store} 이동)"
 
+                # 이동 정보가 없고, 메모가 있으면 메모를 괄호로 표시 (시스템 메모 제외)
+                if not extra_info and memo and memo not in ('초기입고',):
+                    extra_info = f"({memo})"
+
                 if typ in ['판매취소', '입고취소']:
                     qty = -qty
 
