@@ -2424,7 +2424,9 @@ def api_product_detail(pid):
 
     if request.method == "GET":
         try:
-            return jsonify(product_row_to_dict(conn, row))
+            store_id = request.args.get("store_id")
+            enriched = enrich_product_rows([row], store_id)
+            return jsonify(enriched[0] if enriched else product_row_to_dict(conn, row))
         except Exception as e:
             print(f"⚠️ 제품 상세 조회 오류: {e}")
             return jsonify(dict(row))

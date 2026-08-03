@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1><i class="ti ti-package page-icon"></i>제품 관리</h1>
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-package"></use></svg>제품 관리</h1>
 <div class="subtitle">제품명을 검색하거나 '전체 보기'를 클릭하여 목록을 확인하세요.</div>
 
 <!-- 다중 등록 탭 -->
@@ -625,12 +625,21 @@ function render() {
     return;
   }
   document.getElementById('selectAll').disabled = false;
-  tbody.innerHTML = products.map((p, idx) => {
-    const margin = (p.sale_price > 0) ? ((p.sale_price - p.cost_price) / p.sale_price * 100) : null;
-    const cardMargin = (p.sale_price > 0 && p.card_cost_price > 0) ? ((p.sale_price - p.card_cost_price) / p.sale_price * 100) : null;
-    const checked = selectedProductIds.has(p.id) ? 'checked' : '';
-    return `
-    <tr style="${p.is_active ? '' : 'opacity:0.45'}; cursor:pointer;" onclick="showProductDetail(${p.id})">
+  tbody.innerHTML = products.map((p, idx) => buildProductRow(p, idx)).join('');
+  updateSelectedCount();
+}
+
+function buildProductRow(p, idx) {
+  // idx가 없을 때(단일 행 갱신 시) 현재 tbody 행 수로 순번을 추정한다
+  if (idx === undefined) {
+    const existing = document.querySelector(`tr[data-pid="${p.id}"]`);
+    idx = existing ? (Array.from(existing.parentElement.children).indexOf(existing)) : 0;
+  }
+  const margin = (p.sale_price > 0) ? ((p.sale_price - p.cost_price) / p.sale_price * 100) : null;
+  const cardMargin = (p.sale_price > 0 && p.card_cost_price > 0) ? ((p.sale_price - p.card_cost_price) / p.sale_price * 100) : null;
+  const checked = selectedProductIds.has(p.id) ? 'checked' : '';
+  return `
+    <tr data-pid="${p.id}" style="${p.is_active ? '' : 'opacity:0.45'}; cursor:pointer;" onclick="showProductDetail(${p.id})">
       <td onclick="event.stopPropagation();"><input type="checkbox" class="row-checkbox" value="${p.id}" ${checked} onchange="toggleProduct(${p.id})"></td>
       <td><span class="row-number">${idx + 1}</span></td>
       <td class="cell-editable" contenteditable="true" onblur="updateField(${p.id}, 'name', this.textContent)" onclick="event.stopPropagation();">${p.is_variant ? '<span style="color:var(--text-light); margin-right:2px;">↳</span>' : ''}${escapeHtml(p.name)}${p.variant_count > 0 ? `<span class="chip" style="background:var(--accent); color:#fff; font-size:10px; padding:1px 7px; margin-left:6px;">옵션 ${p.variant_count}개</span>` : ''}</td>
@@ -645,8 +654,7 @@ function render() {
       <td>${stockBadge(p)}</td>
       <td><button class="danger" onclick="event.stopPropagation(); deleteProduct(${p.id})">삭제</button></td>
     </tr>
-  `}).join('');
-  updateSelectedCount();
+  `;
 }
 
 // ---------- 체크박스 ----------
@@ -1060,16 +1068,24 @@ async function updateField(id, field, value) {
     payload.name = value;
   } else {
     const trimmed = String(value).trim();
-    // 🔥 값이 없을 때 화면에 '-'로 표시되는데, 이 셀을 그냥 클릭했다가 수정 없이
-    // 벗어나기만 해도 '-'가 그대로 전송되어 가격이 0원으로 저장되는 문제가 있었다.
-    // '-' 자체는 실제 입력값이 아니라 "값 없음" 표시일 뿐이므로 변경으로 취급하지 않는다.
     if (trimmed === '-' || trimmed === '') { load(); return; }
     const num = parseInt(trimmed.replace(/[^0-9-]/g, ''), 10);
     payload[field] = isNaN(num) ? 0 : num;
   }
   try {
     await api(`/api/products/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
-    await load();
+    // 전체 목록 재로드 대신 수정한 행만 서버에서 받아 교체한다
+    const updated = await api(`/api/products/${id}?store_id=${encodeURIComponent(document.getElementById('f_store')?.value || '')}`);
+    if (updated && !updated.error) {
+      const row = document.querySelector(`tr[data-pid="${id}"]`);
+      if (row) {
+        row.outerHTML = buildProductRow(updated);
+      } else {
+        load(); // 행을 찾지 못한 예외 케이스에서만 전체 재로드
+      }
+    } else {
+      load();
+    }
   } catch (e) {
     console.error('수정 오류:', e);
   }

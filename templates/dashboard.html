@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1><i class="ti ti-layout-dashboard page-icon"></i>대시보드</h1>
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-layout-dashboard"></use></svg>대시보드</h1>
 <div class="subtitle">오늘의 매출, 재고 현황, 최근 활동을 한눈에 확인하세요.</div>
 
 <!-- 매장 선택 드롭다운 -->
@@ -149,30 +149,8 @@
   </div>
 </div>
 
-<!-- Chart.js CDN -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>
-// ==============================================================
-// HYPER-GLASS 차트 테마
-// Chart.js는 CSS 변수를 해석하지 못하므로, 현재 테마에 맞는 실제 색을
-// 전역 기본값으로 넣어준다. (다크 모드에서 축/범례 글씨가 안 보이던 문제도 함께 해결)
-// ==============================================================
-(function applyChartTheme() {
-  if (typeof Chart === 'undefined') return;
-  const dark = document.body.classList.contains('dark-mode');
-  Chart.defaults.font.family = "'Pretendard', -apple-system, sans-serif";
-  Chart.defaults.font.weight = '600';
-  Chart.defaults.color = dark ? '#ADA7DC' : '#4C4775';
-  Chart.defaults.borderColor = dark ? 'rgba(150,130,255,0.16)' : 'rgba(24,12,72,0.11)';
-  Chart.defaults.plugins.tooltip.backgroundColor = dark ? 'rgba(16,12,42,0.94)' : 'rgba(246,247,255,0.96)';
-  Chart.defaults.plugins.tooltip.titleColor = dark ? '#F3F1FF' : '#100C2E';
-  Chart.defaults.plugins.tooltip.bodyColor = dark ? '#ADA7DC' : '#4C4775';
-  Chart.defaults.plugins.tooltip.borderColor = dark ? 'rgba(168,139,255,0.35)' : 'rgba(91,30,255,0.28)';
-  Chart.defaults.plugins.tooltip.borderWidth = 1;
-  Chart.defaults.plugins.tooltip.padding = 10;
-  Chart.defaults.plugins.tooltip.cornerRadius = 12;
-})();
-</script>
+<!-- Chart.js: defer로 HTML 파싱을 블로킹하지 않는다 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
 <script>
 let trendChart = null;
 let currentPeriod = 'day';
@@ -182,8 +160,8 @@ let turnoverTopChart = null;
 let turnoverBottomChart = null;
 let currentStockView = 'value';
 
-// HYPER-GLASS 차트 팔레트 (Y2K 네온: 바이올렛 → 마젠타 → 시안 → 라임 → 오렌지 순환)
-const CHART_PALETTE = ['#5B1EFF', '#FF2D9B', '#00E5FF', '#B8FF3C', '#FF9E2C', '#8C6BFF', '#00E5A8', '#FFD84D'];
+// 차트 팔레트 (현재 심플 테마 기준)
+const CHART_PALETTE = ['#3B6FE0', '#16794F', '#D6473C', '#9A6400', '#6B6F76', '#2F5BC4', '#4BC190', '#F0665C'];
 
 // 매장 목록 로드
 async function loadStores() {
@@ -318,36 +296,41 @@ async function loadDashboard() {
     // 카테고리별 매출 비중 도넛 차트
     renderCategoryDoughnut(catSales);
 
+    // 카테고리 트렌드, 차트, 재고구성, 회전율 — 한꺼번에 병렬 요청
+    const store_id_qs = store_id ? `?store_id=${store_id}` : '';
+    const [trend, statsData, categoryStats, turnoverData] = await Promise.allSettled([
+      api('/api/category_trend' + store_id_qs),
+      api(`/api/statistics?period=${currentPeriod}` + (store_id ? `&store_id=${store_id}` : '')),
+      api('/api/category_stats' + store_id_qs),
+      api('/api/turnover_rate?group_by=product&days=30&sort_by=turnover' + (store_id ? `&store_id=${store_id}` : '')),
+    ]);
+
     // 카테고리 트렌드
-    try {
-      const trend = await api('/api/category_trend');
-      const trendContainer = document.getElementById('categoryTrend');
-      if (!trend || trend.length === 0) {
-        trendContainer.innerHTML = '<span style="color:var(--text-light);">📊 트렌드 데이터가 없습니다.</span>';
-      } else {
-        trendContainer.innerHTML = trend.map(t => {
-          const arrow = t.change > 0 ? '▲' : t.change < 0 ? '▼' : '➖';
-          const color = t.change > 0 ? 'var(--accent)' : t.change < 0 ? 'var(--danger)' : 'var(--text-light)';
-          return `
-            <div style="flex:1; min-width:100px; text-align:center; padding:8px; background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius);">
-              <div style="font-weight:600;">${t.category}</div>
-              <div style="font-size:20px; font-weight:700; color:${color};">${arrow} ${Math.abs(t.percent)}%</div>
-              <div style="font-size:12px; color:var(--text-light);">
-                이번달 ${fmt(t.this_month)}개 / 저번달 ${fmt(t.last_month)}개
-              </div>
-            </div>
-          `;
-        }).join('');
-      }
-    } catch (e) {
-      console.error('트렌드 로드 오류:', e);
-      document.getElementById('categoryTrend').innerHTML = '<span style="color:var(--text-light);">⚠️ 트렌드를 불러올 수 없습니다.</span>';
+    const trendContainer = document.getElementById('categoryTrend');
+    const trendVal = trend.status === 'fulfilled' ? trend.value : null;
+    if (!trendVal || !trendVal.length) {
+      trendContainer.innerHTML = '<span style="color:var(--text-light);">📊 트렌드 데이터가 없습니다.</span>';
+    } else {
+      trendContainer.innerHTML = trendVal.map(t => {
+        const arrow = t.change > 0 ? '▲' : t.change < 0 ? '▼' : '➖';
+        const color = t.change > 0 ? 'var(--accent)' : t.change < 0 ? 'var(--danger)' : 'var(--text-light)';
+        return `<div style="flex:1; min-width:100px; text-align:center; padding:8px; background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius);">
+          <div style="font-weight:600;">${t.category}</div>
+          <div style="font-size:20px; font-weight:700; color:${color};">${arrow} ${Math.abs(t.percent)}%</div>
+          <div style="font-size:12px; color:var(--text-light);">이번달 ${fmt(t.this_month)}개 / 저번달 ${fmt(t.last_month)}개</div>
+        </div>`;
+      }).join('');
     }
 
-    // 그래프
-    loadChart(currentPeriod);
-    loadStockComposition();
-    loadTurnoverCharts();
+    // 매출 추이 차트
+    renderTrendChart(statsData.status === 'fulfilled' ? statsData.value : []);
+
+    // 재고 구성
+    window.__stockCompositionData = categoryStats.status === 'fulfilled' ? (categoryStats.value || []) : [];
+    renderStockComposition();
+
+    // 재고회전율
+    renderTurnoverCharts(turnoverData.status === 'fulfilled' ? (turnoverData.value || []) : []);
   } catch (e) {
     console.error('❌ 대시보드 로딩 오류:', e);
     toast('대시보드 데이터를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
@@ -370,101 +353,38 @@ async function loadDashboard() {
 }
 
 // ---------- 그래프 ----------
+function renderTrendChart(data) {
+  const ctx = document.getElementById('trendChart').getContext('2d');
+  if (trendChart) { trendChart.destroy(); trendChart = null; }
+  const labels = (data || []).map(d => d.period_key);
+  const revenues = (data || []).map(d => d.revenue || 0);
+  const profits = (data || []).map(d => d.profit || 0);
+  trendChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels.length ? labels : ['데이터 없음'],
+      datasets: [
+        { label: '매출', data: revenues.length ? revenues : [0], backgroundColor: 'rgba(59,111,224,0.55)', borderColor: '#3B6FE0', borderWidth: 1, yAxisID: 'y' },
+        { label: '이익', data: profits.length ? profits : [0], backgroundColor: 'rgba(22,121,79,0.55)', borderColor: '#16794F', borderWidth: 1, yAxisID: 'y' }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { boxWidth: 12, padding: 12, font: { size: 11 } } } },
+      scales: { y: { beginAtZero: true, ticks: { callback: v => fmt(v) + '원' } } }
+    }
+  });
+}
+
+// period 버튼 클릭 시 서버에서 새 데이터를 받아 차트를 다시 그린다
 async function loadChart(period) {
   try {
-    const data = await api(`/api/statistics?period=${period}`);
-    const ctx = document.getElementById('trendChart').getContext('2d');
-
-    const labels = data.map(d => d.period_key);
-    const revenues = data.map(d => d.revenue || 0);
-    const profits = data.map(d => d.profit || 0);
-
-    if (trendChart) {
-      trendChart.destroy();
-    }
-
-    if (labels.length === 0) {
-      // 데이터가 없으면 빈 차트 표시
-      trendChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: ['데이터 없음'],
-          datasets: [
-            { label: '매출', data: [0], backgroundColor: 'rgba(91, 30, 255, 0.55)', borderColor: 'rgba(91, 30, 255, 1)', borderWidth: 1 },
-            { label: '이익', data: [0], backgroundColor: 'rgba(255, 45, 155, 0.55)', borderColor: 'rgba(255, 45, 155, 1)', borderWidth: 1 }
-          ]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { position: 'top', labels: { boxWidth: 12, padding: 12, font: { size: 11 } } } },
-          scales: { y: { beginAtZero: true, ticks: { callback: function(value) { return fmt(value) + '원'; } } } }
-        }
-      });
-      return;
-    }
-
-    trendChart = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [
-          {
-            label: '매출',
-            data: revenues,
-            backgroundColor: 'rgba(91, 30, 255, 0.55)',
-            borderColor: 'rgba(91, 30, 255, 1)',
-            borderWidth: 1,
-            yAxisID: 'y',
-          },
-          {
-            label: '이익',
-            data: profits,
-            backgroundColor: 'rgba(255, 45, 155, 0.55)',
-            borderColor: 'rgba(255, 45, 155, 1)',
-            borderWidth: 1,
-            yAxisID: 'y',
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: 'top',
-            labels: { boxWidth: 12, padding: 12, font: { size: 11 } }
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: { callback: function(value) { return fmt(value) + '원'; } }
-          }
-        }
-      }
-    });
+    const store_id = document.getElementById('storeSelect')?.value || '';
+    const data = await api(`/api/statistics?period=${period}` + (store_id ? `&store_id=${store_id}` : ''));
+    renderTrendChart(data);
   } catch (e) {
     console.error('그래프 로드 오류:', e);
-    // 오류 시 빈 차트
-    const ctx = document.getElementById('trendChart').getContext('2d');
-    if (trendChart) trendChart.destroy();
-    trendChart = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: ['오류'],
-        datasets: [
-          { label: '매출', data: [0], backgroundColor: 'rgba(91, 30, 255, 0.55)', borderColor: 'rgba(91, 30, 255, 1)', borderWidth: 1 },
-          { label: '이익', data: [0], backgroundColor: 'rgba(255, 45, 155, 0.55)', borderColor: 'rgba(255, 45, 155, 1)', borderWidth: 1 }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { boxWidth: 12, padding: 12, font: { size: 11 } } } },
-        scales: { y: { beginAtZero: true, ticks: { callback: function(value) { return fmt(value) + '원'; } } } }
-      }
-    });
+    renderTrendChart([]);
   }
 }
 
@@ -475,7 +395,7 @@ function renderCategoryDoughnut(catSales) {
   const list = (catSales || []).filter(c => (c.revenue || 0) > 0);
   const labels = list.length ? list.map(c => c.category_name || '미분류') : ['데이터 없음'];
   const data = list.length ? list.map(c => c.revenue || 0) : [1];
-  const colors = list.length ? list.map((c, i) => c.category_color || CHART_PALETTE[i % CHART_PALETTE.length]) : ['rgba(140, 130, 180, 0.35)'];
+  const colors = list.length ? list.map((c, i) => c.category_color || CHART_PALETTE[i % CHART_PALETTE.length]) : ['rgba(107,111,118,0.4)'];
   categoryDoughnutChart = new Chart(ctx, {
     type: 'doughnut',
     data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 2, borderColor: 'rgba(255, 255, 255, 0.18)' }] },
@@ -498,12 +418,11 @@ function renderCategoryDoughnut(catSales) {
 // ---------- 카테고리별 재고 구성 (금액/수량 토글) ----------
 async function loadStockComposition() {
   try {
-    const data = await api('/api/category_stats');
+    const store_id = document.getElementById('storeSelect')?.value || '';
+    const data = await api('/api/category_stats' + (store_id ? `?store_id=${store_id}` : ''));
     window.__stockCompositionData = data || [];
     renderStockComposition();
-  } catch (e) {
-    console.error('재고 구성 로드 오류:', e);
-  }
+  } catch (e) { console.error('재고 구성 로드 오류:', e); }
 }
 
 function changeStockChartView(view) {
@@ -530,7 +449,7 @@ function renderStockComposition() {
       datasets: [{
         label: currentStockView === 'value' ? '재고 금액(원가 기준)' : '취급 상품 수',
         data: values.length ? values : [0],
-        backgroundColor: colors.length ? colors : ['rgba(140, 130, 180, 0.35)'],
+        backgroundColor: colors.length ? colors : ['rgba(107,111,118,0.4)'],
         borderRadius: 4,
       }]
     },
@@ -554,28 +473,25 @@ function renderStockComposition() {
 }
 
 // ---------- 재고회전율 TOP5 / 소진임박 TOP5 ----------
+function renderTurnoverCharts(data) {
+  const rows = (data || []).filter(r => r.current_qty > 0);
+  const top = rows.filter(r => r.turnover_count !== null).slice(0, 5);
+  renderHorizontalBar('turnoverTopChart', turnoverTopChart,
+    top.map(r => r.group_name), top.map(r => r.turnover_count),
+    '회전 횟수', '#3B6FE0', v => `${v}회전`, c => { turnoverTopChart = c; });
+  const bottom = rows.filter(r => r.days_to_deplete !== null)
+    .sort((a, b) => a.days_to_deplete - b.days_to_deplete).slice(0, 5);
+  renderHorizontalBar('turnoverBottomChart', turnoverBottomChart,
+    bottom.map(r => r.group_name), bottom.map(r => r.days_to_deplete),
+    '예상 소진일', '#D6473C', v => `${v}일`, c => { turnoverBottomChart = c; });
+}
+
 async function loadTurnoverCharts() {
   try {
-    const data = await api('/api/turnover_rate?group_by=product&days=30&sort_by=turnover');
-    const rows = (data || []).filter(r => r.current_qty > 0);
-
-    // 회전 빠른 TOP5 (turnover_count 높은 순)
-    const top = rows.filter(r => r.turnover_count !== null).slice(0, 5);
-    renderHorizontalBar('turnoverTopChart', turnoverTopChart,
-      top.map(r => r.group_name), top.map(r => r.turnover_count),
-      '회전 횟수', '#00E5A8', (v) => `${v}회전`,
-      (chart) => { turnoverTopChart = chart; });
-
-    // 소진 임박 TOP5 (days_to_deplete 짧은 순, 판매 이력 있는 것만)
-    const bottom = rows.filter(r => r.days_to_deplete !== null)
-      .sort((a, b) => a.days_to_deplete - b.days_to_deplete).slice(0, 5);
-    renderHorizontalBar('turnoverBottomChart', turnoverBottomChart,
-      bottom.map(r => r.group_name), bottom.map(r => r.days_to_deplete),
-      '예상 소진일', '#FF2D9B', (v) => `${v}일`,
-      (chart) => { turnoverBottomChart = chart; });
-  } catch (e) {
-    console.error('재고회전율 차트 로드 오류:', e);
-  }
+    const store_id = document.getElementById('storeSelect')?.value || '';
+    const data = await api('/api/turnover_rate?group_by=product&days=30&sort_by=turnover' + (store_id ? `&store_id=${store_id}` : ''));
+    renderTurnoverCharts(data);
+  } catch (e) { console.error('재고회전율 차트 로드 오류:', e); }
 }
 
 function renderHorizontalBar(canvasId, existing, labels, data, label, color, tooltipFmt, setter) {
