@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1><i class="ti ti-cash page-icon"></i>판매 등록</h1>
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-cash"></use></svg>판매 등록</h1>
 <div class="subtitle">제품을 클릭해서 장바구니에 담고, 결제수단을 선택해 등록하세요. (탭 이동해도 장바구니가 유지됩니다)</div>
 
 <!-- 탭 -->
@@ -803,21 +803,42 @@ async function checkout() {
   const subtotal = lineData.reduce((sum, l) => l.isService ? sum : sum + l.lineTotal, 0);
   const discount = Math.min(Math.max(cartDiscount || 0, 0), subtotal);
 
-  // 🔥 전체 할인은 상품 개당 가격을 낱낱이 줄이지 않고, 장바구니에 마지막으로 담긴
-  // 상품 한 줄에서만 한 번 더 차감한다. 나머지 상품은 (상품별 단가/할인이 반영된) 금액 그대로 기록된다.
-  const nonServiceKeys = lineData.filter(l => !l.isService).map(l => l.key);
-  const discountTargetKey = nonServiceKeys[nonServiceKeys.length - 1];
+  // ── 전체 할인 분배: Largest Remainder Method ─────────────────────────────
+  // 1) 각 줄 금액 비율로 할인을 Math.floor 분배 → 소수점 없이 내림
+  // 2) 내림 때문에 생긴 나머지 원(원 단위)을 소수부가 큰 줄부터 1원씩 추가 배분
+  //    → 어떤 경우에도 각 줄 할인의 합 == discount (1원 오차 없음)
+  // 예) 20,000원짜리 3개에 10,000원 할인
+  //     → 각 줄 exact 3333.3원 → floor 3333원, 나머지 1원을 첫 번째 줄에 +1
+  //     → 3334원 / 3333원 / 3333원 (합계 10,000원)
+  const nonServiceLines = lineData.filter(l => !l.isService && l.lineTotal > 0);
+  const discountMap = {};
+
+  if (discount > 0 && subtotal > 0 && nonServiceLines.length > 0) {
+    let allocated = 0;
+    const remainders = nonServiceLines.map(l => {
+      const exact = discount * (l.lineTotal / subtotal);
+      const floored = Math.floor(exact);
+      discountMap[l.key] = floored;
+      allocated += floored;
+      return { key: l.key, rem: exact - floored };
+    });
+    const leftover = discount - allocated;
+    remainders
+      .sort((a, b) => b.rem - a.rem)
+      .slice(0, leftover)
+      .forEach(r => { discountMap[r.key] = (discountMap[r.key] || 0) + 1; });
+  }
 
   const items = lineData.map(l => {
     if (l.isService) {
       return { product_id: l.item.product.id, quantity: l.qty, unit_price: 0 };
     }
-    let finalLineTotal = l.lineTotal;
-    if (l.key === discountTargetKey && discount > 0) {
-      finalLineTotal = Math.max(l.lineTotal - discount, 0);
-    }
-    const finalUnitPrice = l.qty > 0 ? Math.floor(finalLineTotal / l.qty) : 0;
-    return { product_id: l.item.product.id, quantity: l.qty, unit_price: finalUnitPrice };
+    const lineDiscountFromGlobal = discountMap[l.key] || 0;
+    const finalLineTotal = Math.max(l.lineTotal - lineDiscountFromGlobal, 0);
+    // 수량으로 나눌 때 나머지가 생기면 반올림으로 가장 가까운 정수 단가를 쓴다.
+    // (1원 미만 단가는 서버에서도 정수로 저장되므로 round가 가장 자연스럽다)
+    const unitPrice = l.qty > 0 ? Math.round(finalLineTotal / l.qty) : 0;
+    return { product_id: l.item.product.id, quantity: l.qty, unit_price: unitPrice };
   });
 
   const payload = {
