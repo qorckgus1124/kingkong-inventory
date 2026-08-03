@@ -34,7 +34,6 @@
 <meta name="twitter:image" content="/static/link-thumbnail.jpg">
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
 <!-- 수치 디스플레이용 사이버 서체(Orbitron). 한글은 Pretendard로 자동 폴백된다.
      display=swap 이라 폰트가 늦게 와도 화면이 비어 보이지 않는다. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -50,6 +49,7 @@
 <script src="/static/immersive.js?v={{ asset_version }}" defer></script>
 </head>
 <body data-page="{{ active }}">
+{% include '_icons3d.html' %}
 <script>
   // 주소창/상태바 색을 현재 테마에 맞춘다. (HYPER-DAY / HYPER-NIGHT)
   function syncThemeColorMeta() {
@@ -90,7 +90,7 @@
 
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><span class="brand-mark"><i class="ti ti-box"></i></span>재고·판매관리</div>
+    <div class="brand"><span class="brand-mark"><svg class="i3d" aria-hidden="true"><use href="#i3d-box"></use></svg></span>재고·판매관리</div>
     <div class="store-selector" style="padding: 0 2px; margin-bottom: 8px; flex-shrink: 0;">
       <!-- 매장 목록을 서버에서 미리 넣어둔다 (열자마자 바로 보이고, 요청 한 번이 줄어든다) -->
       <select id="globalStoreSelect" style="width:100%; padding:7px 12px; border-radius:var(--radius-pill); border:1px solid var(--glass-border); background:var(--input-bg); color:var(--text); font-size:13px; cursor:pointer;">
@@ -121,50 +121,50 @@
       </script>
     </div>
     <div class="nav-search">
-      <i class="ti ti-search"></i>
+      <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
       <input type="text" id="navSearchInput" placeholder="메뉴 검색" oninput="filterNavItems(this.value)">
       <span class="kbd">/</span>
     </div>
     <nav id="sidebarNav">
       <div class="nav-group">
         <div class="nav-group-label">홈</div>
-        <a class="nav-item {{ 'active' if active=='dashboard' else '' }}" href="/dashboard" data-shortcut="d" data-label="대시보드"><i class="ti ti-layout-dashboard nav-ic"></i>대시보드</a>
+        <a class="nav-item {{ 'active' if active=='dashboard' else '' }}" href="/dashboard" data-shortcut="d" data-label="대시보드"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-layout-dashboard"></use></svg>대시보드</a>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">판매</div>
-        <a class="nav-item {{ 'active' if active=='sales' else '' }}" href="/sales" data-shortcut="s" data-label="판매 등록"><i class="ti ti-cash nav-ic"></i>판매 등록</a>
-        <a class="nav-item {{ 'active' if active=='daily_report' else '' }}" href="/daily_report" data-label="금일 보고 목록"><i class="ti ti-clipboard-list nav-ic"></i>금일 보고 목록</a>
+        <a class="nav-item {{ 'active' if active=='sales' else '' }}" href="/sales" data-shortcut="s" data-label="판매 등록"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-cash"></use></svg>판매 등록</a>
+        <a class="nav-item {{ 'active' if active=='daily_report' else '' }}" href="/daily_report" data-label="금일 보고 목록"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-clipboard-list"></use></svg>금일 보고 목록</a>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">재고</div>
-        <a class="nav-item {{ 'active' if active=='products' else '' }}" href="/" data-shortcut="p" data-label="제품 관리"><i class="ti ti-package nav-ic"></i>제품 관리</a>
-        <a class="nav-item {{ 'active' if active=='brands' else '' }}" href="/brands" data-label="브랜드 관리"><i class="ti ti-tags nav-ic"></i>브랜드 관리</a>
-        <a class="nav-item {{ 'active' if active=='categories' else '' }}" href="/categories" data-label="카테고리 관리"><i class="ti ti-list-details nav-ic"></i>카테고리 관리</a>
-        <a class="nav-item {{ 'active' if active=='transactions' else '' }}" href="/transactions" data-shortcut="t" data-label="입출고 관리"><i class="ti ti-transfer nav-ic"></i>입출고 관리</a>
-        <a class="nav-item {{ 'active' if active=='quick_io' else '' }}" href="/quick_io" data-label="빠른 입출고"><i class="ti ti-bolt nav-ic"></i>빠른 입출고</a>
-        <a class="nav-item {{ 'active' if active=='transfer' else '' }}" href="/transfer" data-label="재고 이동"><i class="ti ti-arrows-shuffle nav-ic"></i>재고 이동</a>
-        <a class="nav-item {{ 'active' if active=='stocktake' else '' }}" href="/stocktake" data-label="재고 실사"><i class="ti ti-clipboard-check nav-ic"></i>재고 실사</a>
-        <a class="nav-item {{ 'active' if active=='timemachine' else '' }}" href="/timemachine" data-label="타임머신 조회"><i class="ti ti-clock-back nav-ic"></i>타임머신 조회</a>
+        <a class="nav-item {{ 'active' if active=='products' else '' }}" href="/" data-shortcut="p" data-label="제품 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-package"></use></svg>제품 관리</a>
+        <a class="nav-item {{ 'active' if active=='brands' else '' }}" href="/brands" data-label="브랜드 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-tags"></use></svg>브랜드 관리</a>
+        <a class="nav-item {{ 'active' if active=='categories' else '' }}" href="/categories" data-label="카테고리 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-list-details"></use></svg>카테고리 관리</a>
+        <a class="nav-item {{ 'active' if active=='transactions' else '' }}" href="/transactions" data-shortcut="t" data-label="입출고 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-transfer"></use></svg>입출고 관리</a>
+        <a class="nav-item {{ 'active' if active=='quick_io' else '' }}" href="/quick_io" data-label="빠른 입출고"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-bolt"></use></svg>빠른 입출고</a>
+        <a class="nav-item {{ 'active' if active=='transfer' else '' }}" href="/transfer" data-label="재고 이동"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-arrows-shuffle"></use></svg>재고 이동</a>
+        <a class="nav-item {{ 'active' if active=='stocktake' else '' }}" href="/stocktake" data-label="재고 실사"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-clipboard-check"></use></svg>재고 실사</a>
+        <a class="nav-item {{ 'active' if active=='timemachine' else '' }}" href="/timemachine" data-label="타임머신 조회"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-clock-back"></use></svg>타임머신 조회</a>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">분석</div>
-        <a class="nav-item {{ 'active' if active=='performance' else '' }}" href="/performance" data-label="판매 실적"><i class="ti ti-chart-bar nav-ic"></i>판매 실적</a>
-        <a class="nav-item {{ 'active' if active=='statistics' else '' }}" href="/statistics" data-label="매출 통계"><i class="ti ti-chart-line nav-ic"></i>매출 통계</a>
-        <a class="nav-item {{ 'active' if active=='turnover' else '' }}" href="/turnover" data-label="재고회전율"><i class="ti ti-refresh nav-ic"></i>재고회전율</a>
-        <a class="nav-item {{ 'active' if active=='recommend_order' else '' }}" href="/recommend_order" data-label="발주 추천"><i class="ti ti-bulb nav-ic"></i>발주 추천</a>
-        <a class="nav-item {{ 'active' if active=='forecast' else '' }}" href="/forecast" data-label="출고 예측"><i class="ti ti-trending-up nav-ic"></i>출고 예측</a>
-        <a class="nav-item {{ 'active' if active=='report_builder' else '' }}" href="/report_builder" data-label="커스텀 리포트"><i class="ti ti-file-analytics nav-ic"></i>커스텀 리포트</a>
+        <a class="nav-item {{ 'active' if active=='performance' else '' }}" href="/performance" data-label="판매 실적"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-chart-bar"></use></svg>판매 실적</a>
+        <a class="nav-item {{ 'active' if active=='statistics' else '' }}" href="/statistics" data-label="매출 통계"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-chart-line"></use></svg>매출 통계</a>
+        <a class="nav-item {{ 'active' if active=='turnover' else '' }}" href="/turnover" data-label="재고회전율"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-refresh"></use></svg>재고회전율</a>
+        <a class="nav-item {{ 'active' if active=='recommend_order' else '' }}" href="/recommend_order" data-label="발주 추천"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-bulb"></use></svg>발주 추천</a>
+        <a class="nav-item {{ 'active' if active=='forecast' else '' }}" href="/forecast" data-label="출고 예측"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-trending-up"></use></svg>출고 예측</a>
+        <a class="nav-item {{ 'active' if active=='report_builder' else '' }}" href="/report_builder" data-label="커스텀 리포트"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-file-analytics"></use></svg>커스텀 리포트</a>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">관리</div>
-        <a class="nav-item {{ 'active' if active=='stores' else '' }}" href="/stores" data-label="매장 관리"><i class="ti ti-building-store nav-ic"></i>매장 관리</a>
-        <a class="nav-item {{ 'active' if active=='suppliers' else '' }}" href="/suppliers" data-label="거래처 관리"><i class="ti ti-handshake nav-ic"></i>거래처 관리</a>
-        <a class="nav-item {{ 'active' if active=='customers' else '' }}" href="/customers" data-label="고객 관리"><i class="ti ti-users nav-ic"></i>고객 관리</a>
-        <a class="nav-item {{ 'active' if active=='settings' else '' }}" href="/settings" data-label="설정"><i class="ti ti-settings nav-ic"></i>설정</a>
+        <a class="nav-item {{ 'active' if active=='stores' else '' }}" href="/stores" data-label="매장 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-building-store"></use></svg>매장 관리</a>
+        <a class="nav-item {{ 'active' if active=='suppliers' else '' }}" href="/suppliers" data-label="거래처 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-handshake"></use></svg>거래처 관리</a>
+        <a class="nav-item {{ 'active' if active=='customers' else '' }}" href="/customers" data-label="고객 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-users"></use></svg>고객 관리</a>
+        <a class="nav-item {{ 'active' if active=='settings' else '' }}" href="/settings" data-label="설정"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-settings"></use></svg>설정</a>
       </div>
     </nav>
     <div class="sidebar-footer">
-      <button class="theme-toggle theme-toggle-btn" onclick="toggleTheme()"><i class="ti ti-moon"></i> 다크 모드</button>
+      <button class="theme-toggle theme-toggle-btn" onclick="toggleTheme()"><svg class="i3d" aria-hidden="true"><use href="#i3d-moon"></use></svg> 다크 모드</button>
     </div>
   </aside>
 
@@ -286,31 +286,31 @@ function filterMobileNavItems(query) {
 
 <nav class="mobile-bottom-nav">
   <a href="/dashboard" class="{{ 'active' if active=='dashboard' else '' }}">
-    <i class="ti ti-layout-dashboard nav-icon"></i>
+    <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-layout-dashboard"></use></svg>
     <span class="nav-label">홈</span>
   </a>
   <a href="/sales" class="{{ 'active' if active=='sales' else '' }}">
-    <i class="ti ti-cash nav-icon"></i>
+    <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-cash"></use></svg>
     <span class="nav-label">판매</span>
   </a>
   <a href="/" class="{{ 'active' if active=='products' else '' }}">
-    <i class="ti ti-package nav-icon"></i>
+    <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-package"></use></svg>
     <span class="nav-label">제품</span>
   </a>
   <a href="/quick_io" class="{{ 'active' if active=='quick_io' else '' }}">
-    <i class="ti ti-transfer nav-icon"></i>
+    <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-transfer"></use></svg>
     <span class="nav-label">입출고</span>
   </a>
   <a href="/forecast" class="{{ 'active' if active=='forecast' else '' }}">
-    <i class="ti ti-trending-up nav-icon"></i>
+    <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-trending-up"></use></svg>
     <span class="nav-label">예측</span>
   </a>
   <a href="/settings" class="{{ 'active' if active=='settings' else '' }}">
-    <i class="ti ti-settings nav-icon"></i>
+    <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-settings"></use></svg>
     <span class="nav-label">설정</span>
   </a>
   <a href="javascript:void(0)" class="mobile-nav-more-btn" onclick="openMobileNavMenu()" aria-haspopup="true" aria-expanded="false" aria-controls="mobileNavOverlay">
-    <i class="ti ti-grid-dots nav-icon"></i>
+    <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-grid-dots"></use></svg>
     <span class="nav-label">메뉴</span>
   </a>
 </nav>
@@ -322,10 +322,10 @@ function filterMobileNavItems(query) {
     <div class="mobile-nav-sheet-handle"></div>
     <div class="mobile-nav-sheet-header">
       <span>전체 메뉴</span>
-      <button type="button" class="mobile-nav-sheet-close" onclick="closeMobileNavMenu()" aria-label="닫기"><i class="ti ti-x"></i></button>
+      <button type="button" class="mobile-nav-sheet-close" onclick="closeMobileNavMenu()" aria-label="닫기"><svg class="i3d" aria-hidden="true"><use href="#i3d-x"></use></svg></button>
     </div>
     <div class="nav-search">
-      <i class="ti ti-search"></i>
+      <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
       <input type="text" id="mobileNavSearchInput" placeholder="메뉴 검색" oninput="filterMobileNavItems(this.value)">
     </div>
     <nav id="mobileNavOverlayList" class="mobile-nav-overlay-list"></nav>
@@ -337,7 +337,7 @@ function updateThemeToggleUI() {
   const isDark = document.body.classList.contains('dark-mode');
   document.querySelectorAll('.theme-toggle-btn').forEach(btn => {
     // 유리 트랙/노브는 CSS의 ::before/::after로 그려지므로 innerHTML을 갈아도 유지된다.
-    btn.innerHTML = isDark ? '<i class="ti ti-sun"></i> 라이트 모드' : '<i class="ti ti-moon"></i> 다크 모드';
+    btn.innerHTML = isDark ? '<svg class="i3d" aria-hidden="true"><use href="#i3d-sun"></use></svg> 라이트 모드' : '<svg class="i3d" aria-hidden="true"><use href="#i3d-moon"></use></svg> 다크 모드';
     btn.setAttribute('role', 'switch');
     btn.setAttribute('aria-checked', isDark ? 'true' : 'false');
     btn.setAttribute('aria-label', isDark ? '라이트 모드로 전환' : '다크 모드로 전환');

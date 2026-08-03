@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1><i class="ti ti-clock-back page-icon"></i>타임머신 조회</h1>
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-clock-back"></use></svg>타임머신 조회</h1>
 <div class="subtitle">특정 날짜를 기준으로 그 시점의 재고 수량을 조회합니다. (입출고 기록을 역추적하여 계산)</div>
 
 <div class="card">
@@ -19,7 +19,7 @@
     </div>
     <div class="form-field" style="justify-content:flex-end;">
       <label>&nbsp;</label>
-      <button class="primary" onclick="load()"><i class="ti ti-clock-back"></i> 조회</button>
+      <button class="primary" onclick="load()"><svg class="i3d" aria-hidden="true"><use href="#i3d-clock-back"></use></svg> 조회</button>
     </div>
   </div>
 </div>

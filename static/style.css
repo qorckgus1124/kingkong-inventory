@@ -1310,3 +1310,95 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
   .qio-qty-display { font-size: 36px; }
   .keypad-btn { min-height: 52px; font-size: 18px; }
 }
+/* ============================================================ */
+/* 아이콘(i3d) 교체 + 호버링 인터랙션 추가                             */
+/* (배경/기본 디자인 톤은 그대로 두고, 아이콘과 호버 반응만 추가한다)        */
+/* ============================================================ */
+
+/* ---------- i3d 아이콘 기본 (기존 Tabler 아이콘 폰트를 대체) ---------- */
+.i3d {
+  display: inline-block;
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: -0.22em;
+  flex-shrink: 0;
+  overflow: visible;
+  transition: transform 0.2s ease;
+}
+button .i3d { width: 1.15em; height: 1.15em; vertical-align: -0.2em; }
+
+/* 기존에 font-size로 크기를 맞추던 자리들을 width/height로 동일하게 맞춘다 */
+.brand .brand-mark .i3d { width: 12px; height: 12px; }
+.nav-item .i3d.nav-ic { width: 16px; height: 16px; }
+.nav-search .i3d { width: 14px; height: 14px; }
+.theme-toggle .i3d { width: 14px; height: 14px; }
+h1 .i3d.page-icon { width: 18px; height: 18px; }
+.mobile-nav-sheet-close .i3d { width: 15px; height: 15px; }
+
+/* 사이드바 아이콘 호버/활성 마이크로 인터랙션 */
+.nav-item:hover .i3d { transform: scale(1.08) rotate(-4deg); }
+.nav-item.active .i3d { color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-item:hover .i3d { transform: none; }
+}
+
+/* 768px 이하 : 하단 탭 / 전체메뉴 오버레이의 아이콘 크기 (기존 font-size 값에 맞춤) */
+@media (max-width: 768px) {
+  .mobile-bottom-nav a .i3d.nav-icon { width: 24px; height: 24px; }
+  .mobile-nav-more-btn .i3d { transition: transform 0.2s ease; }
+  .mobile-nav-more-btn[aria-expanded="true"] .i3d { transform: rotate(45deg); }
+  .mobile-nav-overlay-list .nav-item .i3d.nav-ic { width: 20px; height: 20px; }
+  h1 .i3d.page-icon { width: 16px; height: 16px; }
+}
+@media (max-width: 480px) {
+  .mobile-bottom-nav a .i3d.nav-icon { width: 20px; height: 20px; }
+}
+
+/* ---------- 호버링 : 포인터 광원 + 살짝 3D 기울임 ----------
+   --px/--py(포인터 위치)와 --tilt-x/--tilt-y(기울기)는
+   이미 로드되어 있는 static/immersive.js 가 mousemove마다 채워준다.
+   기존 색/그림자 톤은 그대로 두고, 그 위에 살짝 얹는 방식이라
+   전체적인 화면 톤(배경/카드 색)은 바뀌지 않는다. */
+.card, .summary-card, .product-card {
+  position: relative;
+  isolation: isolate;
+}
+.card::after,
+.summary-card::after,
+.product-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(220px circle at var(--px, 50%) var(--py, 50%), rgba(59, 111, 224, 0.10), transparent 65%);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  z-index: -1;
+}
+body.dark-mode .card::after,
+body.dark-mode .summary-card::after,
+body.dark-mode .product-card::after {
+  background: radial-gradient(220px circle at var(--px, 50%) var(--py, 50%), rgba(110, 150, 240, 0.16), transparent 65%);
+}
+.card:hover::after,
+.summary-card:hover::after,
+.product-card:hover::after { opacity: 1; }
+
+.card:hover { transform: translateY(-2px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)); }
+.summary-card:hover { transform: translateY(-3px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)); }
+.product-card:hover { transform: translateY(-3px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)); }
+
+/* 기울임이 시각적으로 느껴지려면 원근감(perspective)이 필요하다 */
+.summary-cards, .product-grid { perspective: 900px; }
+
+/* 모바일/터치, 애니메이션 최소화 환경에서는 광원만 끈다.
+   (기울임/호버-리프트 자체를 끄는 기존 규칙은 이미 위쪽 768px 미디어쿼리에 있으므로 그대로 둔다) */
+@media (max-width: 768px) {
+  .card::after, .summary-card::after, .product-card::after { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card:hover, .summary-card:hover, .product-card:hover { transform: none !important; }
+  .card::after, .summary-card::after, .product-card::after { display: none; }
+}
