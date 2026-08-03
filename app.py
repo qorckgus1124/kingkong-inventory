@@ -1354,7 +1354,7 @@ def _apply_stock_delta(db, store_id, product_id, ttype, quantity):
     cur.execute("SELECT qty FROM store_stock WHERE store_id=%s AND product_id=%s", (store_id, product_id))
     stock = cur.fetchone()
     current_qty = stock["qty"] if stock else 0
-    is_decrease = ttype in {"판매출고", "반품", "폐기", "이동출고", "조정", "입고취소"}
+    is_decrease = ttype in {"판매출고", "출고", "반품", "폐기", "이동출고", "조정", "입고취소"}
     if is_decrease and quantity > current_qty:
         return f"현재 재고({current_qty})보다 많은 수량은 처리할 수 없습니다."
     if stock is None:
@@ -2709,7 +2709,7 @@ def api_transactions_post():
 
     if not product_id or not store_id or not ttype:
         return jsonify({"error": "제품, 매장, 유형은 필수입니다."}), 400
-    if ttype not in ["입고", "판매출고", "반품", "폐기", "조정", "실사조정", "이동출고", "이동입고", "선결예약", "입고취소"]:
+    if ttype not in ["입고", "판매출고", "출고", "반품", "폐기", "조정", "실사조정", "이동출고", "이동입고", "선결예약", "입고취소"]:
         return jsonify({"error": "이 단계에서 지원하지 않는 유형입니다."}), 400
     try:
         quantity = int(quantity)
@@ -2757,7 +2757,7 @@ def api_transactions_post():
         print(f"❌ 입출고 등록 오류: {e}")
         return jsonify({"error": "등록 중 오류가 발생했습니다."}), 500
 
-_DECREASE_TYPES = {"판매출고", "반품", "폐기", "이동출고", "조정", "입고취소"}
+_DECREASE_TYPES = {"판매출고", "출고", "반품", "폐기", "이동출고", "조정", "입고취소"}
 
 
 def _reverse_stock_raw(store_id, product_id, ttype, quantity):
@@ -2801,7 +2801,7 @@ def api_transaction_update(tid):
     new_memo = data.get("memo", original["memo"])
     new_date_time = data.get("date_time") or original["date_time"]
 
-    if new_type not in ["입고", "판매출고", "반품", "폐기", "조정", "실사조정", "이동출고", "이동입고", "선결예약"]:
+    if new_type not in ["입고", "판매출고", "출고", "반품", "폐기", "조정", "실사조정", "이동출고", "이동입고", "선결예약"]:
         return jsonify({"error": "이 유형은 수정할 수 없습니다."}), 400
     try:
         new_quantity = int(new_quantity)
@@ -3634,7 +3634,7 @@ def api_daily_report():
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             LEFT JOIN stock_transactions t2 ON t2.id = t.ref_transaction_id
-            WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고')
+            WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고', '출고')
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
               AND EXTRACT(HOUR FROM t.date_time) < 16
@@ -3666,7 +3666,7 @@ def api_daily_report():
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             LEFT JOIN stock_transactions t2 ON t2.id = t.ref_transaction_id
-            WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고')
+            WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고', '출고')
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
               AND EXTRACT(HOUR FROM t.date_time) >= 16
@@ -3834,7 +3834,7 @@ def api_daily_report():
             lines.append("-" * 26)
 
             lines.append("[출고]")
-            out_blocks = build_section(['판매출고', '이동출고'])
+            out_blocks = build_section(['판매출고', '출고', '이동출고'])
             if out_blocks:
                 for i, block in enumerate(out_blocks):
                     if i > 0:
