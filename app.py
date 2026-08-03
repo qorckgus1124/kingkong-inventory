@@ -3638,6 +3638,7 @@ def api_daily_report():
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
               AND EXTRACT(HOUR FROM t.date_time) < 16
+              AND t.product_id NOT IN (2393, 2394)
               AND NOT (
                     t.type IN ('판매취소', '입고취소')
                  OR (t.type = '판매출고' AND EXISTS (
@@ -3669,6 +3670,7 @@ def api_daily_report():
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
               AND EXTRACT(HOUR FROM t.date_time) >= 16
+              AND t.product_id NOT IN (2393, 2394)
               AND NOT (
                     t.type IN ('판매취소', '입고취소')
                  OR (t.type = '판매출고' AND EXISTS (
