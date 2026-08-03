@@ -2936,26 +2936,27 @@ def api_transactions_cancel_batch():
         placeholders = ','.join(['%s'] * len(ids))
         cur.execute(f"SELECT * FROM stock_transactions WHERE id IN ({placeholders})", ids)
         rows = cur.fetchall()
-        sale_rows = [r for r in rows if r["type"] in ("판매출고", "출고")]
+        # 삭제 가능한 타입: 판매출고/출고는 재고 복구 후 삭제, 나머지는 바로 삭제
+        DELETABLE = {"판매출고", "출고", "입고", "반품", "폐기", "조정", "실사조정"}
+        sale_rows = [r for r in rows if r["type"] in DELETABLE]
 
         if not sale_rows:
-            return jsonify({"cancelled": 0, "failed": len(ids), "errors": ["선택한 항목 중 판매출고/출고가 없습니다."]}), 400
+            return jsonify({"cancelled": 0, "failed": len(ids), "errors": ["삭제 가능한 항목이 없습니다."]}), 400
 
-        # 이미 취소(판매취소) 처리된 판매출고 건은 삭제 대상에서 제외한다.
-        # 원본을 지워버리면 짝이 맞아야 할 판매취소(-) 기록만 고아로 남아
-        # 매출/이익 집계가 원인 모를 마이너스로 잡히는 버그가 있었기 때문.
+        # 이미 판매취소 처리된 판매출고는 제외
         valid_rows = []
         already_cancelled_count = 0
         for row in sale_rows:
-            cur.execute(
-                "SELECT COUNT(*) as c FROM stock_transactions WHERE ref_transaction_id=%s AND type='판매취소'",
-                (row["id"],)
-            )
-            already_cancelled = cur.fetchone()["c"] > 0
-            if already_cancelled:
-                already_cancelled_count += 1
-            else:
-                valid_rows.append(row)
+            if row["type"] == "판매출고":
+                cur.execute(
+                    "SELECT COUNT(*) as c FROM stock_transactions WHERE ref_transaction_id=%s AND type='판매취소'",
+                    (row["id"],)
+                )
+                already_cancelled = cur.fetchone()["c"] > 0
+                if already_cancelled:
+                    already_cancelled_count += 1
+                    continue
+            valid_rows.append(row)
 
         errors = []
         if already_cancelled_count:
@@ -2964,10 +2965,16 @@ def api_transactions_cancel_batch():
         if not valid_rows:
             return jsonify({"cancelled": 0, "failed": len(ids), "errors": errors or ["선택한 항목이 모두 이미 취소된 건입니다."]}), 400
 
-        # 판매출고/출고 삭제 전 재고 복구
+        # 타입별 재고 복구 후 삭제
         for row in valid_rows:
-            restore_type = "입고" if row["type"] == "출고" else "판매취소"
-            _apply_stock_delta(conn, row["store_id"], row["product_id"], restore_type, row["quantity"])
+            if row["type"] == "판매출고":
+                _apply_stock_delta(conn, row["store_id"], row["product_id"], "판매취소", row["quantity"])
+            elif row["type"] in ("출고", "반품", "폐기", "이동출고", "조정"):
+                # 재고가 줄어든 타입 → 입고로 복구
+                _apply_stock_delta(conn, row["store_id"], row["product_id"], "입고", row["quantity"])
+            elif row["type"] == "입고":
+                # 입고 삭제 → 재고 차감
+                _apply_stock_delta(conn, row["store_id"], row["product_id"], "판매출고", row["quantity"])
 
         valid_ids = [r["id"] for r in valid_rows]
         placeholders2 = ','.join(['%s'] * len(valid_ids))
