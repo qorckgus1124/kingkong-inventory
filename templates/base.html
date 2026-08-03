@@ -568,7 +568,15 @@ async function loadFloatingRevenue() {
     const globalStoreId = localStorage.getItem('global_store_id');
     const url = globalStoreId ? `/api/today_revenue?store_id=${globalStoreId}` : '/api/today_revenue';
     const data = await api(url);
-    if (!data || data.__apiError) return;
+    // 응답을 받지 못했으면 왜 못 받았는지 콘솔에 남기고, 화면에는 실패 표시를 한다.
+    if (!data || data.__apiError || !data.today) {
+      console.error('오늘 매출 응답 없음:', data && data.__apiError ? data.__apiError : data);
+      document.getElementById('fpRevenue').textContent = '--원';
+      return;
+    }
+    if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+      console.warn('오늘 매출 일부 계산 실패:', data.warnings.join(' / '));
+    }
     const revenue = data.today?.revenue || 0;
     document.getElementById('fpRevenue').textContent = fmt(revenue) + '원';
 

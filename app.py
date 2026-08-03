@@ -1093,6 +1093,30 @@ def get_sales_totals_cached(store_id=None, start_date=None, end_date=None):
     return totals
 
 
+def parse_setting_int(value, default=0):
+    """설정값 문자열을 정수로 안전하게 바꾼다.
+
+    설정 화면에서 목표 금액이 빈 값("")이나 소수점("1000000.0"), 콤마("1,000,000"),
+    한글("300만") 형태로 저장될 수 있는데, 예전에는 int()를 그대로 호출해서 예외가 났다.
+    그 예외 때문에 오늘 매출 조회(/api/today_revenue)가 500으로 실패하고,
+    플로팅 패널에 "--원"만 뜨는 문제가 있었다. (대시보드 오늘 카드도 0원으로 떨어졌다)
+    """
+    if value is None:
+        return default
+    text = str(value).replace(",", "").strip()
+    if text == "":
+        return default
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        # 숫자로 볼 수 없는 값이면 숫자 부분만 추려서 시도한다 ("300만" -> 300)
+        digits = re.sub(r"[^0-9.-]", "", text)
+        try:
+            return int(float(digits)) if digits not in ("", "-", ".", "-.") else default
+        except (TypeError, ValueError):
+            return default
+
+
 def rollback_quietly():
     """오류가 난 트랜잭션을 되돌린다. 커넥션 풀로 재사용되는 연결이 'current transaction
     is aborted' 상태로 남아 다음 요청까지 전부 실패하는 것을 막는다."""
@@ -4532,20 +4556,28 @@ def api_today_revenue():
     이 엔드포인트는 집계 두 번만 실행하므로 자주 호출해도 부담이 없고,
     캐시를 전혀 쓰지 않으므로 판매를 등록하면 바로 반영된다.
     """
+    import calendar
+
+    today = now_kst().date()
+    month_start = today.replace(day=1)
+    total_days = calendar.monthrange(today.year, today.month)[1]
+    days_elapsed = today.day
+
+    store_id = request.args.get("store_id")
+    if store_id:
+        try:
+            store_id = int(store_id)
+        except (TypeError, ValueError):
+            store_id = None
+
+    # ---------- 오늘 매출 (가장 중요한 값이므로 가장 먼저, 단독으로 계산한다) ----------
+    # 이번달 누계나 목표 금액 계산에서 문제가 생겨도 오늘 매출은 반드시 내려가도록
+    # 구간을 나눠 두었다. (예전에는 목표 금액 설정값 하나 때문에 전체가 500으로 실패했다)
+    today_totals = {"qty": 0, "revenue": 0, "profit": 0}
+    warnings = []
     try:
         get_db()
         cur = g.cursor
-        today = now_kst().date()
-        month_start = today.replace(day=1)
-
-        store_id = request.args.get("store_id")
-        if store_id:
-            try:
-                store_id = int(store_id)
-            except (TypeError, ValueError):
-                store_id = None
-
-        # 오늘: 항상 실시간
         today_totals = compute_sales_totals(store_id, single_date=today)
         if store_id:
             cur.execute(
@@ -4555,12 +4587,17 @@ def api_today_revenue():
             override = cur.fetchone()
             if override and override["override_amount"] is not None:
                 today_totals["revenue"] = override["override_amount"]
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 오늘 매출 조회 오류: {e}")
+        return jsonify({"error": f"오늘 매출을 불러오지 못했습니다: {e}"}), 500
 
-        # 이번달: 지난 날짜는 집계표, 오늘은 실시간
+    # ---------- 이번달 누계 ----------
+    month_totals = {"qty": 0, "revenue": 0, "profit": 0}
+    try:
         month_totals = get_sales_totals_cached(store_id, month_start, today)
-        month_revenue = month_totals["revenue"]
-        month_profit = month_totals["profit"]
         if store_id:
+            cur = g.cursor
             cur.execute(
                 """SELECT COALESCE(SUM(override_amount), 0) AS total FROM daily_revenue_override
                    WHERE store_id = %s AND target_date >= %s AND target_date <= %s""",
@@ -4569,40 +4606,48 @@ def api_today_revenue():
             row = cur.fetchone()
             override_total = (row["total"] if row else 0) or 0
             if override_total > 0:
-                ratio = (month_profit / month_revenue) if month_revenue > 0 and month_profit > 0 else 0
-                month_revenue = override_total
-                month_profit = int(override_total * ratio)
-
-        settings = get_settings_cache()
-        monthly_target = int(settings.get("monthly_target_revenue", 0)) if settings else 0
-
-        import calendar
-        total_days = calendar.monthrange(today.year, today.month)[1]
-        days_elapsed = today.day
-        remaining_days = max(total_days - days_elapsed, 0)
-        remaining_amount = max(monthly_target - month_revenue, 0)
-        is_achieved = monthly_target > 0 and month_revenue >= monthly_target
-
-        return jsonify({
-            "today": today_totals,
-            "month": {"qty": month_totals["qty"], "revenue": month_revenue, "profit": month_profit},
-            "monthly_target": {
-                "target": monthly_target,
-                "total_days": total_days,
-                "days_elapsed": days_elapsed,
-                "remaining_days": remaining_days,
-                "current_revenue": month_revenue,
-                "remaining_amount": remaining_amount,
-                "daily_avg_needed": (remaining_amount / remaining_days) if remaining_days > 0 and remaining_amount > 0 else 0,
-                "progress_percent": (month_revenue / monthly_target * 100) if monthly_target > 0 else 0,
-                "is_achieved": is_achieved,
-            },
-            "server_time": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
-        })
+                revenue = month_totals["revenue"]
+                profit = month_totals["profit"]
+                ratio = (profit / revenue) if revenue > 0 and profit > 0 else 0
+                month_totals["revenue"] = override_total
+                month_totals["profit"] = int(override_total * ratio)
     except Exception as e:
         rollback_quietly()
-        print(f"❌ 오늘 매출 조회 오류: {e}")
-        return jsonify({"error": "오늘 매출을 불러오지 못했습니다."}), 500
+        warnings.append("이번달 누계를 계산하지 못했습니다.")
+        print(f"⚠️ 이번달 누계 계산 실패 (오늘 매출은 정상 반환): {e}")
+
+    # ---------- 월 목표 진행률 ----------
+    month_revenue = month_totals["revenue"]
+    monthly_target = 0
+    try:
+        settings = get_settings_cache() or {}
+        monthly_target = parse_setting_int(settings.get("monthly_target_revenue"), 0)
+    except Exception as e:
+        rollback_quietly()
+        warnings.append("월 목표 설정을 읽지 못했습니다.")
+        print(f"⚠️ 월 목표 설정 읽기 실패: {e}")
+
+    remaining_days = max(total_days - days_elapsed, 0)
+    remaining_amount = max(monthly_target - month_revenue, 0)
+    is_achieved = monthly_target > 0 and month_revenue >= monthly_target
+
+    return jsonify({
+        "today": today_totals,
+        "month": month_totals,
+        "monthly_target": {
+            "target": monthly_target,
+            "total_days": total_days,
+            "days_elapsed": days_elapsed,
+            "remaining_days": remaining_days,
+            "current_revenue": month_revenue,
+            "remaining_amount": remaining_amount,
+            "daily_avg_needed": (remaining_amount / remaining_days) if remaining_days > 0 and remaining_amount > 0 else 0,
+            "progress_percent": (month_revenue / monthly_target * 100) if monthly_target > 0 else 0,
+            "is_achieved": is_achieved,
+        },
+        "warnings": warnings,
+        "server_time": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
+    })
 
 
 @app.route("/api/dashboard")
@@ -4625,8 +4670,8 @@ def api_dashboard():
             except:
                 store_id = None
 
-        settings = get_settings_cache()
-        monthly_target = int(settings.get('monthly_target_revenue', 0)) if settings else 0
+        settings = get_settings_cache() or {}
+        monthly_target = parse_setting_int(settings.get('monthly_target_revenue'), 0)
 
         import calendar
         total_days = calendar.monthrange(today.year, today.month)[1]
