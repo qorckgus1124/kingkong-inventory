@@ -587,12 +587,12 @@ async function loadFloatingRevenue() {
     if (todayProfitEl) todayProfitEl.textContent = fmt(data.today?.profit ?? 0) + '원';
 
     const target = data.monthly_target || {};
-    const targetAmount = target.target || 0;
-    const currentRevenue = target.current_revenue || 0;
-    const remaining = target.remaining_amount || 0;
-    const dailyNeeded = target.daily_avg_needed || 0;
-    const progress = target.progress_percent || 0;
-    const isAchieved = target.is_achieved || false;
+    const targetAmount = Number(target.target) || 0;
+    const currentRevenue = Number(target.current_revenue) || 0;
+    const remaining = Number(target.remaining_amount) || 0;
+    const dailyNeeded = Number(target.daily_avg_needed) || 0;
+    const progress = Number(target.progress_percent) || 0;   // 혹시 문자열로 오더라도 숫자로 변환
+    const isAchieved = !!target.is_achieved;
 
     document.getElementById('fpTargetAmount').textContent = fmt(targetAmount) + '원';
     document.getElementById('fpTargetProgress').textContent = progress.toFixed(1) + '%';
@@ -613,19 +613,17 @@ async function loadFloatingRevenue() {
     if (!progressBar) {
       progressBar = document.createElement('div');
       progressBar.className = 'fp-progress-bar';
-      // HYPER-GLASS: 트랙은 유리 홈, 채움은 브랜드 그라디언트(달성) / 마젠타(미달성)
       progressBar.style.cssText = `
-        width: 100%; height: 6px; background: var(--glass-3);
-        border: 1px solid var(--border); border-radius: var(--radius-pill);
+        width: 100%; height: 6px; background: var(--hover-bg);
+        border: 1px solid var(--border); border-radius: 999px;
         margin-top: 6px; overflow: hidden;
-        box-shadow: inset 0 1px 3px rgba(24,12,72,0.2);
       `;
       const fill = document.createElement('div');
       fill.className = 'fp-progress-fill';
       fill.style.cssText = `
         width: 0%; height: 100%;
-        background-image: ${isAchieved ? 'var(--grad-lime)' : 'var(--grad-brand)'};
-        border-radius: var(--radius-pill); transition: width 0.5s var(--ease);
+        background: ${isAchieved ? 'var(--success)' : 'var(--accent)'};
+        border-radius: 999px; transition: width 0.5s ease;
       `;
       progressBar.appendChild(fill);
       targetInfo.appendChild(progressBar);
@@ -633,7 +631,7 @@ async function loadFloatingRevenue() {
     const fill = progressBar.querySelector('.fp-progress-fill');
     if (fill) {
       fill.style.width = Math.min(progress, 100) + '%';
-      fill.style.backgroundImage = isAchieved ? 'var(--grad-lime)' : 'var(--grad-brand)';
+      fill.style.background = isAchieved ? 'var(--success)' : 'var(--accent)';
     }
   } catch (e) {
     console.error('플로팅 패널 매출 로드 오류:', e);
