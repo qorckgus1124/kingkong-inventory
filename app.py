@@ -2053,7 +2053,9 @@ def api_products():
                 if cond:
                     sql += f" AND {cond}"
                     params.extend(cond_params)
-            if category_id:
+            if category_id == '__none__':
+                sql += " AND p.category_id IS NULL"
+            elif category_id:
                 sql += " AND p.category_id = %s"
                 params.append(category_id)
             if brand_id:
@@ -2171,6 +2173,13 @@ def api_products():
                    ON CONFLICT(store_id, product_id) DO UPDATE SET qty = excluded.qty""",
                 (store_id, product_id, initial_qty)
             )
+            if initial_qty > 0:
+                cur.execute(
+                    """INSERT INTO stock_transactions
+                       (product_id, store_id, type, quantity, unit_cost, unit_price, memo)
+                       VALUES (%s, %s, '입고', %s, %s, %s, '초기입고')""",
+                    (product_id, store_id, initial_qty, cost_price, sale_price)
+                )
         else:
             cur.execute("SELECT id FROM stores ORDER BY id")
             stores = cur.fetchall()
@@ -2179,6 +2188,13 @@ def api_products():
                 cur.execute(
                     "INSERT INTO store_stock (store_id, product_id, qty, min_qty) VALUES (%s, %s, %s, 0) ON CONFLICT DO NOTHING",
                     (s["id"], product_id, qty)
+                )
+            if initial_qty > 0 and stores:
+                cur.execute(
+                    """INSERT INTO stock_transactions
+                       (product_id, store_id, type, quantity, unit_cost, unit_price, memo)
+                       VALUES (%s, %s, '입고', %s, %s, %s, '초기입고')""",
+                    (product_id, stores[0]["id"], initial_qty, cost_price, sale_price)
                 )
 
         conn.commit()
@@ -2264,20 +2280,22 @@ def api_products_duplicates():
         cur = g.cursor
         cur.execute("""
             WITH dup AS (
-                SELECT lower(replace(name, ' ', '')) AS k
-                FROM products
+                SELECT lower(replace(p.name, ' ', '')) AS k,
+                       COALESCE(p.brand_id::text, '') AS bk
+                FROM products p
                 WHERE is_active = 1
-                GROUP BY lower(replace(name, ' ', ''))
+                GROUP BY lower(replace(p.name, ' ', '')), COALESCE(p.brand_id::text, '')
                 HAVING COUNT(*) > 1
             )
             SELECT p.id, p.name, p.brand_id, p.category_id, p.cost_price, p.card_cost_price,
                    p.sale_price, p.parent_product_id, p.created_at,
                    b.name AS brand_name, c.name AS category_name,
-                   lower(replace(p.name, ' ', '')) AS group_key,
+                   lower(replace(p.name, ' ', '')) || '|' || COALESCE(p.brand_id::text, '') AS group_key,
                    COALESCE(st.qty, 0) AS qty,
                    COALESCE(tx.cnt, 0) AS transaction_count
             FROM products p
             JOIN dup ON dup.k = lower(replace(p.name, ' ', ''))
+                     AND dup.bk = COALESCE(p.brand_id::text, '')
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             LEFT JOIN (SELECT product_id, SUM(qty) AS qty FROM store_stock GROUP BY product_id) st
@@ -2295,13 +2313,12 @@ def api_products_duplicates():
 
         result = []
         for key, items in groups.items():
-            # 브랜드까지 같으면 "확실한 중복", 브랜드가 다르면 "확인 필요"로 표시한다.
-            brand_names = {(it["brand_name"] or "") for it in items}
             category_names = {(it["category_name"] or "") for it in items}
             result.append({
                 "group_key": key,
                 "display_name": items[0]["name"],
-                "same_brand": len(brand_names) == 1,
+                "brand_name": items[0]["brand_name"] or "",
+                "same_brand": True,  # 이제 브랜드+이름이 같은 것만 묶임
                 "same_category": len(category_names) == 1,
                 "total_qty": sum((it["qty"] or 0) for it in items),
                 "items": items,
@@ -3753,14 +3770,16 @@ def api_daily_report():
                 brand_key = brand if brand else '기타'
                 grouped[cat][typ][brand_key].append((display_name, qty, extra_info))
 
-            # 카테고리 표기 순서: 기기 -> 액상 -> 일회용
+            # 카테고리 표기 순서: 기기 -> 액상 -> 일회용 -> 나머지(미분류 포함)
             CATEGORY_ORDER = ["기기", "액상", "일회용"]
 
             def build_section(types_filter):
                 """카테고리별 블록(줄 리스트)들을 만들어 리스트로 반환.
                 구분선(-----)은 여기서 넣지 않고, 호출부에서 블록 '사이'에만 넣는다."""
                 blocks = []
-                for cat in CATEGORY_ORDER:
+                # 고정 순서 먼저, 그 다음 나머지 카테고리(미분류 포함)
+                ordered_cats = CATEGORY_ORDER + [c for c in grouped if c not in CATEGORY_ORDER]
+                for cat in ordered_cats:
                     if cat not in grouped:
                         continue
                     cat_types = [t for t in grouped[cat].keys() if t in types_filter]

@@ -78,7 +78,7 @@
 <div class="toolbar">
   <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="debouncedLoad()">
   <button onclick="loadAll()" class="primary">📋 전체 보기</button>
-  <select id="filterCategory" onchange="load()"><option value="">전체 카테고리</option></select>
+  <select id="filterCategory" onchange="load()"><option value="">전체 카테고리</option><option value="__none__">미분류</option></select>
   <select id="filterBrand" onchange="load()"><option value="">전체 브랜드</option></select>
   <select id="storeSelect" onchange="onProductsStoreChange()">
     <option value="">전체 매장</option>
@@ -460,7 +460,7 @@ async function loadCategories() {
     rebuildLookupMaps();
     const opts = categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
     catSelect.innerHTML = '<option value="">미분류</option>' + opts;
-    filterSelect.innerHTML = '<option value="">전체 카테고리</option>' + opts;
+    filterSelect.innerHTML = '<option value="">전체 카테고리</option><option value="__none__">미분류</option>' + opts;
     document.querySelectorAll('.multi-category').forEach(sel => {
       const current = sel.value;
       sel.innerHTML = '<option value="">선택</option>' + opts;
@@ -599,7 +599,6 @@ async function load() {
     const hide_zero_stock = includeZero === '1' ? '0' : '1';
     const params = new URLSearchParams({ q, category_id, brand_id, sort: sortState.col, order: sortState.order, show_inactive, hide_zero_stock });
     if (store_id) params.append('store_id', store_id);
-    // apiSearch: 같은 조건을 다시 조회할 때는 서버 왕복 없이 즉시 표시 (30초 캐시)
     const result = await apiSearch('/api/products?' + params.toString());
     if (!productsSearchGuard.isCurrent(myToken)) return;
     products = result;
@@ -630,15 +629,10 @@ function render() {
 }
 
 function buildProductRow(p, idx) {
-  // idx가 없을 때(단일 행 갱신 시) 현재 tbody 행 수로 순번을 추정한다
-  if (idx === undefined) {
-    const existing = document.querySelector(`tr[data-pid="${p.id}"]`);
-    idx = existing ? (Array.from(existing.parentElement.children).indexOf(existing)) : 0;
-  }
-  const margin = (p.sale_price > 0) ? ((p.sale_price - p.cost_price) / p.sale_price * 100) : null;
-  const cardMargin = (p.sale_price > 0 && p.card_cost_price > 0) ? ((p.sale_price - p.card_cost_price) / p.sale_price * 100) : null;
-  const checked = selectedProductIds.has(p.id) ? 'checked' : '';
-  return `
+    const margin = (p.sale_price > 0) ? ((p.sale_price - p.cost_price) / p.sale_price * 100) : null;
+    const cardMargin = (p.sale_price > 0 && p.card_cost_price > 0) ? ((p.sale_price - p.card_cost_price) / p.sale_price * 100) : null;
+    const checked = selectedProductIds.has(p.id) ? 'checked' : '';
+    return `
     <tr data-pid="${p.id}" style="${p.is_active ? '' : 'opacity:0.45'}; cursor:pointer;" onclick="showProductDetail(${p.id})">
       <td onclick="event.stopPropagation();"><input type="checkbox" class="row-checkbox" value="${p.id}" ${checked} onchange="toggleProduct(${p.id})"></td>
       <td><span class="row-number">${idx + 1}</span></td>
@@ -1053,6 +1047,7 @@ async function addProduct() {
     await api('/api/products', { method: 'POST', body: JSON.stringify(payload) });
     ['f_name','f_cost','f_cardcost','f_sale','f_initial_qty','f_memo','f_brand_new'].forEach(id => document.getElementById(id).value = '');
     toast('제품을 등록했습니다.', false, '✅');
+    initialLoadDone = true;
     await load();
   } catch (e) {
     console.error('등록 오류:', e);
@@ -1068,24 +1063,16 @@ async function updateField(id, field, value) {
     payload.name = value;
   } else {
     const trimmed = String(value).trim();
+    // 🔥 값이 없을 때 화면에 '-'로 표시되는데, 이 셀을 그냥 클릭했다가 수정 없이
+    // 벗어나기만 해도 '-'가 그대로 전송되어 가격이 0원으로 저장되는 문제가 있었다.
+    // '-' 자체는 실제 입력값이 아니라 "값 없음" 표시일 뿐이므로 변경으로 취급하지 않는다.
     if (trimmed === '-' || trimmed === '') { load(); return; }
     const num = parseInt(trimmed.replace(/[^0-9-]/g, ''), 10);
     payload[field] = isNaN(num) ? 0 : num;
   }
   try {
     await api(`/api/products/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
-    // 전체 목록 재로드 대신 수정한 행만 서버에서 받아 교체한다
-    const updated = await api(`/api/products/${id}?store_id=${encodeURIComponent(document.getElementById('f_store')?.value || '')}`);
-    if (updated && !updated.error) {
-      const row = document.querySelector(`tr[data-pid="${id}"]`);
-      if (row) {
-        row.outerHTML = buildProductRow(updated);
-      } else {
-        load(); // 행을 찾지 못한 예외 케이스에서만 전체 재로드
-      }
-    } else {
-      load();
-    }
+    await load();
   } catch (e) {
     console.error('수정 오류:', e);
   }
@@ -1156,7 +1143,7 @@ async function uploadExcel(event) {
       }
       resultDiv.innerHTML = html;
       toast(`업로드 완료: ${data.success}건 성공`, data.failed > 0, data.failed > 0 ? '⚠️' : '✅');
-      if (data.success > 0) await load();
+      if (data.success > 0) { initialLoadDone = true; await load(); }
     }
   } catch (e) {
     console.error('업로드 오류:', e);
