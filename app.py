@@ -494,8 +494,15 @@ def init_db():
                 product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
                 quantity INTEGER NOT NULL,
                 unit_price INTEGER NOT NULL,
-                discount_amount INTEGER DEFAULT 0
+                discount_amount INTEGER DEFAULT 0,
+                is_service INTEGER DEFAULT 0
             );
+        """)
+        # 선결제 상품도 일반 판매처럼 서비스(무상 제공) 상태를 별도 보존한다.
+        # 기존 설치본에는 컬럼이 없으므로 안전한 마이그레이션을 함께 실행한다.
+        cur.execute("""
+            ALTER TABLE pre_order_items
+            ADD COLUMN IF NOT EXISTS is_service INTEGER DEFAULT 0;
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS brand_category_mapping (
@@ -756,6 +763,7 @@ def create_indexes():
         "CREATE INDEX IF NOT EXISTS idx_stock_store_product ON store_stock(store_id, product_id);",
         "CREATE INDEX IF NOT EXISTS idx_pre_orders_store ON pre_orders(store_id);",
         "CREATE INDEX IF NOT EXISTS idx_pre_orders_status ON pre_orders(status);",
+        "CREATE INDEX IF NOT EXISTS idx_pre_order_items_order ON pre_order_items(pre_order_id);",
         "CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name);",
         "CREATE INDEX IF NOT EXISTS idx_movements_status ON stock_movements(status);",
         # ⚡ 검색 속도용
@@ -2772,7 +2780,7 @@ def _reverse_stock_raw(store_id, product_id, ttype, quantity):
     cur.execute("UPDATE store_stock SET qty = qty - (%s) WHERE store_id=%s AND product_id=%s", (sign * quantity, store_id, product_id))
 
 
-@app.route("/api/transactions/<int:tid>", methods=["PUT"])
+@app.route("/api/transactions/<int:tid>", methods=["PUT", "PATCH"])
 def api_transaction_update(tid):
     conn = get_db()
     cur = g.cursor
@@ -2792,11 +2800,32 @@ def api_transaction_update(tid):
         return jsonify({"error": "이미 취소된 거래는 수정할 수 없습니다. 먼저 취소를 해제해주세요."}), 400
 
     data = request.get_json(force=True)
+    # 목록의 결제수단 드롭다운은 재고/수량에 영향을 주지 않는 단일 필드만 즉시 갱신한다.
+    # 기존 PUT 수정 흐름처럼 재고를 되돌렸다 재반영하지 않아 안전하고 빠르다.
+    if request.method == "PATCH":
+        payment_method = data.get("payment_method")
+        if payment_method in ("", None):
+            payment_method = None
+        elif payment_method not in ("현금", "카드", "계좌이체"):
+            return jsonify({"error": "결제수단은 현금, 카드, 계좌이체 중에서 선택해주세요."}), 400
+        try:
+            cur.execute(
+                "UPDATE stock_transactions SET payment_method=%s WHERE id=%s",
+                (payment_method, tid)
+            )
+            conn.commit()
+            return jsonify({"ok": True, "payment_method": payment_method})
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ 결제수단 수정 오류: {e}")
+            return jsonify({"error": "결제수단 수정 중 오류가 발생했습니다."}), 500
+
     new_quantity = data.get("quantity", original["quantity"])
     new_type = data.get("type", original["type"])
     new_store_id = data.get("store_id", original["store_id"])
     new_unit_price = data.get("unit_price", original["unit_price"])
     new_unit_cost = data.get("unit_cost", original["unit_cost"])
+    new_payment_method = data.get("payment_method", original["payment_method"])
     new_staff = data.get("staff", original["staff"])
     new_memo = data.get("memo", original["memo"])
     new_date_time = data.get("date_time") or original["date_time"]
@@ -2808,6 +2837,10 @@ def api_transaction_update(tid):
         assert new_quantity > 0
     except (TypeError, ValueError, AssertionError):
         return jsonify({"error": "수량은 1 이상의 숫자여야 합니다."}), 400
+    if new_payment_method in ("", None):
+        new_payment_method = None
+    elif new_payment_method not in ("현금", "카드", "계좌이체"):
+        return jsonify({"error": "결제수단은 현금, 카드, 계좌이체 중에서 선택해주세요."}), 400
 
     try:
         # 1) 기존 거래가 재고에 미친 영향을 되돌린다.
@@ -2821,10 +2854,10 @@ def api_transaction_update(tid):
         cur.execute(
             """UPDATE stock_transactions
                SET type=%s, store_id=%s, quantity=%s, unit_cost=%s, unit_price=%s,
-                   staff=%s, memo=%s, date_time=%s
+                   payment_method=%s, staff=%s, memo=%s, date_time=%s
                WHERE id=%s""",
             (new_type, new_store_id, new_quantity, new_unit_cost, new_unit_price,
-             new_staff, new_memo, new_date_time, tid)
+             new_payment_method, new_staff, new_memo, new_date_time, tid)
         )
         conn.commit()
         return jsonify({"ok": True})
@@ -6353,7 +6386,10 @@ def api_pre_orders():
 
         try:
             sql = """
-                SELECT po.*, string_agg(poi.product_id || ':' || poi.quantity || ':' || poi.unit_price || ':' || poi.discount_amount, ',') as items_raw
+                SELECT po.*, string_agg(
+                    poi.product_id || ':' || poi.quantity || ':' || poi.unit_price || ':' || poi.discount_amount || ':' || COALESCE(poi.is_service, 0),
+                    ','
+                ) as items_raw
                 FROM pre_orders po
                 LEFT JOIN pre_order_items poi ON poi.pre_order_id = po.id
                 WHERE po.store_id = %s
@@ -6373,12 +6409,13 @@ def api_pre_orders():
                 if d.get('items_raw'):
                     for item_str in d['items_raw'].split(','):
                         parts = item_str.split(':')
-                        if len(parts) == 4:
+                        if len(parts) >= 4:
                             items.append({
                                 'product_id': int(parts[0]),
                                 'quantity': int(parts[1]),
                                 'unit_price': int(parts[2]),
-                                'discount_amount': int(parts[3])
+                                'discount_amount': int(parts[3]),
+                                'is_service': bool(int(parts[4])) if len(parts) >= 5 else False
                             })
                 d['items'] = items
                 d.pop('items_raw', None)
@@ -6420,6 +6457,13 @@ def api_pre_orders():
             qty = int(item.get("quantity") or 0)
             unit_price = int(item.get("unit_price") or 0)
             discount = int(item.get("discount_amount") or 0)
+            is_service = bool(item.get("is_service", False))
+
+            # 서비스 행은 판매가/할인 입력값과 무관하게 항상 0원으로 정규화한다.
+            # 이 값을 별도 저장해 같은 제품의 정상 판매 행과 절대로 합쳐지지 않게 한다.
+            if is_service:
+                unit_price = 0
+                discount = 0
 
             if not product_id:
                 return jsonify({"error": f"{idx+1}번째 항목: 제품 ID가 없습니다."}), 400
@@ -6429,14 +6473,17 @@ def api_pre_orders():
                 return jsonify({"error": f"{idx+1}번째 항목: 단가는 0 이상이어야 합니다."}), 400
             if discount < 0:
                 return jsonify({"error": f"{idx+1}번째 항목: 할인금액은 0 이상이어야 합니다."}), 400
+            if discount > unit_price * qty:
+                return jsonify({"error": f"{idx+1}번째 항목: 할인금액이 상품 금액을 초과합니다."}), 400
 
             cur.execute("SELECT id, cost_price FROM products WHERE id = %s", (product_id,))
             product = cur.fetchone()
             if not product:
                 return jsonify({"error": f"제품 ID {product_id}가 존재하지 않습니다."}), 400
 
-            final_unit_price = int((unit_price * qty - discount) / qty) if qty > 0 else 0
-            total_amount += (unit_price * qty) - discount
+            line_total = (unit_price * qty) - discount
+            final_unit_price = line_total // qty if qty > 0 else 0
+            total_amount += line_total
 
             validated_items.append({
                 "product_id": product_id,
@@ -6444,6 +6491,8 @@ def api_pre_orders():
                 "unit_price": unit_price,
                 "discount_amount": discount,
                 "final_unit_price": final_unit_price,
+                "line_total": line_total,
+                "is_service": is_service,
                 "cost_price": product["cost_price"] or 0
             })
 
@@ -6457,19 +6506,28 @@ def api_pre_orders():
         order_id = cur.fetchone()["id"]
 
         for item in validated_items:
-            cur.execute(
-                """INSERT INTO stock_transactions
-                (product_id, store_id, type, quantity, unit_cost, unit_price, payment_method, staff, memo)
-                VALUES (%s, %s, '선결예약', %s, %s, %s, %s, NULL, %s)""",
-                (item["product_id"], store_id, item["quantity"], item["cost_price"], item["final_unit_price"],
-                 payment_method, f"선결제 대기 #{order_id}")
-            )
+            # 단가를 반올림해 수량에 곱하면 1~3원이 남는 문제가 생긴다. 최종 행 금액을
+            # 몫과 나머지로 분리해 저장해, 거래 금액 합계가 선결제 총액과 정확히 일치하게 한다.
+            base_price, remainder = divmod(item["line_total"], item["quantity"])
+            price_groups = []
+            if remainder:
+                price_groups.append((remainder, base_price + 1))
+            if item["quantity"] - remainder:
+                price_groups.append((item["quantity"] - remainder, base_price))
+            for group_qty, group_unit_price in price_groups:
+                cur.execute(
+                    """INSERT INTO stock_transactions
+                    (product_id, store_id, type, quantity, unit_cost, unit_price, payment_method, staff, memo)
+                    VALUES (%s, %s, '선결예약', %s, %s, %s, %s, NULL, %s)""",
+                    (item["product_id"], store_id, group_qty, item["cost_price"], group_unit_price,
+                     payment_method, f"선결제 대기 #{order_id}")
+                )
 
         for item in validated_items:
             cur.execute(
-                """INSERT INTO pre_order_items (pre_order_id, product_id, quantity, unit_price, discount_amount)
-                   VALUES (%s, %s, %s, %s, %s)""",
-                (order_id, item["product_id"], item["quantity"], item["unit_price"], item["discount_amount"])
+                """INSERT INTO pre_order_items (pre_order_id, product_id, quantity, unit_price, discount_amount, is_service)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (order_id, item["product_id"], item["quantity"], item["unit_price"], item["discount_amount"], int(item["is_service"]))
             )
 
         conn.commit()

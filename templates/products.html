@@ -79,6 +79,7 @@
   <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="debouncedLoad()">
   <button onclick="loadAll()" class="primary">📋 전체 보기</button>
   <select id="filterCategory" onchange="load()"><option value="">전체 카테고리</option><option value="__none__">미분류</option></select>
+  <button onclick="showUncategorizedProducts()" title="카테고리가 지정되지 않은 제품만 확인합니다.">🏷️ 미분류 보기</button>
   <select id="filterBrand" onchange="load()"><option value="">전체 브랜드</option></select>
   <select id="storeSelect" onchange="onProductsStoreChange()">
     <option value="">전체 매장</option>
@@ -86,8 +87,8 @@
   <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;">
     <input type="checkbox" id="showInactive" onchange="load()" style="width:auto;"> 비활성 제품도 보기
   </label>
-  <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;" title="검색 결과에서 재고가 0인 제품은 기본으로 숨겨집니다.">
-    <input type="checkbox" id="includeZeroStock" onchange="load()" style="width:auto;"> 재고 0도 보기
+  <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;" title="제품명 검색 결과에는 재고가 0인 제품이 자동으로 포함됩니다. 전체 목록에서도 보려면 선택하세요.">
+    <input type="checkbox" id="includeZeroStock" onchange="load()" style="width:auto;"> 재고 0도 항상 보기
   </label>
   <button onclick="downloadTemplate()">📥 템플릿</button>
   <button onclick="location.href='/maintenance/duplicates'" title="이름이 같은 제품이 두 번 등록됐는지 확인하고 하나로 합칩니다.">🔗 중복 정리</button>
@@ -541,6 +542,12 @@ function loadAll() {
   load();
 }
 
+function showUncategorizedProducts() {
+  initialLoadDone = true;
+  document.getElementById('filterCategory').value = '__none__';
+  load();
+}
+
 // ⚡ 행마다 brands.find()/categories.find()로 훑으면 (제품 2,000개 × 브랜드 300개)만큼
 // 비교가 일어나 표 그리기가 눈에 띄게 느려진다. id로 바로 찾는 Map을 만들어 쓴다.
 const _brandMap = new Map();
@@ -594,9 +601,10 @@ async function load() {
     const brand_id = document.getElementById('filterBrand').value;
     const show_inactive = document.getElementById('showInactive').checked ? '1' : '0';
     const store_id = document.getElementById('storeSelect').value;
-    // 재고 0인 제품은 기본으로 숨긴다 ("재고 0도 보기"를 켜면 함께 표시)
+    // 전체 목록은 재고 0을 기본으로 숨기지만, 제품명 검색 중에는 품절 제품도 자동 포함한다.
     const includeZero = document.getElementById('includeZeroStock')?.checked ? '1' : '0';
-    const hide_zero_stock = includeZero === '1' ? '0' : '1';
+    const isTextSearch = Boolean(q);
+    const hide_zero_stock = (isTextSearch || includeZero === '1') ? '0' : '1';
     const params = new URLSearchParams({ q, category_id, brand_id, sort: sortState.col, order: sortState.order, show_inactive, hide_zero_stock });
     if (store_id) params.append('store_id', store_id);
     const result = await apiSearch('/api/products?' + params.toString());
@@ -614,9 +622,12 @@ async function load() {
 function render() {
   const tbody = document.getElementById('tbody');
   if (!products || products.length === 0) {
-    const zeroHidden = !document.getElementById('includeZeroStock')?.checked;
+    const isTextSearch = Boolean(document.getElementById('searchBox')?.value.trim());
+    const zeroHidden = !isTextSearch && !document.getElementById('includeZeroStock')?.checked;
     const hint = zeroHidden
-      ? '재고가 0인 제품은 숨겨져 있습니다. 위 <strong>재고 0도 보기</strong>를 켜면 함께 표시됩니다.'
+      ? '전체 목록에서는 재고가 0인 제품을 숨깁니다. 위 <strong>재고 0도 항상 보기</strong>를 켜면 함께 표시됩니다.'
+      : isTextSearch
+        ? '검색 결과에는 재고가 0인 제품도 포함됩니다. 검색어 또는 필터를 확인해주세요.'
       : '우측 상단의 📤 엑셀 업로드나 + 제품 등록 버튼을 이용해 추가하세요.';
     tbody.innerHTML = `<tr><td colspan="13"><div class="empty"><span class="empty-icon">📦</span>조건에 맞는 제품이 없습니다.<div class="empty-hint">${hint}</div></div></td></tr>`;
     document.getElementById('selectAll').checked = false;
@@ -639,7 +650,7 @@ function buildProductRow(p, idx) {
       <td class="cell-editable" contenteditable="true" onblur="updateField(${p.id}, 'name', this.textContent)" onclick="event.stopPropagation();">${p.is_variant ? '<span style="color:var(--text-light); margin-right:2px;">↳</span>' : ''}${escapeHtml(p.name)}${p.variant_count > 0 ? `<span class="chip" style="background:var(--accent); color:#fff; font-size:10px; padding:1px 7px; margin-left:6px;">옵션 ${p.variant_count}개</span>` : ''}</td>
       <td>${brandTag(p.brand_id)}</td>
       <td>${categoryChip(p.category_id)}</td>
-      <td class="cell-editable" contenteditable="true" onblur="updateField(${p.id}, 'cost_price', this.textContent)" onclick="event.stopPropagation();">${fmt(p.cost_price)}</td>
+      <td class="cell-editable" contenteditable="true" onblur="updateField(${p.id}, 'cost_price', this.textContent)" onclick="event.stopPropagation();" title="제품 원가">${fmt(p.cost_price)}원</td>
       <td class="cell-editable" contenteditable="true" onblur="updateField(${p.id}, 'card_cost_price', this.textContent)" onclick="event.stopPropagation();">${fmt(p.card_cost_price)}</td>
       <td class="cell-editable" contenteditable="true" onblur="updateField(${p.id}, 'sale_price', this.textContent)" onclick="event.stopPropagation();">${fmt(p.sale_price)}</td>
       <td class="${margin !== null && margin < 20 ? 'margin-warn' : ''}">${margin !== null ? margin.toFixed(1) + '%' : '-'}</td>

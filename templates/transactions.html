@@ -179,6 +179,7 @@
         <th>매장</th>
         <th>유형</th>
         <th>수량</th>
+        <th>결제수단</th>
         <th>담당자</th>
         <th>메모</th>
         <th style="width:160px;">관리</th>
@@ -237,6 +238,15 @@
         <input type="number" id="editTransPrice" min="0" style="width:100%;">
       </div>
     </div>
+    <div class="form-field" style="margin-bottom:10px;">
+      <label>결제수단</label>
+      <select id="editTransPayment" style="width:100%;">
+        <option value="">미지정</option>
+        <option value="현금">현금</option>
+        <option value="카드">카드</option>
+        <option value="계좌이체">계좌이체</option>
+      </select>
+    </div>
     <div style="display:flex; gap:10px; margin-bottom:10px;">
       <div class="form-field" style="flex:1;">
         <label>날짜</label>
@@ -281,6 +291,37 @@ const TYPE_CLASS = {
   '입고': 'badge-success', '입고취소': 'badge-success', '이동입고': 'badge-success',
   '판매출고': 'badge-danger', '출고': 'badge-warning', '반품': 'badge-danger', '폐기': 'badge-danger', '이동출고': 'badge-danger', '선결출고': 'badge-danger',
 };
+
+const PAYMENT_METHODS = ['', '현금', '카드', '계좌이체'];
+
+function paymentMethodSelect(id, currentMethod, disabled) {
+  const normalized = PAYMENT_METHODS.includes(currentMethod) ? currentMethod : '';
+  const options = PAYMENT_METHODS.map(method => {
+    const label = method || '미지정';
+    return `<option value="${method}" ${method === normalized ? 'selected' : ''}>${label}</option>`;
+  }).join('');
+  return `<select aria-label="결제수단" data-previous-value="${normalized}" style="min-width:88px; font-size:12px; padding:4px 6px;" ${disabled ? 'disabled' : ''}
+    onchange="changeTransactionPayment(${id}, this.value, this)">${options}</select>`;
+}
+
+async function changeTransactionPayment(id, paymentMethod, selectEl) {
+  const previousValue = selectEl.dataset.previousValue ?? '';
+  selectEl.disabled = true;
+  try {
+    await api(`/api/transactions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ payment_method: paymentMethod || null })
+    });
+    selectEl.dataset.previousValue = paymentMethod || '';
+    toast('결제수단을 변경했습니다.', false, '✅');
+  } catch (e) {
+    console.error('결제수단 수정 오류:', e);
+    selectEl.value = previousValue;
+    toast(e.message || '결제수단 변경 중 오류가 발생했습니다.', true, '⚠️');
+  } finally {
+    selectEl.disabled = false;
+  }
+}
 
 // ---------- 매장 로드 ----------
 async function loadStores() {
@@ -669,7 +710,7 @@ async function undoTransaction(id) {
 
 // ---------- 목록 로드 ----------
 async function load() {
-  document.getElementById('tbody').innerHTML = '<tr><td colspan="10"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="11"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
   document.getElementById('totalCount').textContent = '...';
 
   try {
@@ -689,7 +730,7 @@ async function load() {
 
     if (data.error) {
       toast(`⚠️ ${data.error}`, true, '⚠️');
-      document.getElementById('tbody').innerHTML = `<tr><td colspan="10"><div class="empty"><span class="empty-icon">⚠️</span>${escapeHtml(data.error)}</div></td></tr>`;
+      document.getElementById('tbody').innerHTML = `<tr><td colspan="11"><div class="empty"><span class="empty-icon">⚠️</span>${escapeHtml(data.error)}</div></td></tr>`;
       document.getElementById('totalCount').textContent = '0';
       document.getElementById('pageInfo').textContent = '0 / 0';
       document.getElementById('pageInfoBottom').textContent = '0 / 0';
@@ -704,7 +745,7 @@ async function load() {
 
     const tbody = document.getElementById('tbody');
     if (rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10"><div class="empty"><span class="empty-icon">📭</span>입출고 내역이 없습니다.</div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11"><div class="empty"><span class="empty-icon">📭</span>입출고 내역이 없습니다.</div></td></tr>';
       document.getElementById('selectAll').checked = false;
       document.getElementById('selectAll').disabled = true;
     } else {
@@ -739,6 +780,7 @@ async function load() {
             <td style="font-size:12px;">${escapeHtml(t.store_name)}</td>
             <td><span class="badge ${TYPE_CLASS[t.type] || 'badge-neutral'}">${t.type}</span></td>
             <td style="font-weight:700; text-align:right; padding-right:8px;">${fmt(t.quantity)}</td>
+            <td>${paymentMethodSelect(t.id, t.payment_method, isCancelled)}</td>
             <td style="font-size:12px;">${escapeHtml(t.staff || '-')}</td>
             <td style="font-size:12px; color:${t.memo && t.memo !== '-' ? 'var(--accent)' : 'var(--text-light)'}; font-weight:${t.memo && t.memo !== '-' ? '600' : 'normal'};">${escapeHtml(t.memo || '-')}</td>
             <td>${actionCell}</td>
@@ -755,7 +797,7 @@ async function load() {
   } catch (e) {
     console.error('입출고 내역 로드 오류:', e);
     toast('내역을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
-    document.getElementById('tbody').innerHTML = '<tr><td colspan="10"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="11"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
     document.getElementById('totalCount').textContent = '0';
     document.getElementById('pageInfo').textContent = '0 / 0';
     document.getElementById('pageInfoBottom').textContent = '0 / 0';
@@ -779,6 +821,7 @@ function openEditModal(id) {
   document.getElementById('editTransType').value = t.type;
   document.getElementById('editTransQty').value = t.quantity;
   document.getElementById('editTransPrice').value = t.unit_price ?? '';
+  document.getElementById('editTransPayment').value = PAYMENT_METHODS.includes(t.payment_method) ? t.payment_method : '';
   document.getElementById('editTransStaff').value = t.staff || '';
   document.getElementById('editTransMemo').value = t.memo || '';
 
@@ -809,6 +852,7 @@ async function saveEditTransaction() {
     type: document.getElementById('editTransType').value,
     quantity: quantity,
     unit_price: document.getElementById('editTransPrice').value || null,
+    payment_method: document.getElementById('editTransPayment').value || null,
     staff: document.getElementById('editTransStaff').value || '',
     memo: document.getElementById('editTransMemo').value || null,
     date_time: `${dateVal} ${timeVal}:00`

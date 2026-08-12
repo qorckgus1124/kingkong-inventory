@@ -194,6 +194,25 @@ const PRE_CART_DISCOUNT_KEY = 'pre_cart_discount';
 let preCartDiscount = parseInt(localStorage.getItem(PRE_CART_DISCOUNT_KEY)) || 0;
 const PRE_CART_STORE_KEY = 'pre_cart_store_id';
 
+// 같은 제품이라도 서비스 여부·개별 할인·판매가가 다르면 다른 행으로 유지한다.
+// 가격 조건이 섞이는 것을 막아 1~3원 단위의 합계 오차도 원천 차단한다.
+let cartLineSequence = 0;
+
+function createCartLineKey(cartSource, productId, type) {
+  const prefix = `${productId}_${type}_${Date.now().toString(36)}_${++cartLineSequence}`;
+  let key = prefix;
+  let suffix = 1;
+  while (cartSource[key]) key = `${prefix}_${suffix++}`;
+  return key;
+}
+
+function findMergeableCartLine(cartSource, productId) {
+  return Object.entries(cartSource).find(([, item]) => (
+    item && item.product && item.product.id === productId && item.type === 'normal' &&
+    item.priceOverride == null && !(item.discount > 0)
+  ));
+}
+
 // ---------- 매장/카테고리/제품 로드 ----------
 async function loadStores() {
   console.log('📡 loadStores() 시작');
@@ -459,8 +478,14 @@ async function loadPreProducts(forceLoad = false) {
     return;
   }
 
-  // 선결제도 실제 재고에서 출고되므로 재고 0인 제품은 숨긴다
-  const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc', hide_zero_stock: '1' });
+  // 선결제 전체 보기는 출고 가능 제품만 표시하되, 검색할 때는 품절 상품도 예약 대상으로 찾는다.
+  const hasSearch = Boolean(q || brandQ);
+  const params = new URLSearchParams({
+    store_id,
+    sort: 'qty',
+    order: 'desc',
+    hide_zero_stock: hasSearch ? '0' : '1'
+  });
   if (q) params.append('q', q);
   if (brandQ) params.append('brand_q', brandQ);
 
@@ -582,11 +607,11 @@ function addQuickItem(pid) {
   const qi = quickItems.find(p => p.id === pid);
   if (!qi) return;
 
-  const key = `${pid}_normal`;
-  const existing = cart[key];
-  if (existing) {
-    existing.qty += 1;
+  const mergeTarget = findMergeableCartLine(cart, pid);
+  if (mergeTarget) {
+    mergeTarget[1].qty += 1;
   } else {
+    const key = createCartLineKey(cart, pid, 'normal');
     cart[key] = {
       product: {
         id: qi.id,
@@ -609,8 +634,8 @@ function addToCart(pid) {
   const product = products.find(p => p.id === pid);
   if (!product) return;
 
-  const key = `${pid}_normal`;
-  const existing = cart[key];
+  const mergeTarget = findMergeableCartLine(cart, pid);
+  const existing = mergeTarget ? mergeTarget[1] : null;
   const currentQty = existing ? existing.qty : 0;
   if (currentQty + 1 > product.qty) {
     toast(`재고(${product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
@@ -620,6 +645,7 @@ function addToCart(pid) {
   if (existing) {
     existing.qty += 1;
   } else {
+    const key = createCartLineKey(cart, pid, 'normal');
     cart[key] = { product, qty: 1, type: 'normal' };
   }
   saveCartToStorage(CART_STORAGE_KEY, cart);
@@ -687,9 +713,9 @@ function toggleService(key) {
   const item = cart[key];
   if (!item) return;
   const newType = item.type === 'service' ? 'normal' : 'service';
-  const newKey = `${item.product.id}_${newType}`;
+  const newKey = createCartLineKey(cart, item.product.id, newType);
   delete cart[key];
-  cart[newKey] = { product: item.product, qty: item.qty, type: newType };
+  cart[newKey] = { ...item, type: newType };
   saveCartToStorage(CART_STORAGE_KEY, cart);
   renderCart();
 }
@@ -822,10 +848,17 @@ async function checkout() {
               .forEach(r => { discountMap[r.key] = (discountMap[r.key] || 0) + 1; });
   }
 
-  const items = lineData.map(l => {
-    if (l.isService) return { product_id: l.item.product.id, quantity: l.qty, unit_price: 0 };
+  // 거래는 1개 단위로 분할해 반올림 오차 없이 최종 금액을 그대로 저장한다.
+  const items = lineData.flatMap(l => {
+    if (l.isService) return [{ product_id: l.item.product.id, quantity: l.qty, unit_price: 0 }];
     const finalLineTotal = Math.max(l.lineTotal - (discountMap[l.key] || 0), 0);
-    return { product_id: l.item.product.id, quantity: l.qty, unit_price: l.qty > 0 ? Math.round(finalLineTotal / l.qty) : 0 };
+    const baseUnitPrice = Math.floor(finalLineTotal / l.qty);
+    const remainder = finalLineTotal % l.qty;
+    return Array.from({ length: l.qty }, (_, index) => ({
+      product_id: l.item.product.id,
+      quantity: 1,
+      unit_price: baseUnitPrice + (index < remainder ? 1 : 0)
+    }));
   });
 
   const payload = {
@@ -860,11 +893,11 @@ function addToPreCart(pid) {
   const product = preProducts.find(p => p.id === pid);
   if (!product) return;
 
-  const key = `${pid}_pre`;
-  const existing = preCart[key];
-  if (existing) {
-    existing.qty += 1;
+  const mergeTarget = findMergeableCartLine(preCart, pid);
+  if (mergeTarget) {
+    mergeTarget[1].qty += 1;
   } else {
+    const key = createCartLineKey(preCart, pid, 'normal');
     preCart[key] = { product, qty: 1, type: 'normal' };
   }
   saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
@@ -891,6 +924,35 @@ function setPreQty(key, value) {
   renderPreCart();
 }
 
+function setPrePriceOverride(key, value) {
+  const item = preCart[key];
+  if (!item) return;
+  const v = parseInt(value, 10);
+  item.priceOverride = (isNaN(v) || v < 0) ? null : v;
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+}
+
+function setPreDiscount(key, value) {
+  const item = preCart[key];
+  if (!item) return;
+  const v = parseInt(value, 10);
+  item.discount = (isNaN(v) || v < 0) ? 0 : v;
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+}
+
+function togglePreService(key) {
+  const item = preCart[key];
+  if (!item) return;
+  const newType = item.type === 'service' ? 'normal' : 'service';
+  const newKey = createCartLineKey(preCart, item.product.id, newType);
+  delete preCart[key];
+  preCart[newKey] = { ...item, type: newType };
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
+}
+
 function removeFromPreCart(key) {
   delete preCart[key];
   saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
@@ -905,7 +967,7 @@ function updatePreCartDiscount(value) {
   renderPreCart();
 }
 
-// 선결제 장바구니 렌더링 (전체 할인 한 번만 적용)
+// 선결제 장바구니 렌더링 — 일반 판매와 동일하게 개별 가격·할인·서비스를 적용한다.
 function renderPreCart() {
   const list = document.getElementById('pre_cartList');
   let items = Object.entries(preCart);
@@ -924,18 +986,32 @@ function renderPreCart() {
 
   let subtotal = 0;
   list.innerHTML = items.map(([key, item]) => {
-    const unitPrice = item.product.sale_price || 0;
+    const unitPrice = item.priceOverride != null ? item.priceOverride : (item.product.sale_price || 0);
     const qty = item.qty;
-    const lineTotal = unitPrice * qty;
+    const isService = item.type === 'service';
+    const lineDiscount = isService ? 0 : Math.min(item.discount || 0, unitPrice * qty);
+    const lineTotal = isService ? 0 : Math.max(unitPrice * qty - lineDiscount, 0);
     subtotal += lineTotal;
 
     return `
       <div class="cart-item">
         <div class="ci-name">
           ${escapeHtml(item.product.name)}
-          <div class="ci-sub">${fmt(unitPrice)}원 × ${qty} = ${fmt(lineTotal)}원</div>
+          ${isService ? ' <span style="color:var(--text-light); font-size:11px;">(서비스)</span>' : ''}
+          <div class="ci-sub">${fmt(unitPrice)}원 × ${qty}${lineDiscount > 0 ? ` - ${fmt(lineDiscount)}원` : ''} = ${fmt(lineTotal)}원</div>
+          ${!isService ? `
+          <div class="ci-edit-row">
+            <label>단가 <input type="number" class="ci-price-input" value="${unitPrice}" min="0"
+                   onchange="setPrePriceOverride('${key}', this.value)" onfocus="this.select()"></label>
+            <label>할인 <input type="number" class="ci-discount-input" value="${item.discount || ''}" placeholder="0" min="0"
+                   onchange="setPreDiscount('${key}', this.value)" onfocus="this.select()"></label>
+          </div>` : ''}
         </div>
         <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+          <button onclick="togglePreService('${key}')"
+                  style="padding:4px 12px; font-size:13px; border-radius:var(--radius-pill); border:1px solid ${isService ? 'var(--accent)' : 'var(--border)'}; background:${isService ? 'var(--accent)' : 'var(--card-bg)'}; color:${isService ? '#fff' : 'var(--text)'}; cursor:pointer; min-width:60px;">
+            ${isService ? '✅ 서비스' : '서비스'}
+          </button>
           <div class="qty-ctrl">
             <button onclick="changePreQty('${key}', -1)">-</button>
             <input type="number" class="qty-input" value="${qty}" min="1" 
@@ -981,24 +1057,40 @@ async function checkoutPreOrder() {
     return;
   }
 
-  // 상품 합계 계산 후, 할인은 장바구니 마지막 상품 한 줄에만 적용한다.
-  // (이때도 unit_price는 정상가 그대로 보내고, discount_amount로만 할인을 따로 기록하므로
-  //  서버에 저장되는 '개당 가격'은 줄어들지 않는다.)
-  const subtotal = entries.reduce((sum, [, item]) => sum + (item.product.sale_price || 0) * item.qty, 0);
-  const discount = Math.min(Math.max(preCartDiscount || 0, 0), subtotal);
-  const discountTargetKey = entries.length > 0 ? entries[entries.length - 1][0] : null;
-
-  const items = entries.map(([key, item]) => {
-    const unitPrice = item.product.sale_price || 0;
+  const lineData = entries.map(([key, item]) => {
     const qty = item.qty;
-    const itemDiscount = (key === discountTargetKey) ? discount : 0;
-    return {
-      product_id: item.product.id,
-      quantity: qty,
-      unit_price: unitPrice,
-      discount_amount: itemDiscount
-    };
+    const isService = item.type === 'service';
+    const unitPrice = item.priceOverride != null ? item.priceOverride : (item.product.sale_price || 0);
+    const itemDiscount = isService ? 0 : Math.min(item.discount || 0, unitPrice * qty);
+    const lineTotal = isService ? 0 : Math.max(unitPrice * qty - itemDiscount, 0);
+    return { key, item, qty, isService, unitPrice, itemDiscount, lineTotal };
   });
+  const subtotal = lineData.reduce((sum, line) => sum + line.lineTotal, 0);
+  const discount = Math.min(Math.max(preCartDiscount || 0, 0), subtotal);
+
+  // 전체 할인은 실제 행 금액 비율로 나눠 각 행에 기록한다. 남는 1원은 소수부가 큰 행부터 배정한다.
+  const discountMap = {};
+  const discountableLines = lineData.filter(line => !line.isService && line.lineTotal > 0);
+  if (discount > 0 && subtotal > 0 && discountableLines.length > 0) {
+    let allocated = 0;
+    const remainders = discountableLines.map(line => {
+      const exact = discount * (line.lineTotal / subtotal);
+      const floored = Math.floor(exact);
+      discountMap[line.key] = floored;
+      allocated += floored;
+      return { key: line.key, rem: exact - floored };
+    });
+    remainders.sort((a, b) => b.rem - a.rem).slice(0, discount - allocated)
+      .forEach(line => { discountMap[line.key] = (discountMap[line.key] || 0) + 1; });
+  }
+
+  const items = lineData.map(line => ({
+    product_id: line.item.product.id,
+    quantity: line.qty,
+    unit_price: line.isService ? 0 : line.unitPrice,
+    discount_amount: line.isService ? 0 : line.itemDiscount + (discountMap[line.key] || 0),
+    is_service: line.isService
+  }));
 
   const customer_name = document.getElementById('pre_customer_name').value.trim();
   const customer_phone = document.getElementById('pre_customer_phone').value.trim();
