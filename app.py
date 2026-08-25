@@ -3807,7 +3807,9 @@ def api_daily_report():
                             extra_info = f"({store} 이동)"
 
                 # 이동 정보가 없고, 메모가 있으면 메모를 괄호로 표시 (시스템 메모 제외)
-                if not extra_info and memo and memo not in ('초기입고',):
+                # '선결출고'의 memo는 "선결제 확정 출고 (주문 #N)" 형태의 내부 감사용 문구일 뿐,
+                # 보고서에 그대로 노출할 필요가 없는 시스템 메모라 여기서도 제외한다.
+                if not extra_info and memo and memo not in ('초기입고',) and typ != '선결출고':
                     extra_info = f"({memo})"
 
                 if typ in ['판매취소', '입고취소']:
