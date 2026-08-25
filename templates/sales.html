@@ -117,20 +117,22 @@
         </div>
         <button class="primary" style="width:100%; padding:12px; font-size:16px;" onclick="checkoutPreOrder()">💳 선결제 등록</button>
       </div>
-      <!-- 중간: 스크롤 영역 (장바구니 아이템) -->
+      <!-- 중간: 스크롤 영역 (장바구니 아이템) - 담긴 제품 수만큼 늘어나고, 넘치면 이 안에서만 스크롤된다 -->
       <div class="cart-items-wrap">
         <div id="pre_cartList"><div class="cart-empty">담긴 제품이 없습니다</div></div>
       </div>
-      <!-- 하단: 출고 대기 목록 (스크롤) -->
-      <div style="margin-top:12px; border-top:2px solid var(--border); padding-top:8px; flex-shrink:0; max-height:200px; overflow-y:auto;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <strong style="color:var(--text);">📦 출고 대기</strong>
-          <button onclick="loadPreOrders()" style="font-size:12px; padding:2px 8px;">🔄 새로고침</button>
-        </div>
-        <div id="pre_order_list" style="font-size:13px;">
-          <div style="color:var(--text-light); text-align:center; padding:10px 0;">출고 대기 주문이 없습니다.</div>
-        </div>
-      </div>
+    </div>
+  </div>
+
+  <!-- 출고 대기 목록: sale-right(장바구니)와 별도의 전체 폭 카드로 분리해,
+       장바구니 칸이 이 목록 높이에 밀려서 작아지지 않도록 한다. -->
+  <div class="card" style="margin-top:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <strong style="color:var(--text);">📦 출고 대기</strong>
+      <button onclick="loadPreOrders()" style="font-size:12px; padding:2px 8px;">🔄 새로고침</button>
+    </div>
+    <div id="pre_order_list" style="font-size:13px; max-height:320px; overflow-y:auto;">
+      <div style="color:var(--text-light); text-align:center; padding:10px 0;">출고 대기 주문이 없습니다.</div>
     </div>
   </div>
 </div>
@@ -1162,8 +1164,7 @@ async function loadPreOrders() {
         </div>
         <div style="font-size:12px; margin:2px 0; color:var(--text);">
           ${o.items.map(item => {
-            const product = products.find(p => p.id === item.product_id);
-            const pname = product ? product.name : `#${item.product_id}`;
+            const pname = item.product_name || `#${item.product_id}`;
             return `<div>${escapeHtml(pname)} × ${item.quantity} = ${fmt((item.unit_price * item.quantity) - (item.discount_amount || 0))}원</div>`;
           }).join('')}
         </div>

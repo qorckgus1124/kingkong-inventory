@@ -3441,7 +3441,7 @@ def _brand_sales_rows(cur, store_id, date_str, brand_names, category_name=None):
     cat_filter = " AND c.name = %s" if category_name else ""
     sql = f"""
         SELECT p.name as product_name,
-               COALESCE(SUM(CASE WHEN t.type = '판매출고' THEN t.quantity ELSE 0 END), 0)
+               COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결출고') THEN t.quantity ELSE 0 END), 0)
                - COALESCE(SUM(CASE WHEN t.type = '판매취소' THEN t.quantity ELSE 0 END), 0) as qty
         FROM stock_transactions t
         JOIN products p ON p.id = t.product_id
@@ -3450,7 +3450,7 @@ def _brand_sales_rows(cur, store_id, date_str, brand_names, category_name=None):
         WHERE b.name IN ({placeholders})
           AND t.store_id = %s
           AND date(t.date_time) = %s
-          AND t.type IN ('판매출고', '판매취소')
+          AND t.type IN ('판매출고', '판매취소', '선결출고')
           {cat_filter}
         GROUP BY p.id, p.name
     """
@@ -3584,17 +3584,19 @@ def api_daily_sales_summary():
             "total": sum(elfbar_buckets.values()) + sum(joinone_buckets.values())
         })
 
-        # ---- 칠렉스 바이브(카테고리=일회용, 브랜드=칠렉스 바이브 킷/팟) : 킷/팟 ----
-        vibe_kit_rows = _brand_sales_rows(cur, store_id, date_str, ["칠렉스 바이브 킷"], category_name="일회용")
-        vibe_pod_rows = _brand_sales_rows(cur, store_id, date_str, ["칠렉스 바이브 팟"], category_name="일회용")
-        vibe_kit_qty = sum(q for _, q in vibe_kit_rows)
-        vibe_pod_qty = sum(q for _, q in vibe_pod_rows)
+        # ---- 칠렉스 바이브(카테고리=일회용, 브랜드=칠렉스 바이브) : 킷/팟 ----
+        # 🔥 버그 수정: 브랜드가 "칠렉스 바이브 킷"/"칠렉스 바이브 팟"으로 나뉘어 있는 줄 알고
+        # 브랜드명 자체로 필터링했으나, 실제로는 카오린과 같은 구조 — 브랜드는 "칠렉스 바이브"
+        # 하나이고 제품명 앞에 "킷"/"팟"이 붙어서 구분된다. 브랜드명이 애초에 존재하지 않아
+        # 매칭이 하나도 안 되고 있었다.
+        vibe_rows = _brand_sales_rows(cur, store_id, date_str, ["칠렉스 바이브"], category_name="일회용")
+        vibe_buckets = _bucket_by_prefix(vibe_rows, [("바이브 킷", ["킷"]), ("바이브 팟", ["팟"])])
         sections.append({
             "key": "chillex_vibe",
             "title": f"[{date_label} {store_name} 칠렉스 바이브]",
-            "lines": [{"label": "바이브 킷", "qty": vibe_kit_qty}, {"label": "바이브 팟", "qty": vibe_pod_qty}],
+            "lines": [{"label": "바이브 킷", "qty": vibe_buckets["바이브 킷"]}, {"label": "바이브 팟", "qty": vibe_buckets["바이브 팟"]}],
             "extra_lines": [],
-            "total": vibe_kit_qty + vibe_pod_qty
+            "total": vibe_buckets["바이브 킷"] + vibe_buckets["바이브 팟"]
         })
 
         # ---- 카오린 전자담배(카테고리=일회용, 브랜드=카오린) : 킷/팟/배터리 ----
@@ -3675,7 +3677,7 @@ def api_daily_report():
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             LEFT JOIN stock_transactions t2 ON t2.id = t.ref_transaction_id
-            WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고', '출고')
+            WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고', '출고', '선결출고')
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
               AND EXTRACT(HOUR FROM t.date_time) < 16
@@ -3707,7 +3709,7 @@ def api_daily_report():
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             LEFT JOIN stock_transactions t2 ON t2.id = t.ref_transaction_id
-            WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고', '출고')
+            WHERE t.type IN ('판매출고', '판매취소', '입고', '입고취소', '이동출고', '이동입고', '출고', '선결출고')
               AND date(t.date_time) = date(%s)
               AND t.store_id = %s
               AND EXTRACT(HOUR FROM t.date_time) >= 16
@@ -3879,7 +3881,7 @@ def api_daily_report():
             lines.append("-" * 26)
 
             lines.append("[출고]")
-            out_blocks = build_section(['판매출고', '출고', '이동출고'])
+            out_blocks = build_section(['판매출고', '출고', '이동출고', '선결출고'])
             if out_blocks:
                 for i, block in enumerate(out_blocks):
                     if i > 0:
@@ -6403,6 +6405,7 @@ def api_pre_orders():
             cur.execute(sql, params)
             rows = cur.fetchall()
             result = []
+            all_product_ids = set()
             for r in rows:
                 d = dict(r)
                 items = []
@@ -6410,8 +6413,10 @@ def api_pre_orders():
                     for item_str in d['items_raw'].split(','):
                         parts = item_str.split(':')
                         if len(parts) >= 4:
+                            pid = int(parts[0])
+                            all_product_ids.add(pid)
                             items.append({
-                                'product_id': int(parts[0]),
+                                'product_id': pid,
                                 'quantity': int(parts[1]),
                                 'unit_price': int(parts[2]),
                                 'discount_amount': int(parts[3]),
@@ -6420,6 +6425,22 @@ def api_pre_orders():
                 d['items'] = items
                 d.pop('items_raw', None)
                 result.append(d)
+
+            # 🔥 화면에서 어떤 제품인지 바로 보이도록, 항목별 product_id에 해당하는
+            # 제품명을 한꺼번에 조회해 붙여준다. 프론트가 자체 캐시(products 배열)에
+            # 의존하면, 선결제 탭만 사용해 그 캐시가 비어있는 경우 제품명 대신
+            # "#123" 같은 ID만 보이는 문제가 있었다 (products 배열은 일반 판매 탭
+            # 검색에서만 채워짐).
+            if all_product_ids:
+                cur.execute(
+                    "SELECT id, name FROM products WHERE id = ANY(%s)",
+                    (list(all_product_ids),)
+                )
+                name_map = {row["id"]: row["name"] for row in cur.fetchall()}
+                for d in result:
+                    for item in d["items"]:
+                        item["product_name"] = name_map.get(item["product_id"], f"#{item['product_id']}")
+
             return jsonify(result)
         except Exception as e:
             print(f"❌ 선결제 주문 조회 오류: {e}")
