@@ -14,14 +14,15 @@
     <input type="text" id="brandFilter" placeholder="🏷️ 브랜드명 검색" autocomplete="off" oninput="onRecommendBrandInput()" style="width:100%;">
     <div class="autocomplete-list" id="recommendBrandAcList"></div>
   </div>
-  <label style="font-size:12px; color:var(--text-light);">기간:
-    <select id="daysSelect" onchange="changePage(0)">
-      <option value="7">7일</option>
-      <option value="14" selected>14일</option>
-      <option value="30">30일</option>
-      <option value="60">60일</option>
-    </select>
+  <label style="font-size:12px; color:var(--text-light);">판매 조회 기간:
+    <input type="number" id="daysSelect" value="14" min="1" max="365" style="width:60px;" onchange="changePage(0)">일
   </label>
+  <div class="quick-days-wrap" style="display:inline-flex; gap:4px;">
+    <button type="button" class="page-btn" onclick="setDays(7)">7일</button>
+    <button type="button" class="page-btn" onclick="setDays(14)">14일</button>
+    <button type="button" class="page-btn" onclick="setDays(30)">30일</button>
+    <button type="button" class="page-btn" onclick="setDays(60)">60일</button>
+  </div>
   <label style="font-size:12px; color:var(--text-light);">목표 재고일수:
     <input type="number" id="targetDays" value="7" style="width:60px;" onchange="changePage(0)">
   </label>
@@ -200,6 +201,12 @@ function changePage(delta) {
   loadRecommend();
 }
 
+// ---------- 기간 프리셋 버튼 ----------
+function setDays(n) {
+  document.getElementById('daysSelect').value = n;
+  changePage(0);
+}
+
 // ---------- 데이터 로드 ----------
 async function loadRecommend() {
   console.log('🔄 발주 추천 데이터 로드 시작...');
@@ -209,7 +216,7 @@ async function loadRecommend() {
   document.getElementById('totalCount').textContent = '...';
 
   const store_id = document.getElementById('storeSelect').value;
-  const days = document.getElementById('daysSelect').value;
+  const days = document.getElementById('daysSelect').value || 14;
   const target_days = document.getElementById('targetDays').value || 7;
   const category_id = document.getElementById('categoryFilter').value;
   const brand_q = document.getElementById('brandFilter').value.trim();
