@@ -178,6 +178,7 @@
         <th>브랜드</th>
         <th>매장</th>
         <th>유형</th>
+        <th>단가</th>
         <th>수량</th>
         <th>결제수단</th>
         <th>담당자</th>
@@ -585,24 +586,31 @@ function toggleAllCheckboxes() {
   const checked = document.getElementById('selectAll').checked;
   document.querySelectorAll('.row-checkbox:not(:disabled)').forEach(cb => {
     cb.checked = checked;
-    const id = parseInt(cb.value);
-    if (checked) {
+    const ids = String(cb.value).split(',').map(Number);
+    ids.forEach(id => {
+      if (checked) {
+        selectedIds.add(id);
+      } else {
+        selectedIds.delete(id);
+      }
+    });
+  });
+  updateSelectedUI();
+}
+
+// idsCsv: 체크박스 value에 담긴 "12,13" 같은 콤마 구분 id 목록
+// (병합된 줄은 실제로 여러 건의 거래를 대표하므로, 체크박스 하나로 전체를 함께 선택/해제한다)
+function toggleCheckbox(idsCsv) {
+  const cb = document.querySelector(`.row-checkbox[value="${idsCsv}"]`);
+  if (!cb) return;
+  const ids = String(idsCsv).split(',').map(Number);
+  ids.forEach(id => {
+    if (cb.checked) {
       selectedIds.add(id);
     } else {
       selectedIds.delete(id);
     }
   });
-  updateSelectedUI();
-}
-
-function toggleCheckbox(id) {
-  const cb = document.querySelector(`.row-checkbox[value="${id}"]`);
-  if (!cb) return;
-  if (cb.checked) {
-    selectedIds.add(id);
-  } else {
-    selectedIds.delete(id);
-  }
   updateSelectedUI();
   updateSelectAll();
 }
@@ -708,9 +716,155 @@ async function undoTransaction(id) {
   }
 }
 
+// 병합해서 보여준 줄(같은 가격+상품명+시간)을 취소할 때는 그 줄에 속한 거래를 모두 취소한다.
+async function undoTransactionGroup(ids) {
+  if (ids.length === 1) return undoTransaction(ids[0]);
+  if (!confirm(`이 줄은 ${ids.length}건이 합쳐진 항목입니다. 전체를 취소하시겠습니까? (재고가 원래대로 복구됩니다)`)) return;
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      await api(`/api/transactions/${id}/undo`, { method: 'POST' });
+      ok++;
+    } catch (e) {
+      console.error('거래 취소 오류:', e);
+      fail++;
+    }
+  }
+  toast(`✅ ${ok}건 취소 완료${fail ? ` (실패 ${fail}건)` : ''}`, fail > 0, fail ? '⚠️' : '✅');
+  load();
+}
+
+// 병합해서 보여준 줄을 삭제할 때는 그 줄에 속한 거래를 한 번에 영구 삭제한다.
+async function deleteGroupTransactions(ids) {
+  const msg = ids.length === 1
+    ? '이 판매 내역을 영구 삭제하시겠습니까? (재고는 복구되고, 기록은 완전히 사라져 복구할 수 없습니다)'
+    : `이 줄은 ${ids.length}건이 합쳐진 항목입니다. 전체를 영구 삭제하시겠습니까? (재고는 복구되고, 기록은 완전히 사라져 복구할 수 없습니다)`;
+  if (!confirm(msg)) return;
+  try {
+    const result = await api('/api/transactions/cancel_batch', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    });
+    if (result.cancelled > 0) {
+      toast(`✅ ${result.cancelled}건 삭제되었습니다.`, false, '✅');
+      load();
+    } else {
+      toast('삭제할 수 없는 항목입니다.', true, '⚠️');
+    }
+  } catch (e) {
+    console.error('삭제 오류:', e);
+    toast('삭제 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ---------- 결제 묶음(배치) 단위로 묶고, 같은 가격+상품명+시간 항목은 수량 합산 ----------
+// 판매 등록에서 결제 한 번에 나간 상품들, 혹은 입출고 등록에서 같은 시각에
+// 한꺼번에 등록한 상품들을 "결제 묶음" 하나로 묶어서 보여준다.
+// 같은 묶음 안에서 상품+단가가 완전히 같은 줄은 수량을 합쳐서 한 줄로 표시한다.
+function buildTransactionBatches(rows) {
+  const batches = [];
+  let current = null;
+  for (const t of rows) {
+    // 같은 매장·유형·분단위 시각이면 같은 결제/등록 묶음으로 본다.
+    const minuteKey = fmtDateTime(t.date_time);
+    const batchKey = `${t.store_id}|${t.type}|${minuteKey}`;
+    if (!current || current.key !== batchKey) {
+      current = {
+        key: batchKey,
+        date_time: t.date_time,
+        type: t.type,
+        store_name: t.store_name,
+        payment_method: t.payment_method,
+        staff: t.staff,
+        items: [],
+        itemMap: {}
+      };
+      batches.push(current);
+    }
+    const isCancelled = t.is_cancelled || false;
+    const itemKey = `${t.product_id}|${t.unit_price}|${isCancelled}`;
+    let item = current.itemMap[itemKey];
+    if (!item) {
+      item = {
+        product_id: t.product_id,
+        product_name: t.product_name,
+        brand_name: t.brand_name,
+        brand_color: t.brand_color,
+        unit_price: t.unit_price,
+        type: t.type,
+        quantity: 0,
+        ids: [],
+        memo: null,
+        payment_method: t.payment_method,
+        is_cancelled: isCancelled
+      };
+      current.itemMap[itemKey] = item;
+      current.items.push(item);
+    }
+    item.quantity += t.quantity;
+    item.ids.push(t.id);
+    if (t.memo && t.memo !== '-') item.memo = t.memo;
+  }
+  return batches;
+}
+
+function renderTransactionBatch(batch) {
+  const headerRow = `
+    <tr class="batch-header-row" style="background:var(--card-bg);">
+      <td colspan="12" style="font-size:12px; color:var(--text-light); padding:6px 8px;">
+        <span style="white-space:nowrap; font-weight:600; color:var(--text);">${fmtDateTime(batch.date_time)}</span>
+        &nbsp;·&nbsp;<span class="badge ${TYPE_CLASS[batch.type] || 'badge-neutral'}">${batch.type}</span>
+        &nbsp;·&nbsp;${escapeHtml(batch.store_name)}
+        ${batch.staff ? `&nbsp;·&nbsp;담당 ${escapeHtml(batch.staff)}` : ''}
+      </td>
+    </tr>
+  `;
+  const itemRows = batch.items.map(item => {
+    const cancellable = ['입고', '판매출고', '반품', '폐기'].includes(item.type);
+    const isCancelled = item.is_cancelled;
+    const singleId = item.ids.length === 1 ? item.ids[0] : null;
+    const idsCsv = item.ids.join(',');
+    const idsArr = `[${idsCsv}]`;
+    const editableTypes = ['입고', '판매출고', '반품', '폐기', '조정', '실사조정', '이동출고', '이동입고', '선결예약'];
+    const isEditable = !isCancelled && singleId && editableTypes.includes(item.type);
+    const editBtn = isEditable ? `<button onclick="openEditModal(${singleId})" style="margin-right:4px;">✏️ 수정</button>` : '';
+    const deleteBtn = (!isCancelled && ['판매출고', '출고'].includes(item.type))
+      ? `<button class="danger" title="바로 삭제 (재고 복구 후 영구삭제)" onclick="deleteGroupTransactions(${idsArr})">🗑️ 삭제</button>`
+      : '';
+    let actionCell = '';
+    if (isCancelled) {
+      actionCell = editBtn + '<span style="font-size:11px; color:var(--text-light);">취소됨</span>';
+    } else if (cancellable) {
+      actionCell = editBtn + `<button class="danger" onclick="undoTransactionGroup(${idsArr})">취소</button>` + deleteBtn;
+    } else {
+      actionCell = editBtn + deleteBtn + (editBtn || deleteBtn ? '' : '<span style="font-size:11px; color:var(--text-light);">-</span>');
+    }
+    const mergedNote = item.ids.length > 1
+      ? ` <span style="font-size:10px; color:var(--text-light);" title="같은 가격의 동일 상품 ${item.ids.length}건을 합쳤습니다">×${item.ids.length}건 합계</span>`
+      : '';
+    return `
+      <tr style="${isCancelled ? 'opacity:0.45;' : ''}">
+        <td><input type="checkbox" class="row-checkbox" value="${idsCsv}" onchange="toggleCheckbox('${idsCsv}')" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : ''}></td>
+        <td></td>
+        <td style="font-weight:${['입고','이동입고'].includes(item.type) ? '600' : 'normal'};">${escapeHtml(item.product_name)}${mergedNote}</td>
+        <td>${item.brand_name ? `<span class="brand-tag" style="background:${item.brand_color || '#8a8f98'};">${escapeHtml(item.brand_name)}</span>` : '-'}</td>
+        <td></td>
+        <td></td>
+        <td style="font-size:12px; text-align:right; padding-right:8px;">${fmt(item.unit_price)}</td>
+        <td style="font-weight:700; text-align:right; padding-right:8px;">${fmt(item.quantity)}</td>
+        <td>${singleId ? paymentMethodSelect(singleId, item.payment_method, isCancelled) : `<span style="font-size:11px; color:var(--text-light);">${escapeHtml(item.payment_method || '-')}</span>`}</td>
+        <td></td>
+        <td style="font-size:12px; color:${item.memo ? 'var(--accent)' : 'var(--text-light)'}; font-weight:${item.memo ? '600' : 'normal'};">${escapeHtml(item.memo || '-')}</td>
+        <td>${actionCell}</td>
+      </tr>
+    `;
+  }).join('');
+  return headerRow + itemRows;
+}
+
 // ---------- 목록 로드 ----------
 async function load() {
-  document.getElementById('tbody').innerHTML = '<tr><td colspan="11"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
   document.getElementById('totalCount').textContent = '...';
 
   try {
@@ -730,7 +884,7 @@ async function load() {
 
     if (data.error) {
       toast(`⚠️ ${data.error}`, true, '⚠️');
-      document.getElementById('tbody').innerHTML = `<tr><td colspan="11"><div class="empty"><span class="empty-icon">⚠️</span>${escapeHtml(data.error)}</div></td></tr>`;
+      document.getElementById('tbody').innerHTML = `<tr><td colspan="12"><div class="empty"><span class="empty-icon">⚠️</span>${escapeHtml(data.error)}</div></td></tr>`;
       document.getElementById('totalCount').textContent = '0';
       document.getElementById('pageInfo').textContent = '0 / 0';
       document.getElementById('pageInfoBottom').textContent = '0 / 0';
@@ -745,7 +899,7 @@ async function load() {
 
     const tbody = document.getElementById('tbody');
     if (rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="11"><div class="empty"><span class="empty-icon">📭</span>입출고 내역이 없습니다.</div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">📭</span>입출고 내역이 없습니다.</div></td></tr>';
       document.getElementById('selectAll').checked = false;
       document.getElementById('selectAll').disabled = true;
     } else {
@@ -754,39 +908,8 @@ async function load() {
       document.getElementById('selectAll').checked = false;
       updateSelectedUI();
 
-      tbody.innerHTML = rows.map(t => {
-        const cancellable = ['입고', '판매출고', '반품', '폐기'].includes(t.type);
-        const isCancelled = t.is_cancelled || false;
-        let actionCell = '';
-        const editableTypes = ['입고', '판매출고', '반품', '폐기', '조정', '실사조정', '이동출고', '이동입고', '선결예약'];
-        const isEditable = !isCancelled && editableTypes.includes(t.type);
-        const editBtn = isEditable ? `<button onclick="openEditModal(${t.id})" style="margin-right:4px;">✏️ 수정</button>` : '';
-        const deleteBtn = (!isCancelled && ['판매출고', '출고'].includes(t.type))
-          ? `<button class="danger" title="바로 삭제 (재고 복구 후 영구삭제)" onclick="deleteSingleTransaction(${t.id})">🗑️ 삭제</button>`
-          : '';
-        if (isCancelled) {
-          actionCell = editBtn + '<span style="font-size:11px; color:var(--text-light);">취소됨</span>';
-        } else if (cancellable) {
-          actionCell = editBtn + `<button class="danger" onclick="undoTransaction(${t.id})">취소</button>` + deleteBtn;
-        } else {
-          actionCell = editBtn + deleteBtn + (editBtn || deleteBtn ? '' : '<span style="font-size:11px; color:var(--text-light);">-</span>');
-        }
-        return `
-          <tr style="${isCancelled ? 'opacity:0.45;' : ''}">
-            <td><input type="checkbox" class="row-checkbox" value="${t.id}" onchange="toggleCheckbox(${t.id})" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : ''}></td>
-            <td style="white-space:nowrap; font-size:12px;">${fmtDateTime(t.date_time)}</td>
-            <td style="font-weight:${['입고','이동입고'].includes(t.type) ? '600' : 'normal'};">${escapeHtml(t.product_name)}</td>
-            <td>${t.brand_name ? `<span class="brand-tag" style="background:${t.brand_color || '#8a8f98'};">${escapeHtml(t.brand_name)}</span>` : '-'}</td>
-            <td style="font-size:12px;">${escapeHtml(t.store_name)}</td>
-            <td><span class="badge ${TYPE_CLASS[t.type] || 'badge-neutral'}">${t.type}</span></td>
-            <td style="font-weight:700; text-align:right; padding-right:8px;">${fmt(t.quantity)}</td>
-            <td>${paymentMethodSelect(t.id, t.payment_method, isCancelled)}</td>
-            <td style="font-size:12px;">${escapeHtml(t.staff || '-')}</td>
-            <td style="font-size:12px; color:${t.memo && t.memo !== '-' ? 'var(--accent)' : 'var(--text-light)'}; font-weight:${t.memo && t.memo !== '-' ? '600' : 'normal'};">${escapeHtml(t.memo || '-')}</td>
-            <td>${actionCell}</td>
-          </tr>
-        `;
-      }).join('');
+      const batches = buildTransactionBatches(rows);
+      tbody.innerHTML = batches.map(renderTransactionBatch).join('');
     }
 
     document.getElementById('totalCount').textContent = totalItems;
@@ -797,7 +920,7 @@ async function load() {
   } catch (e) {
     console.error('입출고 내역 로드 오류:', e);
     toast('내역을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
-    document.getElementById('tbody').innerHTML = '<tr><td colspan="11"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
     document.getElementById('totalCount').textContent = '0';
     document.getElementById('pageInfo').textContent = '0 / 0';
     document.getElementById('pageInfoBottom').textContent = '0 / 0';
