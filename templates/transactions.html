@@ -148,6 +148,7 @@
       <option value="조정">조정</option>
     </select>
     <button onclick="batchStatusChange()">유형 일괄 변경</button>
+    <button onclick="openBulkEditModal()">✏️ 일괄 수정</button>
     <button class="danger" onclick="deleteSelected()">🗑️ 선택 삭제</button>
     <button onclick="clearTxnSelection()">선택 해제</button>
   </div>
@@ -208,8 +209,9 @@
       <h3 style="margin:0; color:var(--text);">✏️ 입출고 내역 수정</h3>
       <span style="cursor:pointer; font-size:18px; color:var(--text-light);" onclick="closeEditModal()">✕</span>
     </div>
-    <input type="hidden" id="editTransId">
-    <div style="font-size:13px; color:var(--text-light); margin-bottom:10px;" id="editTransProductName"></div>
+    <input type="hidden" id="editTransIds">
+    <div style="font-size:13px; color:var(--text-light); margin-bottom:6px;" id="editTransProductName"></div>
+    <div style="font-size:11px; color:var(--warning, #d9a441); margin-bottom:10px;" id="editTransGroupNote"></div>
     <div class="form-field" style="margin-bottom:10px;">
       <label>매장</label>
       <select id="editTransStore" style="width:100%;"></select>
@@ -272,6 +274,75 @@
     <div style="display:flex; justify-content:flex-end; gap:8px;">
       <button onclick="closeEditModal()">취소</button>
       <button class="primary" onclick="saveEditTransaction()">💾 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 8-2. 선택 항목 일괄 수정 모달 -->
+<!-- ============================================================ -->
+<div class="modal-overlay" id="bulkEditModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:var(--card-bg); border:1px solid var(--glass-border); border-radius:var(--radius-card); padding:24px; width:min(440px, 92vw); max-height:90vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 style="margin:0; color:var(--text);">✏️ 선택 항목 일괄 수정</h3>
+      <span style="cursor:pointer; font-size:18px; color:var(--text-light);" onclick="closeBulkEditModal()">✕</span>
+    </div>
+    <div style="font-size:13px; color:var(--text-light); margin-bottom:10px;" id="bulkEditCount"></div>
+    <div style="font-size:11px; color:var(--text-light); margin-bottom:14px;">
+      💡 체크한 항목만 선택한 모든 건에 동일하게 적용됩니다. 수량·단가는 건마다 달라서 일괄 수정 대상에서 뺐어요 — 필요하면 각 줄의 ✏️ 수정을 이용해주세요.
+    </div>
+
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyStore" onchange="document.getElementById('bulkEditStore').disabled=!this.checked">
+      <label style="width:70px; margin:0;">매장</label>
+      <select id="bulkEditStore" style="flex:1;" disabled></select>
+    </div>
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyType" onchange="document.getElementById('bulkEditType').disabled=!this.checked">
+      <label style="width:70px; margin:0;">유형</label>
+      <select id="bulkEditType" style="flex:1;" disabled>
+        <option value="입고">입고</option>
+        <option value="판매출고">판매출고</option>
+        <option value="출고">출고 (매출 제외)</option>
+        <option value="반품">반품</option>
+        <option value="폐기">폐기</option>
+        <option value="조정">조정</option>
+        <option value="실사조정">실사조정</option>
+        <option value="이동출고">이동출고</option>
+        <option value="이동입고">이동입고</option>
+        <option value="선결예약">선결예약</option>
+      </select>
+    </div>
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyPayment" onchange="document.getElementById('bulkEditPayment').disabled=!this.checked">
+      <label style="width:70px; margin:0;">결제수단</label>
+      <select id="bulkEditPayment" style="flex:1;" disabled>
+        <option value="">미지정</option>
+        <option value="현금">현금</option>
+        <option value="카드">카드</option>
+        <option value="계좌이체">계좌이체</option>
+      </select>
+    </div>
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyDate" onchange="document.getElementById('bulkEditDate').disabled=!this.checked; document.getElementById('bulkEditTime').disabled=!this.checked;">
+      <label style="width:70px; margin:0;">날짜/시간</label>
+      <input type="date" id="bulkEditDate" style="flex:1;" disabled>
+      <input type="time" id="bulkEditTime" style="flex:1;" disabled>
+    </div>
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyStaff" onchange="document.getElementById('bulkEditStaff').disabled=!this.checked">
+      <label style="width:70px; margin:0;">담당자</label>
+      <input type="text" id="bulkEditStaff" style="flex:1;" disabled>
+    </div>
+    <div style="margin-bottom:14px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyMemo" onchange="document.getElementById('bulkEditMemo').disabled=!this.checked">
+      <label style="width:70px; margin:0;">메모</label>
+      <input type="text" id="bulkEditMemo" style="flex:1;" disabled>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="closeBulkEditModal()">취소</button>
+      <button class="primary" onclick="saveBulkEdit()">💾 일괄 저장</button>
     </div>
   </div>
 </div>
@@ -822,12 +893,12 @@ function renderTransactionBatch(batch) {
   const itemRows = batch.items.map(item => {
     const cancellable = ['입고', '판매출고', '반품', '폐기'].includes(item.type);
     const isCancelled = item.is_cancelled;
-    const singleId = item.ids.length === 1 ? item.ids[0] : null;
     const idsCsv = item.ids.join(',');
     const idsArr = `[${idsCsv}]`;
+    const singleId = item.ids.length === 1 ? item.ids[0] : null;
     const editableTypes = ['입고', '판매출고', '반품', '폐기', '조정', '실사조정', '이동출고', '이동입고', '선결예약'];
-    const isEditable = !isCancelled && singleId && editableTypes.includes(item.type);
-    const editBtn = isEditable ? `<button onclick="openEditModal(${singleId})" style="margin-right:4px;">✏️ 수정</button>` : '';
+    const isEditable = !isCancelled && editableTypes.includes(item.type);
+    const editBtn = isEditable ? `<button onclick="openEditModal(${idsArr})" style="margin-right:4px;">✏️ 수정</button>` : '';
     const deleteBtn = (!isCancelled && ['판매출고', '출고'].includes(item.type))
       ? `<button class="danger" title="바로 삭제 (재고 복구 후 영구삭제)" onclick="deleteGroupTransactions(${idsArr})">🗑️ 삭제</button>`
       : '';
@@ -930,19 +1001,26 @@ async function load() {
 // ================================================================
 // ✏️ 입출고 내역 수정
 // ================================================================
-function openEditModal(id) {
-  const t = currentRows.find(r => r.id === id);
-  if (!t) { toast('내역을 찾을 수 없습니다.', true, '⚠️'); return; }
+// ids: 병합된 줄이면 그 줄에 속한 여러 거래 id, 단일 줄이면 요소 1개짜리 배열
+function openEditModal(ids) {
+  if (!Array.isArray(ids)) ids = [ids];
+  const rows = ids.map(id => currentRows.find(r => r.id === id)).filter(Boolean);
+  if (rows.length === 0) { toast('내역을 찾을 수 없습니다.', true, '⚠️'); return; }
+  const t = rows[0];
+  const totalQty = rows.reduce((s, r) => s + r.quantity, 0);
 
-  document.getElementById('editTransId').value = t.id;
+  document.getElementById('editTransIds').value = JSON.stringify(ids);
   document.getElementById('editTransProductName').textContent = `${t.product_name} (${t.store_name})`;
+  document.getElementById('editTransGroupNote').textContent = rows.length > 1
+    ? `⚠️ 같은 상품·가격·시간의 거래 ${rows.length}건이 합쳐진 항목입니다. 수량을 바꾸면 원래 비율대로 각 건에 나눠서 반영되고, 나머지 항목은 ${rows.length}건 전체에 동일하게 적용됩니다.`
+    : '';
 
   const storeSel = document.getElementById('editTransStore');
   storeSel.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
   storeSel.value = t.store_id;
 
   document.getElementById('editTransType').value = t.type;
-  document.getElementById('editTransQty').value = t.quantity;
+  document.getElementById('editTransQty').value = totalQty;
   document.getElementById('editTransPrice').value = t.unit_price ?? '';
   document.getElementById('editTransPayment').value = PAYMENT_METHODS.includes(t.payment_method) ? t.payment_method : '';
   document.getElementById('editTransStaff').value = t.staff || '';
@@ -960,20 +1038,22 @@ function closeEditModal() {
 }
 
 async function saveEditTransaction() {
-  const id = document.getElementById('editTransId').value;
+  let ids;
+  try { ids = JSON.parse(document.getElementById('editTransIds').value || '[]'); } catch (e) { ids = []; }
+  if (!ids.length) { toast('수정할 항목을 찾을 수 없습니다.', true, '⚠️'); return; }
+
   const dateVal = document.getElementById('editTransDate').value;
   const timeVal = document.getElementById('editTransTime').value || '00:00';
-  const quantity = parseInt(document.getElementById('editTransQty').value, 10);
+  const totalQuantity = parseInt(document.getElementById('editTransQty').value, 10);
 
-  if (!dateVal || !quantity || quantity <= 0) {
+  if (!dateVal || !totalQuantity || totalQuantity <= 0) {
     toast('날짜와 수량(1 이상)을 확인해주세요.', true, '⚠️');
     return;
   }
 
-  const payload = {
+  const basePayload = {
     store_id: document.getElementById('editTransStore').value,
     type: document.getElementById('editTransType').value,
-    quantity: quantity,
     unit_price: document.getElementById('editTransPrice').value || null,
     payment_method: document.getElementById('editTransPayment').value || null,
     staff: document.getElementById('editTransStaff').value || '',
@@ -981,15 +1061,119 @@ async function saveEditTransaction() {
     date_time: `${dateVal} ${timeVal}:00`
   };
 
-  try {
-    await api(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
-    toast('입출고 내역이 수정되었습니다.', false, '✅');
+  // 병합된 여러 건이면, 원래 각 건의 수량 비율대로 새 총수량을 나눠서 적용한다.
+  // (마지막 건이 나머지를 받아서 합계가 입력한 총수량과 정확히 같아지도록 맞춘다)
+  const rows = ids.map(id => currentRows.find(r => r.id === id)).filter(Boolean);
+  const origTotal = rows.reduce((s, r) => s + r.quantity, 0) || ids.length;
+  const qtyById = {};
+  let remaining = totalQuantity;
+  ids.forEach((id, idx) => {
+    if (idx === ids.length - 1) {
+      qtyById[id] = remaining;
+      return;
+    }
+    const row = rows.find(r => r.id === id);
+    const origQty = row ? row.quantity : Math.round(origTotal / ids.length);
+    const q = Math.max(1, Math.round(origQty * totalQuantity / origTotal));
+    qtyById[id] = q;
+    remaining -= q;
+  });
+  if (qtyById[ids[ids.length - 1]] < 1) {
+    toast('입력한 수량이 너무 적어 항목별로 1개 이상씩 나눌 수 없습니다. 더 큰 값을 입력해주세요.', true, '⚠️');
+    return;
+  }
+
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      await api(`/api/transactions/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...basePayload, quantity: qtyById[id] })
+      });
+      ok++;
+    } catch (e) {
+      console.error('수정 오류:', e);
+      fail++;
+    }
+  }
+  if (ok > 0) {
+    toast(`✅ ${ok}건 수정 완료${fail ? ` (실패 ${fail}건)` : ''}`, fail > 0, fail ? '⚠️' : '✅');
     closeEditModal();
     load();
-  } catch (e) {
-    console.error('수정 오류:', e);
-    toast(e.message || '수정 중 오류가 발생했습니다.', true, '⚠️');
+  } else {
+    toast('수정 중 오류가 발생했습니다.', true, '⚠️');
   }
+}
+
+// ---------- 선택 항목 일괄 수정 ----------
+function openBulkEditModal() {
+  if (selectedIds.size === 0) { toast('수정할 항목을 선택해주세요.', true, '⚠️'); return; }
+  document.getElementById('bulkEditCount').textContent = `선택한 ${selectedIds.size}건에 적용됩니다.`;
+
+  const storeSel = document.getElementById('bulkEditStore');
+  storeSel.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+
+  ['Store', 'Type', 'Payment', 'Date', 'Staff', 'Memo'].forEach(f => {
+    document.getElementById(`bulkApply${f}`).checked = false;
+  });
+  document.getElementById('bulkEditStore').disabled = true;
+  document.getElementById('bulkEditType').disabled = true;
+  document.getElementById('bulkEditPayment').disabled = true;
+  document.getElementById('bulkEditDate').disabled = true;
+  document.getElementById('bulkEditTime').disabled = true;
+  document.getElementById('bulkEditStaff').disabled = true;
+  document.getElementById('bulkEditMemo').disabled = true;
+  document.getElementById('bulkEditStaff').value = '';
+  document.getElementById('bulkEditMemo').value = '';
+  document.getElementById('bulkEditDate').value = '';
+  document.getElementById('bulkEditTime').value = '';
+
+  document.getElementById('bulkEditModal').style.display = 'flex';
+}
+
+function closeBulkEditModal() {
+  document.getElementById('bulkEditModal').style.display = 'none';
+}
+
+async function saveBulkEdit() {
+  const ids = Array.from(selectedIds);
+  if (ids.length === 0) { toast('수정할 항목을 선택해주세요.', true, '⚠️'); return; }
+
+  const payload = {};
+  if (document.getElementById('bulkApplyStore').checked) payload.store_id = document.getElementById('bulkEditStore').value;
+  if (document.getElementById('bulkApplyType').checked) payload.type = document.getElementById('bulkEditType').value;
+  if (document.getElementById('bulkApplyPayment').checked) payload.payment_method = document.getElementById('bulkEditPayment').value || null;
+  if (document.getElementById('bulkApplyDate').checked) {
+    const dateVal = document.getElementById('bulkEditDate').value;
+    const timeVal = document.getElementById('bulkEditTime').value || '00:00';
+    if (!dateVal) { toast('날짜를 입력해주세요.', true, '⚠️'); return; }
+    payload.date_time = `${dateVal} ${timeVal}:00`;
+  }
+  if (document.getElementById('bulkApplyStaff').checked) payload.staff = document.getElementById('bulkEditStaff').value || '';
+  if (document.getElementById('bulkApplyMemo').checked) payload.memo = document.getElementById('bulkEditMemo').value || null;
+
+  if (Object.keys(payload).length === 0) {
+    toast('적용할 항목을 하나 이상 체크해주세요.', true, '⚠️');
+    return;
+  }
+  if (!confirm(`선택한 ${ids.length}건에 위 내용을 일괄 적용하시겠습니까?`)) return;
+
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      await api(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      ok++;
+    } catch (e) {
+      console.error('일괄 수정 오류:', e);
+      fail++;
+    }
+  }
+  toast(`✅ ${ok}건 일괄 수정 완료${fail ? ` (실패 ${fail}건)` : ''}`, fail > 0, fail ? '⚠️' : '✅');
+  closeBulkEditModal();
+  selectedIds.clear();
+  document.getElementById('selectAll').checked = false;
+  updateSelectedUI();
+  load();
 }
 
 // ================================================================
