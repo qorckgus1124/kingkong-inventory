@@ -3434,14 +3434,17 @@ def api_movements():
 
 def _brand_sales_rows(cur, store_id, date_str, brand_names, category_name=None):
     """지정한 브랜드(들)의 특정 매장/날짜 순 판매 수량(제품명별)을 반환한다.
-    category_name을 지정하면 해당 카테고리(예: '일회용')에 속한 제품만 집계한다."""
+    category_name을 지정하면 해당 카테고리(예: '일회용')에 속한 제품만 집계한다.
+    집계 대상 유형: 판매출고, 선결출고(선결제 확정), 출고(매출 제외) → 모두 더하고,
+    판매취소는 뺀다. 반품/폐기/조정/실사조정/이동출고/이동입고/입고는 판매가 아니므로
+    금일 보고 목록 집계에 포함하지 않는다."""
     if not brand_names:
         return []
     placeholders = ",".join(["%s"] * len(brand_names))
     cat_filter = " AND c.name = %s" if category_name else ""
     sql = f"""
         SELECT p.name as product_name,
-               COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결출고') THEN t.quantity ELSE 0 END), 0)
+               COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결출고', '출고') THEN t.quantity ELSE 0 END), 0)
                - COALESCE(SUM(CASE WHEN t.type = '판매취소' THEN t.quantity ELSE 0 END), 0) as qty
         FROM stock_transactions t
         JOIN products p ON p.id = t.product_id
@@ -3450,7 +3453,7 @@ def _brand_sales_rows(cur, store_id, date_str, brand_names, category_name=None):
         WHERE b.name IN ({placeholders})
           AND t.store_id = %s
           AND date(t.date_time) = %s
-          AND t.type IN ('판매출고', '판매취소', '선결출고')
+          AND t.type IN ('판매출고', '판매취소', '선결출고', '출고')
           {cat_filter}
         GROUP BY p.id, p.name
     """
@@ -3558,12 +3561,22 @@ def api_daily_sales_summary():
         # 플릭은 0%/1% 두 종류만 존재 → 오늘 판매가 없어도 0개로 항상 표시
         for _pct in ["0%", "1%"]:
             flik_buckets.setdefault(_pct, 0)
+        # ---- 플릭 액상(카테고리=액상, 브랜드=플릭) : 제품명 0%/1%로 그룹화 ----
+        # 일회용 플릭 슬림과 같은 카드에 "액상 0%"/"액상 1%"로 합산해서 표시한다.
+        flik_liquid_rows = _brand_sales_rows(cur, store_id, date_str, ["플릭"], category_name="액상")
+        flik_liquid_buckets = _bucket_by_percent(flik_liquid_rows)
+        for _pct in ["0%", "1%"]:
+            flik_liquid_buckets.setdefault(_pct, 0)
+        flik_liquid_extra = [
+            {"label": f"액상 {k}", "qty": v}
+            for k, v in sorted(flik_liquid_buckets.items(), key=lambda x: int(x[0].rstrip('%')))
+        ]
         sections.append({
             "key": "flik",
             "title": f"[{date_label} {store_name} 플릭]",
             "lines": [{"label": k, "qty": v} for k, v in sorted(flik_buckets.items(), key=lambda x: int(x[0].rstrip('%')))],
-            "extra_lines": [],
-            "total": sum(flik_buckets.values())
+            "extra_lines": flik_liquid_extra,
+            "total": sum(flik_buckets.values()) + sum(flik_liquid_buckets.values())
         })
 
         # ---- 엘프바(카테고리=일회용, 브랜드=엘프바 25K 아이스킹 / 엘프바 조인원) ----
@@ -3607,6 +3620,11 @@ def api_daily_sales_summary():
             ("팟", ["팟"]),
             ("배터리", ["배터리"]),
         ])
+        # ---- 카오린 액상(카테고리=액상, 브랜드=카오린) ----
+        # 액상은 맛별로 제품명이 다양해 킷/팟/배터리처럼 접두어로 나누지 않고,
+        # "액상" 한 줄로 합산해서 같은 카드에 함께 표시한다.
+        kaorin_liquid_rows = _brand_sales_rows(cur, store_id, date_str, ["카오린"], category_name="액상")
+        kaorin_liquid_qty = sum((qty or 0) for _name, qty in kaorin_liquid_rows)
         sections.append({
             "key": "kaorin",
             "title": f"[{date_label} {store_name} 카오린 전자담배]",
@@ -3615,8 +3633,10 @@ def api_daily_sales_summary():
                 {"label": "팟", "qty": kaorin_buckets["팟"]},
                 {"label": "배터리", "qty": kaorin_buckets["배터리"]},
             ],
-            "extra_lines": [],
-            "total": kaorin_buckets["킷"] + kaorin_buckets["팟"] + kaorin_buckets["배터리"]
+            "extra_lines": [
+                {"label": "액상", "qty": kaorin_liquid_qty},
+            ],
+            "total": kaorin_buckets["킷"] + kaorin_buckets["팟"] + kaorin_buckets["배터리"] + kaorin_liquid_qty
         })
 
         return jsonify({
