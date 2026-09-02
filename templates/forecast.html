@@ -21,7 +21,10 @@
       <option value="180">180일 (6개월)</option>
     </select>
   </label>
-  <input type="text" id="forecastSearch" placeholder="🔍 제품명 검색" autocomplete="off" oninput="changePage(0)" style="width:180px; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
+  <span class="search-field" style="width:180px;">
+    <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+    <input type="text" id="forecastSearch" placeholder="제품명 검색" autocomplete="off" oninput="changePage(0)">
+  </span>
   <select id="sortSelect" onchange="changePage(0)">
     <option value="shortage" selected>부족량 큰 순</option>
     <option value="recommend_qty">추천 발주량 많은 순</option>

@@ -12,11 +12,16 @@
 
 <div class="card">
   <div class="form-grid" style="grid-template-columns: 2fr 1fr;">
-    <div class="form-field"><label>검색 (이름/연락처)</label><input type="text" id="searchInput" placeholder="이름 또는 연락처" oninput="render()"></div>
+    <div class="form-field"><label>검색 (이름/연락처)</label>
+      <span class="search-field">
+        <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+        <input type="text" id="searchInput" placeholder="이름 또는 연락처" oninput="render()">
+      </span>
+    </div>
     <div class="form-field">
       <label>&nbsp;</label>
       <label style="display:flex; align-items:center; gap:6px; font-weight:normal; cursor:pointer; height:38px;">
-        <input type="checkbox" id="vipOnly" onchange="load()" style="width:auto;"> 단골/VIP만 보기
+        <input type="checkbox" id="vipOnly" onchange="load()"> 단골/VIP만 보기
       </label>
     </div>
   </div>

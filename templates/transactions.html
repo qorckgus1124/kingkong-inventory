@@ -86,7 +86,10 @@
     <!-- 좌: 제품 그리드 -->
     <div class="sale-left">
       <div class="toolbar" style="margin-bottom:12px; padding:0;">
-        <input type="text" id="txnSearchBox" placeholder="🔍 제품명 검색" autocomplete="off" oninput="onTxnSearchInput()" style="width:220px;">
+        <span class="search-field" style="width:220px;">
+          <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+          <input type="text" id="txnSearchBox" placeholder="제품명 검색" autocomplete="off" oninput="onTxnSearchInput()">
+        </span>
         <button onclick="txnLoadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
       </div>
       <div class="product-grid" id="txnProductGrid" style="grid-template-columns:repeat(auto-fill,minmax(130px,1fr));">

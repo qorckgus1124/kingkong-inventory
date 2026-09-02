@@ -17,8 +17,14 @@
     <select id="f_store" onchange="onStoreChange()">
       <option value="">매장 선택</option>
     </select>
-    <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="onSearchInput()" style="width:220px;">
-    <input type="text" id="brandSearchBox" placeholder="🏷️ 브랜드명 검색" autocomplete="off" oninput="onBrandSearchInput()" style="width:160px;">
+    <span class="search-field" style="width:220px;">
+      <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+      <input type="text" id="searchBox" placeholder="제품명 또는 브랜드명 검색" autocomplete="off" oninput="onSearchInput()">
+    </span>
+    <span class="search-field" style="width:160px;">
+      <svg class="i3d" aria-hidden="true"><use href="#i3d-tags"></use></svg>
+      <input type="text" id="brandSearchBox" placeholder="브랜드명 검색" autocomplete="off" oninput="onBrandSearchInput()">
+    </span>
     <button onclick="loadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
   </div>
 
@@ -67,8 +73,14 @@
     <select id="pre_store" onchange="onPreStoreChange()">
       <option value="">매장 선택</option>
     </select>
-    <input type="text" id="pre_searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="onPreSearchInput()" style="width:220px;">
-    <input type="text" id="pre_brandSearchBox" placeholder="🏷️ 브랜드명 검색" autocomplete="off" oninput="onPreBrandSearchInput()" style="width:160px;">
+    <span class="search-field" style="width:220px;">
+      <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+      <input type="text" id="pre_searchBox" placeholder="제품명 또는 브랜드명 검색" autocomplete="off" oninput="onPreSearchInput()">
+    </span>
+    <span class="search-field" style="width:160px;">
+      <svg class="i3d" aria-hidden="true"><use href="#i3d-tags"></use></svg>
+      <input type="text" id="pre_brandSearchBox" placeholder="브랜드명 검색" autocomplete="off" oninput="onPreBrandSearchInput()">
+    </span>
     <button onclick="loadAllPreProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
   </div>
 

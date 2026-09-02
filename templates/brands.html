@@ -39,7 +39,10 @@
     <option value="pending" selected>⏳ 대기</option>
     <option value="approved">✅ 승인</option>
   </select>
-  <input type="text" id="searchBrand" placeholder="🔍 브랜드 검색" autocomplete="off" oninput="loadBrands()">
+  <span class="search-field">
+    <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+    <input type="text" id="searchBrand" placeholder="브랜드 검색" autocomplete="off" oninput="loadBrands()">
+  </span>
   <button onclick="exportBrandsCSV()" class="primary">📥 CSV 내보내기</button>
   <button onclick="document.getElementById('brandCsvUpload').click()">📤 CSV 업로드</button>
   <input type="file" id="brandCsvUpload" accept=".csv" style="display:none" onchange="uploadBrandsCSV(event)">

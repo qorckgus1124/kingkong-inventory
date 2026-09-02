@@ -9,6 +9,7 @@
   --border: #E4E4E7;
   --border-strong: #D4D4D8;
   --accent: #3B6FE0;
+  --accent-rgb: 59, 111, 224;
   --accent-hover: #2F5BC4;
   --accent-light: #EBF1FD;
   --danger: #D6473C;
@@ -43,6 +44,7 @@ body.dark-mode {
   --border: #2C2C31;
   --border-strong: #3A3A40;
   --accent: #6E96F0;
+  --accent-rgb: 110, 150, 240;
   --accent-hover: #86A8F5;
   --accent-light: #1E2A44;
   --danger: #F0665C;
@@ -236,8 +238,98 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(79, 143, 247, 0.15);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
 }
+
+/* ---------- 체크박스 ---------- */
+/* 브라우저 기본 체크박스 대신 현재 디자인(둥근 사각형, accent 컬러, i3d 톤)에
+   맞춘 커스텀 체크박스. 크기를 키워 터치/클릭 타깃을 넉넉하게 확보한다. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 19px;
+  height: 19px;
+  margin: 0;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--input-bg);
+  cursor: pointer;
+  position: relative;
+  vertical-align: -4px;
+}
+input[type="checkbox"]:hover:not(:disabled):not(:checked) {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.2);
+}
+input[type="checkbox"]:checked,
+input[type="checkbox"]:indeterminate {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type="checkbox"]:checked:hover:not(:disabled),
+input[type="checkbox"]:indeterminate:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 5px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+input[type="checkbox"]:indeterminate::after {
+  content: "";
+  position: absolute;
+  left: 3.5px;
+  top: 8px;
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  background: #fff;
+}
+input[type="checkbox"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* 체크박스 옆에 라벨 텍스트가 붙는 경우 기본 정렬을 살짝 보정 */
+label input[type="checkbox"] { margin-right: 2px; }
+
+/* ---------- 검색창 (아이콘 포함) ---------- */
+/* 사이드바 nav-search와 동일한 톤으로 통일한 검색 인풋. placeholder 안에
+   이모지를 직접 넣는 대신 i3d 아이콘을 왼쪽에 배치한다. */
+.search-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.form-field .search-field { display: flex; width: 100%; }
+.search-field .i3d {
+  position: absolute;
+  left: 10px;
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  pointer-events: none;
+  z-index: 1;
+  transition: color var(--transition);
+}
+.search-field input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding-left: 32px;
+}
+.search-field:focus-within .i3d { color: var(--accent); }
 
 /* 숫자 입력칸: 스크롤/화살표 스피너로 값이 실수로 바뀌는 것을 막기 위해
    기본 스피너 화살표를 숨긴다. (스크롤 방지 자체는 common.js에서 처리) */
@@ -735,10 +827,7 @@ body.dark-mode .cat-tab.active { background: var(--accent); color: #fff; border-
 .mobile-bottom-nav a span { font-size: 10px; margin-top: 2px; }
 
 /* ---------- 체크박스 ---------- */
-.row-checkbox { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
-.row-checkbox:disabled { cursor: not-allowed; opacity: 0.5; }
-#selectAll { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
-#selectAll:disabled { cursor: not-allowed; opacity: 0.5; }
+/* #selectAll 크기/색상도 공통 input[type="checkbox"] 스타일을 그대로 사용 */
 #deleteSelectedBtn { transition: all 0.2s; }
 #deleteSelectedBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 #selectedCount { font-size: 13px; color: var(--text-light); }
@@ -894,6 +983,8 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
     min-height: 44px;
   }
   .toolbar input[type="text"] { width: 140px; }
+  .toolbar .search-field { width: 140px !important; }
+  .toolbar .search-field input { padding-left: 32px; }
 
   .table-wrap {
     overflow-x: auto;
@@ -922,6 +1013,7 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
     padding: 10px;
     height: 44px;
   }
+  .form-field .search-field input { padding-left: 32px; }
 
   .sale-layout { flex-direction: column; gap: 12px; }
   .sale-right {
@@ -1208,6 +1300,7 @@ body.dark-mode .floating-panel .fp-btn:hover { background: #5a8fff; }
   .form-grid { grid-template-columns: 1fr !important; }
   h1 { font-size: 18px; }
   .toolbar input[type="text"] { width: 100px; }
+  .toolbar .search-field { width: 100px !important; }
   table { font-size: 12px; min-width: 400px; }
   table th, table td { padding: 6px 8px; }
   .mobile-bottom-nav a .nav-icon { font-size: 20px; }

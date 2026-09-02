@@ -30,7 +30,10 @@
 
 <div class="card">
   <div class="toolbar" style="margin-bottom:12px;">
-    <input type="text" id="searchBox" placeholder="🔍 제품명 검색" autocomplete="off" oninput="onSearchInput()" style="width:220px;">
+    <span class="search-field" style="width:220px;">
+      <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+      <input type="text" id="searchBox" placeholder="제품명 검색" autocomplete="off" oninput="onSearchInput()">
+    </span>
     <button onclick="loadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
     <button onclick="doBatchTransfer()" class="primary" id="batchTransferBtn" disabled>🚚 선택된 제품 이동</button>
     <span style="font-size:12px; color:var(--text-light);" id="selectedCount">0개 선택</span>

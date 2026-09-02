@@ -14,8 +14,11 @@
     <div class="form-field"><label>매장</label><select id="storeSelect" onchange="onStocktakeStoreChange()"></select></div>
     <div class="form-field"><label>실사 담당자</label><input type="text" id="staffInput" placeholder="이름"></div>
     <div class="form-field">
-      <label>🔍 제품 검색</label>
-      <input type="text" id="searchInput" placeholder="제품명 또는 브랜드로 검색" oninput="onFilterChange()">
+      <label>제품 검색</label>
+      <span class="search-field">
+        <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+        <input type="text" id="searchInput" placeholder="제품명 또는 브랜드로 검색" oninput="onFilterChange()">
+      </span>
     </div>
     <div class="form-field"><label>정렬</label>
       <select id="sortSelect" onchange="onFilterChange()">

@@ -76,7 +76,10 @@
 
 <!-- 제품 목록 툴바 -->
 <div class="toolbar">
-  <input type="text" id="searchBox" placeholder="🔍 제품명 또는 브랜드명 검색" autocomplete="off" oninput="debouncedLoad()">
+  <span class="search-field">
+    <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+    <input type="text" id="searchBox" placeholder="제품명 또는 브랜드명 검색" autocomplete="off" oninput="debouncedLoad()">
+  </span>
   <button onclick="loadAll()" class="primary">📋 전체 보기</button>
   <select id="filterCategory" onchange="load()"><option value="">전체 카테고리</option><option value="__none__">미분류</option></select>
   <button onclick="showUncategorizedProducts()" title="카테고리가 지정되지 않은 제품만 확인합니다.">🏷️ 미분류 보기</button>
@@ -85,10 +88,10 @@
     <option value="">전체 매장</option>
   </select>
   <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;">
-    <input type="checkbox" id="showInactive" onchange="load()" style="width:auto;"> 비활성 제품도 보기
+    <input type="checkbox" id="showInactive" onchange="load()"> 비활성 제품도 보기
   </label>
   <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;" title="제품명 검색 결과에는 재고가 0인 제품이 자동으로 포함됩니다. 전체 목록에서도 보려면 선택하세요.">
-    <input type="checkbox" id="includeZeroStock" onchange="load()" style="width:auto;"> 재고 0도 항상 보기
+    <input type="checkbox" id="includeZeroStock" onchange="load()"> 재고 0도 항상 보기
   </label>
   <button onclick="downloadTemplate()">📥 템플릿</button>
   <button onclick="location.href='/maintenance/duplicates'" title="이름이 같은 제품이 두 번 등록됐는지 확인하고 하나로 합칩니다.">🔗 중복 정리</button>
