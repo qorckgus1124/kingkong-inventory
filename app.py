@@ -4829,7 +4829,17 @@ def api_dashboard():
                 "this_month_start": month_start.strftime("%Y-%m-%d"),
                 "this_month_end": today.strftime("%Y-%m-%d"),
                 "last_month_start": last_month_start.strftime("%Y-%m-%d"),
-                "last_month_end": last_month_today.strftime("%Y-%m-%d")
+                "last_month_end": last_month_today.strftime("%Y-%m-%d"),
+                "full_month_comparison": {
+                    "prev2_month_quantity": {},
+                    "last_month_full_quantity": {},
+                    "prev2_month_brand_quantity": {},
+                    "last_month_full_brand_quantity": {},
+                    "prev2_month_start": "",
+                    "prev2_month_end": "",
+                    "last_month_full_start": "",
+                    "last_month_full_end": ""
+                }
             },
             "forecast": {
                 "total_days": 0,
@@ -5071,6 +5081,43 @@ def api_dashboard():
             default_response["category_comparison"]["this_month_brand_quantity"] = this_month_brand_qty
             default_response["category_comparison"]["last_month_brand_quantity"] = last_month_brand_qty
 
+            # ---- 저저번달 vs 저번달 (둘 다 1일~말일까지 온전한 한 달 기준) 비교 ----
+            # "이번달"은 오늘까지밖에 없어서 아직 다 안 끝난 달과 비교하면 왜곡되므로,
+            # 이미 끝난 두 달(저저번달/저번달)만 같은 조건(1일~말일)으로 비교한다.
+            last_month_full_end_day = calendar.monthrange(last_month_start.year, last_month_start.month)[1]
+            last_month_full_end = last_month_start.replace(day=last_month_full_end_day)
+
+            if last_month_start.month == 1:
+                prev2_month_start = last_month_start.replace(year=last_month_start.year - 1, month=12, day=1)
+            else:
+                prev2_month_start = last_month_start.replace(month=last_month_start.month - 1, day=1)
+            prev2_month_end_day = calendar.monthrange(prev2_month_start.year, prev2_month_start.month)[1]
+            prev2_month_end = prev2_month_start.replace(day=prev2_month_end_day)
+
+            prev2_month_qty = get_category_quantity(
+                prev2_month_start.strftime("%Y-%m-%d"), prev2_month_end.strftime("%Y-%m-%d"))
+            last_month_full_qty = get_category_quantity(
+                last_month_start.strftime("%Y-%m-%d"), last_month_full_end.strftime("%Y-%m-%d"))
+
+            prev2_month_brand_qty = {}
+            last_month_full_brand_qty = {}
+            for label, names in disposable_brand_groups.items():
+                prev2_month_brand_qty[label] = get_brand_quantity(
+                    prev2_month_start.strftime("%Y-%m-%d"), prev2_month_end.strftime("%Y-%m-%d"), names)
+                last_month_full_brand_qty[label] = get_brand_quantity(
+                    last_month_start.strftime("%Y-%m-%d"), last_month_full_end.strftime("%Y-%m-%d"), names)
+
+            default_response["category_comparison"]["full_month_comparison"] = {
+                "prev2_month_quantity": prev2_month_qty,
+                "last_month_full_quantity": last_month_full_qty,
+                "prev2_month_brand_quantity": prev2_month_brand_qty,
+                "last_month_full_brand_quantity": last_month_full_brand_qty,
+                "prev2_month_start": prev2_month_start.strftime("%Y-%m-%d"),
+                "prev2_month_end": prev2_month_end.strftime("%Y-%m-%d"),
+                "last_month_full_start": last_month_start.strftime("%Y-%m-%d"),
+                "last_month_full_end": last_month_full_end.strftime("%Y-%m-%d")
+            }
+
             total_days = calendar.monthrange(today.year, today.month)[1]
             days_elapsed = today.day
             month_total_revenue = default_response["month"]["revenue"]
@@ -5103,7 +5150,14 @@ def api_dashboard():
             "recent_transactions": [],
             "category_sales": [],
             "stock_value": {"total_cost_value": 0, "total_sale_value": 0, "total_profit_potential": 0},
-            "category_comparison": {"this_month_quantity": {}, "last_month_quantity": {}, "this_month_brand_quantity": {}, "last_month_brand_quantity": {}},
+            "category_comparison": {
+                "this_month_quantity": {}, "last_month_quantity": {}, "this_month_brand_quantity": {}, "last_month_brand_quantity": {},
+                "full_month_comparison": {
+                    "prev2_month_quantity": {}, "last_month_full_quantity": {},
+                    "prev2_month_brand_quantity": {}, "last_month_full_brand_quantity": {},
+                    "prev2_month_start": "", "prev2_month_end": "", "last_month_full_start": "", "last_month_full_end": ""
+                }
+            },
             "forecast": {"total_days": 0, "days_elapsed": 0, "current_revenue": 0, "forecast_revenue": 0, "current_profit": 0, "forecast_profit": 0},
             "monthly_target": {"target": 0, "total_days": 0, "days_elapsed": 0, "remaining_days": 0, "current_revenue": 0, "daily_avg_needed": 0, "remaining_amount": 0, "progress_percent": 0}
         })

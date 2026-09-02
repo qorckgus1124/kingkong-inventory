@@ -67,6 +67,48 @@
   </div>
 </div>
 
+<!-- 카테고리별 출고 수량 비교 (저저번달 vs 저번달, 온전한 한 달 기준) -->
+<div class="card">
+  <h3>📦 카테고리별 출고 수량 비교 (저저번달 vs 저번달 · 1일~말일 기준)</h3>
+  <div class="subtitle" id="fullMonthRangeLabel" style="margin-bottom:10px;">-</div>
+  <div style="overflow-x:auto;">
+    <table class="data-table" id="fullMonthCategoryTable" style="width:100%; border-collapse:collapse;">
+      <thead>
+        <tr>
+          <th style="text-align:left; padding:8px;">카테고리</th>
+          <th style="text-align:right; padding:8px;">저저번달</th>
+          <th style="text-align:right; padding:8px;">저번달</th>
+          <th style="text-align:right; padding:8px;">증감</th>
+          <th style="text-align:right; padding:8px;">증감률</th>
+          <th style="text-align:left; padding:8px;">비고</th>
+        </tr>
+      </thead>
+      <tbody id="fullMonthCategoryBody"></tbody>
+    </table>
+  </div>
+  <div id="fullMonthCategoryInsight" style="margin-top:10px; font-size:13px; color:var(--text-light);"></div>
+
+  <div style="border-top:1px solid var(--border); margin-top:16px; padding-top:14px;">
+    <h4 style="margin-bottom:8px;">🧴 일회용 브랜드별 비교 (카오린 / 엘프바 / 칠렉스 바이브 / 플릭)</h4>
+    <div style="overflow-x:auto;">
+      <table class="data-table" id="fullMonthBrandTable" style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left; padding:8px;">브랜드</th>
+            <th style="text-align:right; padding:8px;">저저번달</th>
+            <th style="text-align:right; padding:8px;">저번달</th>
+            <th style="text-align:right; padding:8px;">증감</th>
+            <th style="text-align:right; padding:8px;">증감률</th>
+            <th style="text-align:left; padding:8px;">비고</th>
+          </tr>
+        </thead>
+        <tbody id="fullMonthBrandBody"></tbody>
+      </table>
+    </div>
+    <div id="fullMonthBrandInsight" style="margin-top:10px; font-size:13px; color:var(--text-light);"></div>
+  </div>
+</div>
+
 <div class="dashboard-grid">
   <div class="card">
     <h3>⚠️ 재고부족 상품</h3>
@@ -270,6 +312,79 @@ async function loadDashboard() {
         <span>${fmt(lastMonthBrands[name] || 0)}개</span>
       </div>
     `).join('');
+
+    // 카테고리/브랜드별 출고 수량 비교 표를 그린다.
+    // prevQty/lastQty: {이름: 수량} 형태의 두 기간 데이터를 받아 증감·증감률·순위 배지를 계산해서 표로 렌더링한다.
+    function renderFullMonthCompare(names, prevQty, lastQty, tbodyId, insightId, itemLabel) {
+      const rows = names.map(name => {
+        const prev = prevQty[name] || 0;
+        const last = lastQty[name] || 0;
+        const diff = last - prev;
+        const pct = prev > 0 ? (diff / prev * 100) : (last > 0 ? 100 : 0);
+        return { name, prev, last, diff, pct };
+      });
+
+      // 👑 최다 판매 = 저번달 수량이 가장 많은 항목
+      // 🔥 인기 상승 = 저저번달 대비 증가폭(%)이 가장 큰 항목 (증가한 경우에만)
+      let topPopular = null, topRising = null;
+      rows.forEach(r => {
+        if (!topPopular || r.last > topPopular.last) topPopular = r;
+        if (r.diff > 0 && (!topRising || r.pct > topRising.pct || (r.pct === topRising.pct && r.diff > topRising.diff))) {
+          topRising = r;
+        }
+      });
+
+      const sorted = [...rows].sort((a, b) => b.last - a.last);
+      const tbody = document.getElementById(tbodyId);
+      tbody.innerHTML = sorted.map(r => {
+        const diffColor = r.diff > 0 ? '#e03131' : (r.diff < 0 ? '#1971c2' : 'var(--text-light)');
+        const sign = r.diff > 0 ? '+' : '';
+        const remarks = [];
+        if (topPopular && r.name === topPopular.name && topPopular.last > 0) remarks.push('👑 최다 판매');
+        if (topRising && r.name === topRising.name) remarks.push('🔥 인기 상승');
+        return `
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">${escapeHtml(r.name)}</td>
+            <td style="padding:8px; text-align:right;">${fmt(r.prev)}개</td>
+            <td style="padding:8px; text-align:right;">${fmt(r.last)}개</td>
+            <td style="padding:8px; text-align:right; color:${diffColor};">${sign}${fmt(r.diff)}개</td>
+            <td style="padding:8px; text-align:right; color:${diffColor};">${sign}${r.pct.toFixed(1)}%</td>
+            <td style="padding:8px;">${remarks.join(' ') || '-'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      const insightEl = document.getElementById(insightId);
+      if (topPopular && topPopular.last > 0) {
+        let text = `가장 많이 팔린 ${itemLabel}: <b>${escapeHtml(topPopular.name)}</b> (저번달 ${fmt(topPopular.last)}개)`;
+        if (topRising) {
+          text += ` · 최근 인기가 오르고 있는 ${itemLabel}: <b>${escapeHtml(topRising.name)}</b> (저저번달 대비 +${topRising.pct.toFixed(1)}%)`;
+        } else {
+          text += ` · 저저번달보다 뚜렷하게 늘어난 ${itemLabel}은 없습니다.`;
+        }
+        insightEl.innerHTML = text;
+      } else {
+        insightEl.innerHTML = '해당 기간 판매 데이터가 없습니다.';
+      }
+    }
+
+    const fullMonthComparison = data.category_comparison?.full_month_comparison || {};
+    const prev2CategoryQty = fullMonthComparison.prev2_month_quantity || {};
+    const lastFullCategoryQty = fullMonthComparison.last_month_full_quantity || {};
+    const prev2BrandQty = fullMonthComparison.prev2_month_brand_quantity || {};
+    const lastFullBrandQty = fullMonthComparison.last_month_full_brand_quantity || {};
+
+    const rangeLabelEl = document.getElementById('fullMonthRangeLabel');
+    if (fullMonthComparison.prev2_month_start && fullMonthComparison.last_month_full_start) {
+      rangeLabelEl.textContent =
+        `저저번달 ${fullMonthComparison.prev2_month_start} ~ ${fullMonthComparison.prev2_month_end}  vs  ` +
+        `저번달 ${fullMonthComparison.last_month_full_start} ~ ${fullMonthComparison.last_month_full_end} (둘 다 1일~말일 전체)`;
+    } else {
+      rangeLabelEl.textContent = '-';
+    }
+
+    renderFullMonthCompare(catNames, prev2CategoryQty, lastFullCategoryQty, 'fullMonthCategoryBody', 'fullMonthCategoryInsight', '카테고리');
+    renderFullMonthCompare(brandNames, prev2BrandQty, lastFullBrandQty, 'fullMonthBrandBody', 'fullMonthBrandInsight', '브랜드');
 
     // 재고부족
     const warningList = document.getElementById('warningList');
