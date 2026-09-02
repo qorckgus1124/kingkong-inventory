@@ -830,7 +830,13 @@ function handleTxnCheckboxTouchMove(e) {
 function endTxnDragSelect() {
   txnDragSelecting = false;
   txnDragTargetChecked = null;
-  txnDragTouched = new Set();
+  // 일반(드래그 없는) 클릭은 mousedown → mouseup → click 순으로 동기 발생한다.
+  // 여기서 txnDragTouched를 바로 비우면, mouseup 직후에 뒤따라오는 click이
+  // "이미 처리된 체크박스"인지 확인할 때(handleTxnCheckboxClick) 못 찾게 되어
+  // 네이티브 토글을 못 막고, mousedown에서 이미 바꿔둔 값이 click 기본 동작으로
+  // 다시 뒤집혀서 원래 상태로 돌아가 버린다. click까지 처리된 뒤(다음 틱)에
+  // 비워야 한다.
+  setTimeout(() => { txnDragTouched = new Set(); }, 0);
 }
 
 document.addEventListener('mouseup', endTxnDragSelect);
@@ -984,6 +990,23 @@ async function deleteGroupTransactions(ids) {
   }
 }
 
+// ---------- 선결제 주문 취소 (입출고관리 화면에서 바로) ----------
+// '선결예약'/'선결출고' 배치 헤더의 "주문 취소" 버튼에서 호출된다.
+// 대기(아직 미출고)/출고완료(재고가 실제로 빠져나감) 상태를 몰라도 되도록,
+// 백엔드의 cancel_any 엔드포인트가 주문 상태를 보고 알아서 삭제/취소를 나눠 처리한다.
+async function cancelPreOrderFromTxn(orderId) {
+  if (!confirm(`이 선결제 주문(#${orderId})을 취소하시겠습니까?\n출고 완료된 주문이면 재고가 복구되고 매출도 상쇄 처리됩니다.`)) return;
+  try {
+    const result = await api(`/api/pre_orders/${orderId}/cancel_any`, { method: 'POST' });
+    if (result && result.__apiError) return;
+    toast(`✅ 선결제 주문 #${orderId}이 취소되었습니다.`, false, '✅');
+    load();
+  } catch (e) {
+    console.error('선결제 주문 취소 오류:', e);
+    toast('취소 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
 // ---------- 결제 묶음(배치) 단위로 묶고, 같은 가격+상품명+시간 항목은 수량 합산 ----------
 // 판매 등록에서 결제 한 번에 나간 상품들, 혹은 입출고 등록에서 같은 시각에
 // 한꺼번에 등록한 상품들을 "결제 묶음" 하나로 묶어서 보여준다.
@@ -1036,13 +1059,29 @@ function buildTransactionBatches(rows) {
 }
 
 function renderTransactionBatch(batch, batchIndex) {
-  // '선결예약'/'선결출고'는 선결제 주문(pre_orders)에 딸린 감사 기록이라 여기서
-  // 개별 삭제하면 재고·매출 집계가 어긋날 수 있다. 판매 화면의 '선결제' 탭 →
-  // 출고완료 목록에서 취소해야 재고 복구까지 안전하게 처리되므로, 이 화면에서는
-  // 선택 자체를 막고 이유를 안내한다. (백엔드도 동일 이유로 삭제를 거부한다)
+  // '선결예약'/'선결출고'는 선결제 주문(pre_orders)에 딸린 기록이라, 이 화면의
+  // 일반 체크박스 다건삭제로 낱개 삭제하면 재고·매출 집계가 주문 상태와 어긋난다.
+  // 대신 주문 단위로 안전하게 되돌리는 "주문 취소" 버튼을 배치 헤더에 달아서
+  // (백엔드의 /api/pre_orders/<id>/cancel_any 가 대기/출고완료 상태를 알아서
+  // 구분해 처리) 이 화면에서 바로 취소할 수 있게 한다.
   const PREORDER_TXN_TYPES = ['선결예약', '선결출고'];
   const isPreorderItem = item => PREORDER_TXN_TYPES.includes(item.type);
   const hasSelectableItems = batch.items.some(item => !item.is_cancelled && !isPreorderItem(item));
+  const isPreorderBatch = PREORDER_TXN_TYPES.includes(batch.type);
+  // memo는 "선결제 확정 출고 (주문 #23)" 또는 "선결제 대기 #23" 형태로 저장되므로
+  // #뒤의 숫자만 뽑아내면 주문 번호를 알 수 있다.
+  const preOrderId = isPreorderBatch
+    ? (() => {
+        for (const item of batch.items) {
+          const m = item.memo && item.memo.match(/#(\d+)/);
+          if (m) return m[1];
+        }
+        return null;
+      })()
+    : null;
+  const cancelOrderBtn = (isPreorderBatch && preOrderId)
+    ? `<button class="danger" style="margin-left:8px;" onclick="cancelPreOrderFromTxn(${preOrderId})">🚫 주문 취소 (#${preOrderId})</button>`
+    : '';
   const headerRow = `
     <tr class="batch-header-row" style="background:var(--card-bg);">
       <td style="padding:6px 8px;"><input type="checkbox" class="batch-select-checkbox" data-batch="${batchIndex}" onchange="toggleBatchCheckboxes(${batchIndex})" ${hasSelectableItems ? '' : 'disabled'} title="이 주문건 전체 선택"></td>
@@ -1051,6 +1090,7 @@ function renderTransactionBatch(batch, batchIndex) {
         &nbsp;·&nbsp;<span class="badge ${TYPE_CLASS[batch.type] || 'badge-neutral'}">${batch.type}</span>
         &nbsp;·&nbsp;${escapeHtml(batch.store_name)}
         ${batch.staff ? `&nbsp;·&nbsp;담당 ${escapeHtml(batch.staff)}` : ''}
+        ${cancelOrderBtn}
       </td>
     </tr>
   `;
@@ -1079,7 +1119,7 @@ function renderTransactionBatch(batch, batchIndex) {
       : '';
     return `
       <tr style="${isCancelled ? 'opacity:0.45;' : ''}">
-        <td><input type="checkbox" class="row-checkbox" data-batch="${batchIndex}" value="${idsCsv}" onchange="toggleCheckbox('${idsCsv}')" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : (isPreorderItem(item) ? 'disabled title="선결제 관련 기록입니다. 판매 화면의 \'선결제\' 탭 → 출고완료 목록에서 취소해주세요."' : '')}></td>
+        <td><input type="checkbox" class="row-checkbox" data-batch="${batchIndex}" value="${idsCsv}" onchange="toggleCheckbox('${idsCsv}')" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : (isPreorderItem(item) ? 'disabled title="선결제 관련 기록은 낱개 삭제 대신, 위쪽 배치 제목줄의 \'주문 취소\' 버튼으로 주문 전체를 취소해주세요."' : '')}></td>
         <td></td>
         <td style="font-weight:${['입고','이동입고'].includes(item.type) ? '600' : 'normal'};">${escapeHtml(item.product_name)}${mergedNote}</td>
         <td>${item.brand_name ? `<span class="brand-tag" style="background:${item.brand_color || '#8a8f98'};">${escapeHtml(item.brand_name)}</span>` : '-'}</td>

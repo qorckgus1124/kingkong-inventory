@@ -2675,7 +2675,11 @@ def api_transactions_get():
         result = []
         for r in rows:
             d = dict(r)
-            d["cancelled"] = d["type"] in ("판매출고", "입고") and d["cancel_count"] > 0
+            # '선결예약'도 포함: 선결제 주문이 취소되면 예약 시점 매출(선결예약) 행을
+            # 상쇄하는 '판매취소' 행이 ref_transaction_id로 연결되어 생기므로,
+            # 판매출고/입고와 동일하게 취소 여부를 여기서 함께 표시해야 목록에서
+            # "취소됨"으로 정확히 보인다.
+            d["cancelled"] = d["type"] in ("판매출고", "입고", "선결예약") and d["cancel_count"] > 0
             if d["type"] in ["판매취소", "입고취소"] or d["cancelled"]:
                 d["is_cancelled"] = True
             else:
@@ -6634,6 +6638,27 @@ def api_pre_order_confirm(order_id):
     cur.execute("UPDATE pre_orders SET status = '출고완료', updated_at = CURRENT_TIMESTAMP WHERE id = %s", (order_id,))
     conn.commit()
     return jsonify({"ok": True, "order_id": order_id})
+
+
+@app.route("/api/pre_orders/<int:order_id>/cancel_any", methods=["POST"])
+def api_pre_order_cancel_any(order_id):
+    """입출고관리(거래내역) 화면처럼 주문이 '대기'인지 '출고완료'인지 미리 알 수
+    없는 곳에서 호출하는 통합 취소 엔드포인트. 상태를 확인해 알맞은 처리로 그대로
+    위임한다 (대기 → 삭제만 하면 됨/재고 영향 없음, 출고완료 → 재고 복구 + 매출 상쇄).
+    """
+    conn = get_db()
+    cur = g.cursor
+    cur.execute("SELECT * FROM pre_orders WHERE id = %s", (order_id,))
+    order = cur.fetchone()
+    if not order:
+        return jsonify({"error": "주문을 찾을 수 없습니다."}), 404
+    if order["status"] == "대기":
+        return api_pre_order_delete(order_id)
+    if order["status"] == "출고완료":
+        return api_pre_order_cancel(order_id)
+    if order["status"] == "취소됨":
+        return jsonify({"error": "이미 취소된 주문입니다."}), 400
+    return jsonify({"error": "취소할 수 없는 상태입니다."}), 400
 
 
 @app.route("/api/pre_orders/<int:order_id>/cancel", methods=["POST"])
