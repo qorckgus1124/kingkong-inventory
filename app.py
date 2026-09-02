@@ -2648,7 +2648,7 @@ def api_transactions_get():
             where_clause += " AND t.type = %s"
             params.append(ttype)
         if not include_cancelled:
-            where_clause += " AND t.type NOT IN ('판매취소', '입고취소')"
+            where_clause += " AND t.type NOT IN ('판매취소', '입고취소', '선결출고취소')"
 
         count_sql = f"SELECT COUNT(*) as total FROM stock_transactions t {where_clause}"
         cur.execute(count_sql, params)
@@ -2659,7 +2659,7 @@ def api_transactions_get():
             SELECT t.*, p.name as product_name, b.name as brand_name, b.color as brand_color,
                    s.name as store_name, sup.name as supplier_name,
                    (SELECT COUNT(*) FROM stock_transactions c
-                    WHERE c.ref_transaction_id = t.id AND c.type IN ('판매취소', '입고취소')) as cancel_count
+                    WHERE c.ref_transaction_id = t.id AND c.type IN ('판매취소', '입고취소', '선결출고취소')) as cancel_count
             FROM stock_transactions t
             JOIN products p ON p.id = t.product_id
             LEFT JOIN brands b ON b.id = p.brand_id
@@ -2675,12 +2675,13 @@ def api_transactions_get():
         result = []
         for r in rows:
             d = dict(r)
-            # '선결예약'도 포함: 선결제 주문이 취소되면 예약 시점 매출(선결예약) 행을
-            # 상쇄하는 '판매취소' 행이 ref_transaction_id로 연결되어 생기므로,
+            # '선결예약'/'선결출고'도 포함: 선결제 주문이 취소되면 예약 시점 매출(선결예약)
+            # 행을 상쇄하는 '판매취소' 행과, 확정 출고(선결출고) 행을 상쇄하는
+            # '선결출고취소' 행이 각각 ref_transaction_id로 연결되어 생기므로,
             # 판매출고/입고와 동일하게 취소 여부를 여기서 함께 표시해야 목록에서
             # "취소됨"으로 정확히 보인다.
-            d["cancelled"] = d["type"] in ("판매출고", "입고", "선결예약") and d["cancel_count"] > 0
-            if d["type"] in ["판매취소", "입고취소"] or d["cancelled"]:
+            d["cancelled"] = d["type"] in ("판매출고", "입고", "선결예약", "선결출고") and d["cancel_count"] > 0
+            if d["type"] in ["판매취소", "입고취소", "선결출고취소"] or d["cancelled"]:
                 d["is_cancelled"] = True
             else:
                 d["is_cancelled"] = False
@@ -3729,6 +3730,9 @@ def api_daily_report():
                  OR (t.type = '입고' AND EXISTS (
                         SELECT 1 FROM stock_transactions cx
                         WHERE cx.ref_transaction_id = t.id AND cx.type = '입고취소'))
+                 OR (t.type = '선결출고' AND EXISTS (
+                        SELECT 1 FROM stock_transactions cx
+                        WHERE cx.ref_transaction_id = t.id AND cx.type = '선결출고취소'))
                  OR (t.type IN ('이동출고', '이동입고') AND EXISTS (
                         SELECT 1 FROM stock_movements sm
                         WHERE sm.id = t.movement_id AND sm.status = '취소'))
@@ -3761,6 +3765,9 @@ def api_daily_report():
                  OR (t.type = '입고' AND EXISTS (
                         SELECT 1 FROM stock_transactions cx
                         WHERE cx.ref_transaction_id = t.id AND cx.type = '입고취소'))
+                 OR (t.type = '선결출고' AND EXISTS (
+                        SELECT 1 FROM stock_transactions cx
+                        WHERE cx.ref_transaction_id = t.id AND cx.type = '선결출고취소'))
                  OR (t.type IN ('이동출고', '이동입고') AND EXISTS (
                         SELECT 1 FROM stock_movements sm
                         WHERE sm.id = t.movement_id AND sm.status = '취소'))
@@ -5640,6 +5647,7 @@ def api_inventory_snapshot():
                SUM(CASE
                      WHEN type = '실사조정' THEN COALESCE(after_qty, 0) - COALESCE(before_qty, 0)
                      WHEN type = '선결예약' THEN 0
+                     WHEN type = '선결출고취소' THEN 0
                      WHEN type IN ('판매출고', '반품', '폐기', '이동출고', '조정', '입고취소', '선결출고') THEN -quantity
                      ELSE quantity
                    END) AS future_delta
@@ -6839,6 +6847,24 @@ def api_pre_order_cancel(order_id):
                 VALUES (%s, %s, %s, '판매취소', %s, %s, %s, %s, %s)""",
                 (row["product_id"], row["store_id"], row["id"], row["quantity"], row["unit_cost"],
                  row["unit_price"], row["payment_method"], f"선결제 주문 취소 (주문 #{order_id})")
+            )
+
+        # 2-1) 확정 시 남겼던 '선결출고' 감사 기록도 취소 마커를 남긴다.
+        #    재고 자체는 위 1)번에서 이미 원상복구했으므로 여기서는 재고를 다시 건드리지
+        #    않고, "이 선결출고는 취소됐다"는 표시만 남겨서 09/02 강남역점 입출고 목록
+        #    같은 일일 입출고 리포트에서 재조회할 때 더 이상 나타나지 않게 한다.
+        cur.execute(
+            "SELECT * FROM stock_transactions WHERE type='선결출고' AND memo = %s",
+            (f"선결제 확정 출고 (주문 #{order_id})",)
+        )
+        shipment_rows = cur.fetchall()
+        for row in shipment_rows:
+            cur.execute(
+                """INSERT INTO stock_transactions
+                (product_id, store_id, ref_transaction_id, type, quantity, memo)
+                VALUES (%s, %s, %s, '선결출고취소', %s, %s)""",
+                (row["product_id"], row["store_id"], row["id"], row["quantity"],
+                 f"선결제 주문 취소 (주문 #{order_id})")
             )
 
         # 3) 원본 기록은 보존한 채 주문 상태만 취소됨으로 바꾼다.
