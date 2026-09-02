@@ -2971,9 +2971,22 @@ def api_transactions_cancel_batch():
         rows = cur.fetchall()
         # 삭제 가능한 타입: 판매출고/출고는 재고 복구 후 삭제, 나머지는 바로 삭제
         DELETABLE = {"판매출고", "출고", "입고", "반품", "폐기", "조정", "실사조정"}
+        # '선결예약'(주문 시점 매출 기록)과 '선결출고'(확정 시점 재고 감사 기록)는
+        # pre_orders 테이블과 상태가 엮여 있는 선결제 주문의 일부다. 여기서 이 행만
+        # 따로 지우면 pre_orders.status는 그대로 남는데 매출/재고 기록만 사라져서
+        # 어긋난다. 안전한 취소는 /api/pre_orders/<id>/cancel(판매 화면의 '선결제'
+        # 탭 → 출고완료 목록)에서만 하도록 여기서는 명확한 이유와 함께 거부한다.
+        PREORDER_TYPES = {"선결예약", "선결출고"}
         sale_rows = [r for r in rows if r["type"] in DELETABLE]
+        preorder_rows = [r for r in rows if r["type"] in PREORDER_TYPES]
 
         if not sale_rows:
+            if preorder_rows:
+                return jsonify({
+                    "cancelled": 0,
+                    "failed": len(ids),
+                    "errors": ["선결제 관련 기록은 여기서 삭제할 수 없습니다. 판매 화면의 '선결제' 탭 → 출고완료 목록에서 취소해주세요."]
+                }), 400
             return jsonify({"cancelled": 0, "failed": len(ids), "errors": ["삭제 가능한 항목이 없습니다."]}), 400
 
         # 이미 판매취소 처리된 판매출고는 제외
@@ -2994,6 +3007,8 @@ def api_transactions_cancel_batch():
         errors = []
         if already_cancelled_count:
             errors.append(f"이미 취소 처리된 {already_cancelled_count}건은 건너뛰었습니다. (취소 기록만 남아 매출이 왜곡되는 것을 방지)")
+        if preorder_rows:
+            errors.append(f"선결제 관련 {len(preorder_rows)}건은 건너뛰었습니다. 판매 화면의 '선결제' 탭 → 출고완료 목록에서 취소해주세요.")
 
         if not valid_rows:
             return jsonify({"cancelled": 0, "failed": len(ids), "errors": errors or ["선택한 항목이 모두 이미 취소된 건입니다."]}), 400

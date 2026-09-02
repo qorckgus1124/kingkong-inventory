@@ -747,8 +747,17 @@ function clearTxnSelection() {
 }
 
 // ---------- 체크박스 드래그(클릭한 채로 끌기) 선택 ----------
-// mousedown한 체크박스의 "토글 후" 상태를 목표 값으로 삼고, 누른 채로 지나가는
-// 다른 체크박스들을 전부 그 값으로 맞춘다. (엑셀/파일탐색기의 드래그 선택과 동일한 방식)
+// 누른 시작점 체크박스의 "토글될 값"을 그 자리에서 바로 계산해 적용하고, 누른 채로
+// 지나가는 다른 체크박스들도 전부 그 값으로 맞춘다. (엑셀/파일탐색기의 드래그 선택과 동일)
+//
+// ⚠️ 예전 구현은 mousedown 시점엔 목표값을 모른 채 setTimeout(0)으로 "브라우저가 클릭
+// 기본 동작으로 토글해줄 때까지" 기다렸는데, 실제로 마우스를 눌러서 다른 체크박스로
+// 끌고 가면(=드래그) 시작 체크박스에서 mouseup이 일어나지 않으므로 click 이벤트 자체가
+// 발생하지 않아 토글이 절대 일어나지 않았다. 그 결과 목표값이 계속 null로 남아 드래그가
+// 통째로 동작하지 않았다. 지금은 mousedown/touchstart 시점에 목표값을 직접 계산해서
+// 그 자리에서 바로 반영하고, 나중에 도착하는 네이티브 click은 무시(preventDefault)해서
+// 두 번 토글되는 것을 막는다. 같은 이유로 터치(모바일/PWA)에서는 애초에 mousedown류
+// 이벤트가 발생하지 않으므로 touchstart/touchmove로 동일한 로직을 별도 구현했다.
 let txnDragSelecting = false;
 let txnDragTargetChecked = null;
 let txnDragTouched = new Set();
@@ -759,25 +768,63 @@ function isTxnDragCheckbox(el) {
   ));
 }
 
+function txnDragApply(cb) {
+  txnDragTouched.add(cb);
+  if (cb.checked !== txnDragTargetChecked) {
+    cb.checked = txnDragTargetChecked;
+    cb.dispatchEvent(new Event('change'));
+  }
+}
+
+// ----- 마우스(데스크톱) -----
 function handleTxnCheckboxMouseDown(e) {
   const cb = e.target;
   if (!isTxnDragCheckbox(cb)) return;
   txnDragSelecting = true;
-  txnDragTargetChecked = null;
-  txnDragTouched = new Set([cb]);
-  // 기본 클릭 동작(체크 토글)이 먼저 일어나게 둔 다음, 그 결과 상태를 드래그 목표값으로 기록한다.
-  setTimeout(() => { txnDragTargetChecked = cb.checked; }, 0);
+  txnDragTargetChecked = !cb.checked;
+  txnDragTouched = new Set();
+  txnDragApply(cb);
 }
 
 function handleTxnCheckboxMouseOver(e) {
   if (!txnDragSelecting || txnDragTargetChecked === null) return;
   const cb = e.target;
   if (!isTxnDragCheckbox(cb) || txnDragTouched.has(cb)) return;
-  txnDragTouched.add(cb);
-  if (cb.checked !== txnDragTargetChecked) {
-    cb.checked = txnDragTargetChecked;
-    cb.dispatchEvent(new Event('change'));
+  txnDragApply(cb);
+}
+
+// mousedown에서 이미 상태를 직접 바꿔놨으므로, 뒤이어 브라우저가 보내는 네이티브
+// click의 기본 동작(다시 토글)은 막아서 이중 토글을 방지한다.
+function handleTxnCheckboxClick(e) {
+  const cb = e.target;
+  if (isTxnDragCheckbox(cb) && txnDragTouched.has(cb)) {
+    e.preventDefault();
   }
+}
+
+// ----- 터치(모바일/PWA) -----
+function handleTxnCheckboxTouchStart(e) {
+  const touch = e.touches[0];
+  if (!touch) return;
+  const cb = document.elementFromPoint(touch.clientX, touch.clientY);
+  if (!isTxnDragCheckbox(cb)) return;
+  // 이후 합성(mouse-compat) 클릭 이벤트가 다시 토글하지 않도록 막는다.
+  e.preventDefault();
+  txnDragSelecting = true;
+  txnDragTargetChecked = !cb.checked;
+  txnDragTouched = new Set();
+  txnDragApply(cb);
+}
+
+function handleTxnCheckboxTouchMove(e) {
+  if (!txnDragSelecting || txnDragTargetChecked === null) return;
+  const touch = e.touches[0];
+  if (!touch) return;
+  const cb = document.elementFromPoint(touch.clientX, touch.clientY);
+  if (!isTxnDragCheckbox(cb) || txnDragTouched.has(cb)) return;
+  // 드래그로 체크박스를 훑는 중에는 화면이 스크롤되지 않게 막는다.
+  e.preventDefault();
+  txnDragApply(cb);
 }
 
 function endTxnDragSelect() {
@@ -787,12 +834,17 @@ function endTxnDragSelect() {
 }
 
 document.addEventListener('mouseup', endTxnDragSelect);
+document.addEventListener('touchend', endTxnDragSelect);
+document.addEventListener('touchcancel', endTxnDragSelect);
 
 document.addEventListener('DOMContentLoaded', function() {
   const txnTbody = document.getElementById('tbody');
   if (txnTbody) {
     txnTbody.addEventListener('mousedown', handleTxnCheckboxMouseDown);
     txnTbody.addEventListener('mouseover', handleTxnCheckboxMouseOver);
+    txnTbody.addEventListener('click', handleTxnCheckboxClick);
+    txnTbody.addEventListener('touchstart', handleTxnCheckboxTouchStart, { passive: false });
+    txnTbody.addEventListener('touchmove', handleTxnCheckboxTouchMove, { passive: false });
   }
 });
 
@@ -804,6 +856,11 @@ async function deleteSingleTransaction(id) {
       method: 'POST',
       body: JSON.stringify({ ids: [id] })
     });
+    // api()는 서버가 오류(4xx/5xx)를 응답해도 예외를 던지지 않고 __apiError가 붙은
+    // 빈 배열을 돌려준다 (이미 토스트는 api() 안에서 띄웠음). 여기서 또 처리하면
+    // "undefined건 삭제 완료"처럼 결과 필드가 없는데도 성공 메시지가 뜨는 문제가
+    // 있었으므로, 실패 응답이면 바로 멈춘다.
+    if (result && result.__apiError) return;
     if (result.cancelled > 0) {
       toast('✅ 삭제되었습니다.', false, '✅');
       load();
@@ -830,6 +887,12 @@ async function deleteSelected() {
       method: 'POST',
       body: JSON.stringify({ ids })
     });
+    // 서버가 400/500 등으로 실패하면 api()가 __apiError가 붙은 빈 배열을 돌려주고
+    // 이미 오류 토스트도 띄운 상태다. 그런데도 아래로 내려가면 result.cancelled /
+    // result.failed가 undefined라서 "undefined건 삭제 완료 (실패 undefined건)"처럼
+    // 마치 성공한 것 같은 메시지가 또 뜨고, 선택도 지워지고 목록도 새로고침돼서
+    // 실제로는 삭제가 안 됐는데도 성공한 것처럼 보였다. 실패면 여기서 멈춘다.
+    if (result && result.__apiError) return;
     const extra = (result.errors && result.errors.length) ? ' - ' + result.errors.join(' ') : '';
     toast(`✅ ${result.cancelled}건 삭제 완료 (실패 ${result.failed}건)${extra}`, result.failed > 0, result.failed > 0 ? '⚠️' : '✅');
     selectedIds.clear();
@@ -856,6 +919,7 @@ async function batchStatusChange() {
       method: 'POST',
       body: JSON.stringify({ ids, new_type: newStatus })
     });
+    if (result && result.__apiError) return;
     toast(`✅ ${result.updated}건 변경 완료 (실패 ${result.failed}건)`, result.failed > 0, result.failed > 0 ? '⚠️' : '✅');
     selectedIds.clear();
     document.getElementById('selectAll').checked = false;
@@ -907,6 +971,7 @@ async function deleteGroupTransactions(ids) {
       method: 'POST',
       body: JSON.stringify({ ids })
     });
+    if (result && result.__apiError) return;
     if (result.cancelled > 0) {
       toast(`✅ ${result.cancelled}건 삭제되었습니다.`, false, '✅');
       load();
@@ -971,7 +1036,13 @@ function buildTransactionBatches(rows) {
 }
 
 function renderTransactionBatch(batch, batchIndex) {
-  const hasSelectableItems = batch.items.some(item => !item.is_cancelled);
+  // '선결예약'/'선결출고'는 선결제 주문(pre_orders)에 딸린 감사 기록이라 여기서
+  // 개별 삭제하면 재고·매출 집계가 어긋날 수 있다. 판매 화면의 '선결제' 탭 →
+  // 출고완료 목록에서 취소해야 재고 복구까지 안전하게 처리되므로, 이 화면에서는
+  // 선택 자체를 막고 이유를 안내한다. (백엔드도 동일 이유로 삭제를 거부한다)
+  const PREORDER_TXN_TYPES = ['선결예약', '선결출고'];
+  const isPreorderItem = item => PREORDER_TXN_TYPES.includes(item.type);
+  const hasSelectableItems = batch.items.some(item => !item.is_cancelled && !isPreorderItem(item));
   const headerRow = `
     <tr class="batch-header-row" style="background:var(--card-bg);">
       <td style="padding:6px 8px;"><input type="checkbox" class="batch-select-checkbox" data-batch="${batchIndex}" onchange="toggleBatchCheckboxes(${batchIndex})" ${hasSelectableItems ? '' : 'disabled'} title="이 주문건 전체 선택"></td>
@@ -1008,7 +1079,7 @@ function renderTransactionBatch(batch, batchIndex) {
       : '';
     return `
       <tr style="${isCancelled ? 'opacity:0.45;' : ''}">
-        <td><input type="checkbox" class="row-checkbox" data-batch="${batchIndex}" value="${idsCsv}" onchange="toggleCheckbox('${idsCsv}')" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : ''}></td>
+        <td><input type="checkbox" class="row-checkbox" data-batch="${batchIndex}" value="${idsCsv}" onchange="toggleCheckbox('${idsCsv}')" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : (isPreorderItem(item) ? 'disabled title="선결제 관련 기록입니다. 판매 화면의 \'선결제\' 탭 → 출고완료 목록에서 취소해주세요."' : '')}></td>
         <td></td>
         <td style="font-weight:${['입고','이동입고'].includes(item.type) ? '600' : 'normal'};">${escapeHtml(item.product_name)}${mergedNote}</td>
         <td>${item.brand_name ? `<span class="brand-tag" style="background:${item.brand_color || '#8a8f98'};">${escapeHtml(item.brand_name)}</span>` : '-'}</td>
