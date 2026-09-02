@@ -4835,6 +4835,9 @@ def api_dashboard():
                     "last_month_full_quantity": {},
                     "prev2_month_brand_quantity": {},
                     "last_month_full_brand_quantity": {},
+                    "product_top_by_category": {},
+                    "prev2_month_label": "",
+                    "last_month_full_label": "",
                     "prev2_month_start": "",
                     "prev2_month_end": "",
                     "last_month_full_start": "",
@@ -5107,11 +5110,78 @@ def api_dashboard():
                 last_month_full_brand_qty[label] = get_brand_quantity(
                     last_month_start.strftime("%Y-%m-%d"), last_month_full_end.strftime("%Y-%m-%d"), names)
 
+            # ---- 카테고리별 상품(맛/브랜드) 단위 TOP5용 데이터 ----
+            # 상품명에 브랜드/맛이 함께 들어있는 경우가 많아 product 단위로 집계하면
+            # "어떤 맛/브랜드 제품이 잘 나갔는지"가 그대로 드러난다.
+            def get_product_metrics(start_date, end_date, category_name):
+                prod_q = """
+                    SELECT
+                        p.id as product_id,
+                        p.name as product_name,
+                        b.name as brand_name,
+                        COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity
+                                      WHEN t.type='판매취소' THEN -t.quantity ELSE 0 END), 0) as quantity,
+                        COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity * (COALESCE(t.unit_price,0) - COALESCE(t.unit_cost,0))
+                                      WHEN t.type='판매취소' THEN -t.quantity * (COALESCE(t.unit_price,0) - COALESCE(t.unit_cost,0)) ELSE 0 END), 0) as profit
+                    FROM stock_transactions t
+                    JOIN products p ON p.id = t.product_id
+                    LEFT JOIN categories c ON c.id = p.category_id
+                    LEFT JOIN brands b ON b.id = p.brand_id
+                    WHERE t.type IN ('판매출고', '판매취소')
+                      AND date(t.date_time) >= date(%s)
+                      AND date(t.date_time) <= date(%s)
+                      AND c.name = %s
+                """
+                params = [start_date, end_date, category_name]
+                if store_id:
+                    prod_q += " AND t.store_id = %s"
+                    params.append(store_id)
+                prod_q += " GROUP BY p.id, p.name, b.name"
+                cur.execute(prod_q, params)
+                rows = cur.fetchall()
+                return {r["product_id"]: dict(r) for r in rows}
+
+            product_top_by_category = {}
+            for category_name in ('일회용', '기기', '액상'):
+                prev_products = get_product_metrics(
+                    prev2_month_start.strftime("%Y-%m-%d"), prev2_month_end.strftime("%Y-%m-%d"), category_name)
+                last_products = get_product_metrics(
+                    last_month_start.strftime("%Y-%m-%d"), last_month_full_end.strftime("%Y-%m-%d"), category_name)
+
+                product_ids = set(prev_products.keys()) | set(last_products.keys())
+                merged = []
+                for pid in product_ids:
+                    prev_row = prev_products.get(pid)
+                    last_row = last_products.get(pid)
+                    quantity_prev = prev_row["quantity"] if prev_row else 0
+                    quantity_last = last_row["quantity"] if last_row else 0
+                    if quantity_prev == 0 and quantity_last == 0:
+                        continue
+                    profit_last = last_row["profit"] if last_row else 0
+                    diff = quantity_last - quantity_prev
+                    growth_pct = (diff / quantity_prev * 100) if quantity_prev > 0 else (100.0 if quantity_last > 0 else 0.0)
+                    name = (last_row or prev_row)["product_name"]
+                    brand_name = (last_row or prev_row)["brand_name"]
+                    merged.append({
+                        "product_id": pid,
+                        "name": name,
+                        "brand": brand_name,
+                        "quantity_prev": quantity_prev,
+                        "quantity_last": quantity_last,
+                        "diff": diff,
+                        "growth_pct": round(growth_pct, 1),
+                        "profit_last": profit_last,
+                    })
+                product_top_by_category[category_name] = merged
+
             default_response["category_comparison"]["full_month_comparison"] = {
                 "prev2_month_quantity": prev2_month_qty,
                 "last_month_full_quantity": last_month_full_qty,
                 "prev2_month_brand_quantity": prev2_month_brand_qty,
                 "last_month_full_brand_quantity": last_month_full_brand_qty,
+                "product_top_by_category": product_top_by_category,
+                "prev2_month_label": f"{prev2_month_start.month}월",
+                "last_month_full_label": f"{last_month_start.month}월",
                 "prev2_month_start": prev2_month_start.strftime("%Y-%m-%d"),
                 "prev2_month_end": prev2_month_end.strftime("%Y-%m-%d"),
                 "last_month_full_start": last_month_start.strftime("%Y-%m-%d"),
@@ -5155,6 +5225,7 @@ def api_dashboard():
                 "full_month_comparison": {
                     "prev2_month_quantity": {}, "last_month_full_quantity": {},
                     "prev2_month_brand_quantity": {}, "last_month_full_brand_quantity": {},
+                    "product_top_by_category": {}, "prev2_month_label": "", "last_month_full_label": "",
                     "prev2_month_start": "", "prev2_month_end": "", "last_month_full_start": "", "last_month_full_end": ""
                 }
             },
