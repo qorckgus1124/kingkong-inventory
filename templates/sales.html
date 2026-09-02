@@ -135,6 +135,18 @@
       <div style="color:var(--text-light); text-align:center; padding:10px 0;">출고 대기 주문이 없습니다.</div>
     </div>
   </div>
+
+  <!-- 출고 완료(확정) 목록: 확정된 뒤에도 잘못 확정했거나 취소된 경우 되돌릴 수 있도록
+       주문을 보여주고 "주문 취소" 버튼을 제공한다. -->
+  <div class="card" style="margin-top:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <strong style="color:var(--text);">✅ 출고 완료 (최근)</strong>
+      <button onclick="loadConfirmedPreOrders()" style="font-size:12px; padding:2px 8px;">🔄 새로고침</button>
+    </div>
+    <div id="pre_order_confirmed_list" style="font-size:13px; max-height:320px; overflow-y:auto;">
+      <div style="color:var(--text-light); text-align:center; padding:10px 0;">출고 완료된 주문이 없습니다.</div>
+    </div>
+  </div>
 </div>
 
 <!-- ============================================================ -->
@@ -257,6 +269,7 @@ async function loadStores() {
     await loadProducts();
     await loadPreProducts();
     await loadPreOrders();
+    await loadConfirmedPreOrders();
     renderCart();
     renderPreCart();
 
@@ -1187,6 +1200,7 @@ async function confirmPreOrder(orderId) {
     await api(`/api/pre_orders/${orderId}/confirm`, { method: 'PUT' });
     toast('출고 확정되었습니다.', false, '✅');
     await loadPreOrders();
+    await loadConfirmedPreOrders();
     const q = document.getElementById('pre_searchBox').value.trim();
     if (q) {
       loadPreProducts(false);
@@ -1209,6 +1223,68 @@ async function deletePreOrder(orderId) {
   }
 }
 
+// ---------- 선결제 출고 완료(확정) 목록 & 취소 ----------
+async function loadConfirmedPreOrders() {
+  const store_id = document.getElementById('pre_store').value;
+  if (!store_id) {
+    document.getElementById('pre_order_confirmed_list').innerHTML = '<div style="color:var(--text-light); text-align:center; padding:10px 0;">매장을 선택해주세요.</div>';
+    return;
+  }
+
+  try {
+    const orders = await api(`/api/pre_orders?store_id=${store_id}&status=출고완료`);
+    const container = document.getElementById('pre_order_confirmed_list');
+    if (!orders || orders.length === 0) {
+      container.innerHTML = '<div style="color:var(--text-light); text-align:center; padding:10px 0;">출고 완료된 주문이 없습니다.</div>';
+      return;
+    }
+
+    container.innerHTML = orders.map(o => `
+      <div style="border:1px solid var(--border); border-radius:var(--radius); padding:8px; margin-bottom:6px; background:var(--card-bg);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <strong style="color:var(--text); font-size:13px;">#${o.id}</strong>
+          <span style="font-size:11px; color:var(--text-light);">${o.created_at}</span>
+        </div>
+        <div style="font-size:12px; color:var(--text-light);">
+          ${o.customer_name ? `👤 ${escapeHtml(o.customer_name)}` : ''}
+          ${o.customer_phone ? `📞 ${escapeHtml(o.customer_phone)}` : ''}
+          ${o.customer_address ? `🏠 ${escapeHtml(o.customer_address)}` : ''}
+        </div>
+        <div style="font-size:12px; margin:2px 0; color:var(--text);">
+          ${o.items.map(item => {
+            const pname = item.product_name || `#${item.product_id}`;
+            return `<div>${escapeHtml(pname)} × ${item.quantity} = ${fmt((item.unit_price * item.quantity) - (item.discount_amount || 0))}원</div>`;
+          }).join('')}
+        </div>
+        <div style="font-size:11px; color:var(--text-light);">💰 총액: ${fmt(o.total_amount)}원 (${o.payment_method})</div>
+        <div style="display:flex; gap:4px; margin-top:6px;">
+          <button class="danger" onclick="cancelPreOrder(${o.id})" style="padding:2px 10px; font-size:11px;">↩️ 주문 취소</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    console.error('❌ 출고 완료 목록 로드 오류:', e);
+    document.getElementById('pre_order_confirmed_list').innerHTML = '<div style="color:var(--danger); text-align:center; padding:10px 0;">⚠️ 데이터를 불러올 수 없습니다.</div>';
+  }
+}
+
+async function cancelPreOrder(orderId) {
+  if (!confirm('이 확정된 주문을 취소하시겠습니까?\n차감됐던 재고가 되돌아오고, 매출 통계에서도 빠집니다. (복구할 수 없습니다)')) return;
+  try {
+    await api(`/api/pre_orders/${orderId}/cancel`, { method: 'POST' });
+    toast('주문이 취소되고 재고가 복구되었습니다.', false, '✅');
+    await loadConfirmedPreOrders();
+    const q = document.getElementById('pre_searchBox').value.trim();
+    if (q) {
+      loadPreProducts(false);
+    } else {
+      loadPreProducts(true);
+    }
+  } catch (e) {
+    console.error('❌ 확정 주문 취소 오류:', e);
+  }
+}
+
 // ---------- 탭 전환 ----------
 function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -1226,6 +1302,7 @@ function switchTab(tab) {
 
   if (tab === 'preorder') {
     loadPreOrders();
+    loadConfirmedPreOrders();
     const q = document.getElementById('pre_searchBox').value.trim();
     if (q) {
       loadPreProducts(false);

@@ -6621,6 +6621,71 @@ def api_pre_order_confirm(order_id):
     return jsonify({"ok": True, "order_id": order_id})
 
 
+@app.route("/api/pre_orders/<int:order_id>/cancel", methods=["POST"])
+def api_pre_order_cancel(order_id):
+    """확정(출고완료)된 선결제 주문을 취소한다.
+    '대기' 상태 주문은 삭제(api_pre_order_delete)로 처리하고, 이 엔드포인트는
+    이미 확정되어 실제로 재고가 빠져나간 주문만 대상으로 한다.
+    - 확정 시 차감됐던 실제 재고를 항목별로 되돌리고,
+    - 예약 시점에 매출로 잡혔던 '선결예약' 거래를 '판매취소'로 정확히 상쇄해
+      매출/수량 통계에서도 빠지게 하며,
+    - 원본 거래 기록은 지우지 않고 그대로 남겨 감사 이력을 보존한다."""
+    conn = get_db()
+    cur = g.cursor
+    cur.execute("SELECT * FROM pre_orders WHERE id = %s", (order_id,))
+    order = cur.fetchone()
+    if not order:
+        return jsonify({"error": "주문을 찾을 수 없습니다."}), 404
+    if order["status"] == "대기":
+        return jsonify({"error": "아직 출고되지 않은 주문입니다. 취소는 삭제 버튼을 이용해주세요."}), 400
+    if order["status"] == "취소됨":
+        return jsonify({"error": "이미 취소된 주문입니다."}), 400
+    if order["status"] != "출고완료":
+        return jsonify({"error": "취소할 수 없는 상태입니다."}), 400
+
+    store_id = order["store_id"]
+    cur.execute("SELECT * FROM pre_order_items WHERE pre_order_id = %s", (order_id,))
+    items = cur.fetchall()
+
+    try:
+        # 1) 확정 시 실제로 빠져나간 재고를 항목별로 되돌린다 (판매취소는 감소 유형이
+        #    아니므로 _apply_stock_delta가 자동으로 재고를 더해준다).
+        for item in items:
+            err = _apply_stock_delta(conn, store_id, item["product_id"], "판매취소", item["quantity"])
+            if err:
+                conn.rollback()
+                return jsonify({"error": err}), 400
+
+        # 2) 예약 시점에 매출로 집계됐던 '선결예약' 거래를 '판매취소'로 정확히 상쇄한다.
+        #    (주문 등록 시 반올림 나머지 처리로 항목 하나가 여러 줄로 쪼개져 저장됐을 수
+        #    있으므로, 원본 거래를 그대로 조회해 같은 수량·단가로 취소 행을 만든다.
+        #    memo는 항상 "선결제 대기 #{id}"로 정확히 일치하는 값만 저장되므로, LIKE로
+        #    부분일치시키면 #1과 #12처럼 자릿수가 겹치는 다른 주문까지 잘못 걸릴 수 있어
+        #    등호(=)로 정확히 일치하는 것만 찾는다.)
+        cur.execute(
+            "SELECT * FROM stock_transactions WHERE type='선결예약' AND memo = %s",
+            (f"선결제 대기 #{order_id}",)
+        )
+        reserve_rows = cur.fetchall()
+        for row in reserve_rows:
+            cur.execute(
+                """INSERT INTO stock_transactions
+                (product_id, store_id, ref_transaction_id, type, quantity, unit_cost, unit_price, payment_method, memo)
+                VALUES (%s, %s, %s, '판매취소', %s, %s, %s, %s, %s)""",
+                (row["product_id"], row["store_id"], row["id"], row["quantity"], row["unit_cost"],
+                 row["unit_price"], row["payment_method"], f"선결제 주문 취소 (주문 #{order_id})")
+            )
+
+        # 3) 원본 기록은 보존한 채 주문 상태만 취소됨으로 바꾼다.
+        cur.execute("UPDATE pre_orders SET status = '취소됨', updated_at = CURRENT_TIMESTAMP WHERE id = %s", (order_id,))
+        conn.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ 선결제 주문 취소 오류: {e}")
+        return jsonify({"error": "취소 중 오류가 발생했습니다."}), 500
+
+
 @app.route("/api/pre_orders/<int:order_id>", methods=["DELETE"])
 def api_pre_order_delete(order_id):
     conn = get_db()
@@ -6630,10 +6695,13 @@ def api_pre_order_delete(order_id):
     if not order:
         return jsonify({"error": "주문을 찾을 수 없습니다."}), 404
     if order["status"] != "대기":
-        return jsonify({"error": "출고 완료된 주문은 삭제할 수 없습니다."}), 400
+        return jsonify({"error": "출고 완료된 주문은 삭제할 수 없습니다. (출고 완료 목록에서 '주문 취소'를 이용해주세요)"}), 400
 
     try:
-        cur.execute("DELETE FROM stock_transactions WHERE type='선결예약' AND memo LIKE %s", (f"%선결제 대기 #{order_id}%",))
+        # memo는 항상 "선결제 대기 #{id}"로 정확히 일치하는 값만 저장되므로, LIKE 부분일치
+        # 대신 등호(=)로 정확히 일치하는 것만 지운다 (#1과 #12처럼 자릿수가 겹치는 다른
+        # 주문의 기록까지 잘못 지워지는 것을 방지).
+        cur.execute("DELETE FROM stock_transactions WHERE type='선결예약' AND memo = %s", (f"선결제 대기 #{order_id}",))
         cur.execute("DELETE FROM pre_order_items WHERE pre_order_id = %s", (order_id,))
         cur.execute("DELETE FROM pre_orders WHERE id = %s", (order_id,))
         conn.commit()
