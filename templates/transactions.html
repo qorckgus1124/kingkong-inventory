@@ -667,6 +667,7 @@ function toggleAllCheckboxes() {
     });
   });
   updateSelectedUI();
+  updateBatchHeaderCheckboxes();
 }
 
 // idsCsv: 체크박스 value에 담긴 "12,13" 같은 콤마 구분 id 목록
@@ -684,6 +685,45 @@ function toggleCheckbox(idsCsv) {
   });
   updateSelectedUI();
   updateSelectAll();
+  updateBatchHeaderCheckboxes();
+}
+
+// ---------- 주문건(결제 묶음) 단위 전체 선택 ----------
+// 헤더 줄의 체크박스 하나로 그 묶음에 속한 항목 전체를 한 번에 선택/해제한다.
+function toggleBatchCheckboxes(batchIndex) {
+  const headerCb = document.querySelector(`.batch-select-checkbox[data-batch="${batchIndex}"]`);
+  if (!headerCb) return;
+  const checked = headerCb.checked;
+  document.querySelectorAll(`.row-checkbox[data-batch="${batchIndex}"]:not(:disabled)`).forEach(cb => {
+    cb.checked = checked;
+    const ids = String(cb.value).split(',').map(Number);
+    ids.forEach(id => {
+      if (checked) {
+        selectedIds.add(id);
+      } else {
+        selectedIds.delete(id);
+      }
+    });
+  });
+  updateSelectedUI();
+  updateSelectAll();
+}
+
+// 각 주문건 헤더 체크박스 상태를, 그 안의 개별 체크박스 선택 여부에 맞춰 동기화한다.
+// 일부만 선택된 경우 체크 표시를 가로줄(indeterminate)로 보여준다.
+function updateBatchHeaderCheckboxes() {
+  document.querySelectorAll('.batch-select-checkbox').forEach(headerCb => {
+    const idx = headerCb.getAttribute('data-batch');
+    const rowCbs = document.querySelectorAll(`.row-checkbox[data-batch="${idx}"]:not(:disabled)`);
+    if (rowCbs.length === 0) {
+      headerCb.checked = false;
+      headerCb.indeterminate = false;
+      return;
+    }
+    const checkedCount = document.querySelectorAll(`.row-checkbox[data-batch="${idx}"]:checked`).length;
+    headerCb.checked = checkedCount === rowCbs.length;
+    headerCb.indeterminate = checkedCount > 0 && checkedCount < rowCbs.length;
+  });
 }
 
 function updateSelectAll() {
@@ -702,8 +742,59 @@ function clearTxnSelection() {
   selectedIds.clear();
   document.getElementById('selectAll').checked = false;
   document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+  updateBatchHeaderCheckboxes();
   updateSelectedUI();
 }
+
+// ---------- 체크박스 드래그(클릭한 채로 끌기) 선택 ----------
+// mousedown한 체크박스의 "토글 후" 상태를 목표 값으로 삼고, 누른 채로 지나가는
+// 다른 체크박스들을 전부 그 값으로 맞춘다. (엑셀/파일탐색기의 드래그 선택과 동일한 방식)
+let txnDragSelecting = false;
+let txnDragTargetChecked = null;
+let txnDragTouched = new Set();
+
+function isTxnDragCheckbox(el) {
+  return !!(el && el.matches && el.matches(
+    'input[type="checkbox"].row-checkbox:not(:disabled), input[type="checkbox"].batch-select-checkbox:not(:disabled)'
+  ));
+}
+
+function handleTxnCheckboxMouseDown(e) {
+  const cb = e.target;
+  if (!isTxnDragCheckbox(cb)) return;
+  txnDragSelecting = true;
+  txnDragTargetChecked = null;
+  txnDragTouched = new Set([cb]);
+  // 기본 클릭 동작(체크 토글)이 먼저 일어나게 둔 다음, 그 결과 상태를 드래그 목표값으로 기록한다.
+  setTimeout(() => { txnDragTargetChecked = cb.checked; }, 0);
+}
+
+function handleTxnCheckboxMouseOver(e) {
+  if (!txnDragSelecting || txnDragTargetChecked === null) return;
+  const cb = e.target;
+  if (!isTxnDragCheckbox(cb) || txnDragTouched.has(cb)) return;
+  txnDragTouched.add(cb);
+  if (cb.checked !== txnDragTargetChecked) {
+    cb.checked = txnDragTargetChecked;
+    cb.dispatchEvent(new Event('change'));
+  }
+}
+
+function endTxnDragSelect() {
+  txnDragSelecting = false;
+  txnDragTargetChecked = null;
+  txnDragTouched = new Set();
+}
+
+document.addEventListener('mouseup', endTxnDragSelect);
+
+document.addEventListener('DOMContentLoaded', function() {
+  const txnTbody = document.getElementById('tbody');
+  if (txnTbody) {
+    txnTbody.addEventListener('mousedown', handleTxnCheckboxMouseDown);
+    txnTbody.addEventListener('mouseover', handleTxnCheckboxMouseOver);
+  }
+});
 
 // ---------- 삭제 (행 하나 바로 삭제, 체크박스 선택 불필요) ----------
 async function deleteSingleTransaction(id) {
@@ -879,10 +970,12 @@ function buildTransactionBatches(rows) {
   return batches;
 }
 
-function renderTransactionBatch(batch) {
+function renderTransactionBatch(batch, batchIndex) {
+  const hasSelectableItems = batch.items.some(item => !item.is_cancelled);
   const headerRow = `
     <tr class="batch-header-row" style="background:var(--card-bg);">
-      <td colspan="12" style="font-size:12px; color:var(--text-light); padding:6px 8px;">
+      <td style="padding:6px 8px;"><input type="checkbox" class="batch-select-checkbox" data-batch="${batchIndex}" onchange="toggleBatchCheckboxes(${batchIndex})" ${hasSelectableItems ? '' : 'disabled'} title="이 주문건 전체 선택"></td>
+      <td colspan="11" style="font-size:12px; color:var(--text-light); padding:6px 8px;">
         <span style="white-space:nowrap; font-weight:600; color:var(--text);">${fmtDateTime(batch.date_time)}</span>
         &nbsp;·&nbsp;<span class="badge ${TYPE_CLASS[batch.type] || 'badge-neutral'}">${batch.type}</span>
         &nbsp;·&nbsp;${escapeHtml(batch.store_name)}
@@ -915,7 +1008,7 @@ function renderTransactionBatch(batch) {
       : '';
     return `
       <tr style="${isCancelled ? 'opacity:0.45;' : ''}">
-        <td><input type="checkbox" class="row-checkbox" value="${idsCsv}" onchange="toggleCheckbox('${idsCsv}')" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : ''}></td>
+        <td><input type="checkbox" class="row-checkbox" data-batch="${batchIndex}" value="${idsCsv}" onchange="toggleCheckbox('${idsCsv}')" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : ''}></td>
         <td></td>
         <td style="font-weight:${['입고','이동입고'].includes(item.type) ? '600' : 'normal'};">${escapeHtml(item.product_name)}${mergedNote}</td>
         <td>${item.brand_name ? `<span class="brand-tag" style="background:${item.brand_color || '#8a8f98'};">${escapeHtml(item.brand_name)}</span>` : '-'}</td>
@@ -980,7 +1073,8 @@ async function load() {
       updateSelectedUI();
 
       const batches = buildTransactionBatches(rows);
-      tbody.innerHTML = batches.map(renderTransactionBatch).join('');
+      tbody.innerHTML = batches.map((b, i) => renderTransactionBatch(b, i)).join('');
+      updateBatchHeaderCheckboxes();
     }
 
     document.getElementById('totalCount').textContent = totalItems;
