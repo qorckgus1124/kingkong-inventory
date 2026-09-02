@@ -3730,9 +3730,20 @@ def api_daily_report():
                  OR (t.type = '입고' AND EXISTS (
                         SELECT 1 FROM stock_transactions cx
                         WHERE cx.ref_transaction_id = t.id AND cx.type = '입고취소'))
-                 OR (t.type = '선결출고' AND EXISTS (
-                        SELECT 1 FROM stock_transactions cx
-                        WHERE cx.ref_transaction_id = t.id AND cx.type = '선결출고취소'))
+                 OR (t.type = '선결출고' AND (
+                        -- 취소 시 남기는 '선결출고취소' 표시가 있으면 그걸로 판단하되,
+                        -- 이 표시 로직이 생기기 전에 이미 취소된 과거 주문은 표시가
+                        -- 없을 수 있으므로, memo에 적힌 주문번호(#N)로 pre_orders의
+                        -- 실제 상태(취소됨)를 직접 조회해 한 번 더 확인한다. 이렇게 하면
+                        -- 표시가 누락된 과거 취소건도 자동으로 걸러진다.
+                        EXISTS (
+                            SELECT 1 FROM stock_transactions cx
+                            WHERE cx.ref_transaction_id = t.id AND cx.type = '선결출고취소')
+                     OR EXISTS (
+                            SELECT 1 FROM pre_orders po
+                            WHERE po.id = NULLIF(substring(t.memo from '#(\\d+)'), '')::integer
+                              AND po.status = '취소됨')
+                 ))
                  OR (t.type IN ('이동출고', '이동입고') AND EXISTS (
                         SELECT 1 FROM stock_movements sm
                         WHERE sm.id = t.movement_id AND sm.status = '취소'))
@@ -3765,9 +3776,15 @@ def api_daily_report():
                  OR (t.type = '입고' AND EXISTS (
                         SELECT 1 FROM stock_transactions cx
                         WHERE cx.ref_transaction_id = t.id AND cx.type = '입고취소'))
-                 OR (t.type = '선결출고' AND EXISTS (
-                        SELECT 1 FROM stock_transactions cx
-                        WHERE cx.ref_transaction_id = t.id AND cx.type = '선결출고취소'))
+                 OR (t.type = '선결출고' AND (
+                        EXISTS (
+                            SELECT 1 FROM stock_transactions cx
+                            WHERE cx.ref_transaction_id = t.id AND cx.type = '선결출고취소')
+                     OR EXISTS (
+                            SELECT 1 FROM pre_orders po
+                            WHERE po.id = NULLIF(substring(t.memo from '#(\\d+)'), '')::integer
+                              AND po.status = '취소됨')
+                 ))
                  OR (t.type IN ('이동출고', '이동입고') AND EXISTS (
                         SELECT 1 FROM stock_movements sm
                         WHERE sm.id = t.movement_id AND sm.status = '취소'))
