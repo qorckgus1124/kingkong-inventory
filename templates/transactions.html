@@ -1058,6 +1058,12 @@ function buildTransactionBatches(rows) {
     item.ids.push(t.id);
     if (t.memo && t.memo !== '-') item.memo = t.memo;
   }
+  // 배치별 금액 합계(취소된 건 제외: 단가 × 수량)를 미리 계산해둔다.
+  for (const b of batches) {
+    b.totalAmount = b.items
+      .filter(item => !item.is_cancelled)
+      .reduce((sum, item) => sum + (Number(item.unit_price) || 0) * (Number(item.quantity) || 0), 0);
+  }
   return batches;
 }
 
@@ -1093,6 +1099,7 @@ function renderTransactionBatch(batch, batchIndex) {
         &nbsp;·&nbsp;<span class="badge ${TYPE_CLASS[batch.type] || 'badge-neutral'}">${batch.type}</span>
         &nbsp;·&nbsp;${escapeHtml(batch.store_name)}
         ${batch.staff ? `&nbsp;·&nbsp;담당 ${escapeHtml(batch.staff)}` : ''}
+        &nbsp;·&nbsp;<span style="font-weight:700; color:var(--text);">합계 ${fmt(batch.totalAmount)}원</span>
         ${cancelOrderBtn}
       </td>
     </tr>
