@@ -1,0 +1,1513 @@
+{% extends "base.html" %}
+{% block content %}
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-transfer"></use></svg>입출고 관리</h1>
+<div class="subtitle">제품명을 입력하면 자동완성으로 빠르게 찾을 수 있어요. 재고는 등록 즉시 반영됩니다.</div>
+
+<!-- ============================================================ -->
+<!-- 1. 기록용 업로드 (재고 변동 없음) -->
+<!-- ============================================================ -->
+<div class="card upload-area">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+    <div>
+      <strong>📋 기록용 출고 내역 업로드</strong>
+      <div style="font-size:12px; color:var(--text-light);">📌 재고 변동 없이 출고 이력만 기록합니다. (실제 재고가 차감되지 않습니다)</div>
+      <div style="font-size:11px; color:var(--text-light);">필수: 일시, 제품명, 브랜드, 카테고리, 수량</div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <select id="recordStoreSelect" style="padding:4px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
+        <option value="">기본 매장</option>
+      </select>
+      <button onclick="document.getElementById('recordFileInput').click()" class="primary">📤 기록 업로드</button>
+      <button onclick="downloadTemplate(false)">📥 템플릿 다운로드</button>
+      <input type="file" id="recordFileInput" accept=".csv" style="display:none" onchange="uploadRecord(event)">
+    </div>
+  </div>
+  <div id="recordUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:var(--radius); background:var(--card-bg); border:1px solid var(--border); min-height:20px;"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 2. 출고용 업로드 (재고 차감) -->
+<!-- ============================================================ -->
+<div class="card upload-area" style="border-left: 4px solid var(--danger); background: var(--danger-light);">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+    <div>
+      <strong style="color:var(--danger);">🚚 출고용 내역 업로드 (재고 차감)</strong>
+      <div style="font-size:12px; color:var(--danger);">⚠️ 실제 재고를 차감하는 출고 내역입니다. 신중하게 업로드하세요.</div>
+      <div style="font-size:11px; color:var(--text-light);">필수: 일시, 제품명, 브랜드, 카테고리, 수량</div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <select id="outboundStoreSelect" style="padding:4px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input-bg); color:var(--text);">
+        <option value="">기본 매장</option>
+      </select>
+      <button onclick="document.getElementById('outboundFileInput').click()" class="primary" style="background:var(--danger); border-color:var(--danger);">📤 출고 업로드</button>
+      <button onclick="downloadTemplate(true)">📥 템플릿 다운로드</button>
+      <input type="file" id="outboundFileInput" accept=".csv" style="display:none" onchange="uploadOutbound(event)">
+    </div>
+  </div>
+  <div id="outboundUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:var(--radius); background:var(--card-bg); border:1px solid var(--border); min-height:20px;"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 3. 개별 등록 영역 (장바구니 방식) -->
+<!-- ============================================================ -->
+<div class="card">
+  <div style="margin-bottom:12px;">
+    <strong>📝 입출고 등록</strong>
+    <div style="font-size:12px; color:var(--text-light); margin-top:2px;">제품을 클릭해 장바구니에 담고 유형·수량·메모를 설정한 뒤 등록하세요.</div>
+  </div>
+
+  <!-- 공통 설정: 매장 / 유형 / 담당자 -->
+  <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px;">
+    <div class="form-field" style="min-width:140px; margin:0;">
+      <label style="font-size:12px;">매장</label>
+      <select id="txnStore" onchange="onTxnStoreChange()"></select>
+    </div>
+    <div class="form-field" style="min-width:120px; margin:0;">
+      <label style="font-size:12px;">유형</label>
+      <select id="txnType">
+        <option value="입고">입고</option>
+        <option value="출고">출고 (매출 제외)</option>
+        <option value="반품">반품</option>
+        <option value="폐기">폐기</option>
+        <option value="조정">조정</option>
+      </select>
+    </div>
+    <div class="form-field" style="min-width:120px; margin:0;">
+      <label style="font-size:12px;">담당자</label>
+      <input type="text" id="txnStaff" placeholder="이름 (선택)">
+    </div>
+    <div class="form-field" style="min-width:180px; margin:0;">
+      <label style="font-size:12px;">메모 (전체 공통)</label>
+      <input type="text" id="txnMemo" placeholder="예: 시연, 불량 등">
+    </div>
+  </div>
+
+  <div class="sale-layout">
+    <!-- 좌: 제품 그리드 -->
+    <div class="sale-left">
+      <div class="toolbar" style="margin-bottom:12px; padding:0;">
+        <span class="search-field" style="width:220px;">
+          <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
+          <input type="text" id="txnSearchBox" placeholder="제품명 검색" autocomplete="off" oninput="onTxnSearchInput()">
+        </span>
+        <button onclick="txnLoadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
+      </div>
+      <div class="product-grid" id="txnProductGrid" style="grid-template-columns:repeat(auto-fill,minmax(130px,1fr));">
+        <div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 '전체 보기'를 클릭하세요.</div>
+      </div>
+    </div>
+
+    <!-- 우: 장바구니 -->
+    <div class="sale-right" style="width:300px;">
+      <div class="cart-title">🛒 등록 목록</div>
+      <div class="cart-items-wrap" style="flex:1; overflow-y:auto; max-height:320px;">
+        <div id="txnCartList"><div class="cart-empty">담긴 제품이 없습니다</div></div>
+      </div>
+      <div style="border-top:1px solid var(--border); padding-top:12px; margin-top:8px;">
+        <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--text-light); margin-bottom:10px;">
+          <span>총 <span id="txnCartCount">0</span>건</span>
+          <span id="txnCartTotal" style="font-weight:600; color:var(--text);"></span>
+        </div>
+        <button class="primary" style="width:100%; padding:12px; font-size:15px;" onclick="registerTxnCart()" id="registerTxnBtn">등록하기</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 5. 필터/툴바 -->
+<!-- ============================================================ -->
+<div class="toolbar" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px;">
+  <label style="font-size:12px; color:var(--text-light);">조회 줄수:
+    <input type="number" id="rowsPerPage" value="20" min="5" max="100" style="width:60px;" onchange="changePage(0)">
+  </label>
+  <input type="date" id="filterStart" onchange="changePage(0)">
+  <span style="align-self:center; color:var(--text-light); font-size:12px;">~</span>
+  <input type="date" id="filterEnd" onchange="changePage(0)">
+  <select id="filterType" onchange="changePage(0)">
+    <option value="">전체 유형</option>
+    <option value="입고">입고</option>
+    <option value="판매출고">판매출고</option>
+    <option value="반품">반품</option>
+    <option value="폐기">폐기</option>
+    <option value="조정">조정</option>
+  </select>
+  <select id="filterStore" onchange="changePage(0)"><option value="">전체 매장</option></select>
+  <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;">
+    <input type="checkbox" id="includeCancelled" onchange="changePage(0)"> 취소 내역 포함
+  </label>
+  <button onclick="clearFilters()">필터 초기화</button>
+</div>
+
+<!-- 일괄 작업 바: 체크박스 선택 시에만 노출 -->
+<div id="bulkBar" class="bulk-bar" style="display:none;">
+  <span><strong id="bulkCount">0</strong>개 선택됨</span>
+  <div class="bulk-actions">
+    <select id="batchStatusSelect" style="height:26px; padding:0 6px;">
+      <option value="입고">입고</option>
+      <option value="판매출고">판매출고</option>
+      <option value="반품">반품</option>
+      <option value="폐기">폐기</option>
+      <option value="조정">조정</option>
+    </select>
+    <button onclick="batchStatusChange()">유형 일괄 변경</button>
+    <button onclick="openBulkEditModal()">✏️ 일괄 수정</button>
+    <button class="danger" onclick="deleteSelected()">🗑️ 선택 삭제</button>
+    <button onclick="clearTxnSelection()">선택 해제</button>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 6. 페이지네이션 상단 -->
+<!-- ============================================================ -->
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:13px; color:var(--text-light);">
+  <span>총 <span id="totalCount">0</span>건</span>
+  <div>
+    <button onclick="changePage(-1)" id="prevPageBtn">◀ 이전</button>
+    <span id="pageInfo">1 / 1</span>
+    <button onclick="changePage(1)" id="nextPageBtn">다음 ▶</button>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 7. 입출고 목록 테이블 -->
+<!-- ============================================================ -->
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:40px;"><input type="checkbox" id="selectAll" onchange="toggleAllCheckboxes()"></th>
+        <th>일시</th>
+        <th>제품명</th>
+        <th>브랜드</th>
+        <th>매장</th>
+        <th>유형</th>
+        <th>단가</th>
+        <th>수량</th>
+        <th>결제수단</th>
+        <th>담당자</th>
+        <th>메모</th>
+        <th style="width:160px;">관리</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<!-- 8. 페이지네이션 하단 -->
+<!-- ============================================================ -->
+<div style="display:flex; justify-content:center; gap:8px; margin-top:12px;">
+  <button onclick="changePage(-1)" class="page-btn">◀</button>
+  <span id="pageInfoBottom" style="font-size:13px; color:var(--text-light);">1 / 1</span>
+  <button onclick="changePage(1)" class="page-btn">▶</button>
+</div>
+
+<!-- ============================================================ -->
+<!-- 8-1. 입출고 수정 모달 -->
+<!-- ============================================================ -->
+<div class="modal-overlay" id="editTransModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:var(--card-bg); border:1px solid var(--glass-border); border-radius:var(--radius-card); padding:24px; width:min(420px, 92vw); max-height:90vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 style="margin:0; color:var(--text);">✏️ 입출고 내역 수정</h3>
+      <span style="cursor:pointer; font-size:18px; color:var(--text-light);" onclick="closeEditModal()">✕</span>
+    </div>
+    <input type="hidden" id="editTransIds">
+    <div style="font-size:13px; color:var(--text-light); margin-bottom:6px;" id="editTransProductName"></div>
+    <div style="font-size:11px; color:var(--warning, #d9a441); margin-bottom:10px;" id="editTransGroupNote"></div>
+    <div class="form-field" style="margin-bottom:10px;">
+      <label>매장</label>
+      <select id="editTransStore" style="width:100%;"></select>
+    </div>
+    <div class="form-field" style="margin-bottom:10px;">
+      <label>유형</label>
+      <select id="editTransType" style="width:100%;">
+        <option value="입고">입고</option>
+        <option value="판매출고">판매출고</option>
+        <option value="출고">출고 (매출 제외)</option>
+        <option value="반품">반품</option>
+        <option value="폐기">폐기</option>
+        <option value="조정">조정</option>
+        <option value="실사조정">실사조정</option>
+        <option value="이동출고">이동출고</option>
+        <option value="이동입고">이동입고</option>
+        <option value="선결예약">선결예약</option>
+      </select>
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>수량</label>
+        <input type="number" id="editTransQty" min="1" style="width:100%;">
+      </div>
+      <div class="form-field" style="flex:1;">
+        <label>판매가(단가)</label>
+        <input type="number" id="editTransPrice" min="0" style="width:100%;">
+      </div>
+    </div>
+    <div class="form-field" style="margin-bottom:10px;">
+      <label>결제수단</label>
+      <select id="editTransPayment" style="width:100%;">
+        <option value="">미지정</option>
+        <option value="현금">현금</option>
+        <option value="카드">카드</option>
+        <option value="계좌이체">계좌이체</option>
+      </select>
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>날짜</label>
+        <input type="date" id="editTransDate" style="width:100%;">
+      </div>
+      <div class="form-field" style="flex:1;">
+        <label>시간</label>
+        <input type="time" id="editTransTime" style="width:100%;">
+      </div>
+    </div>
+    <div class="form-field" style="margin-bottom:10px;">
+      <label>담당자</label>
+      <input type="text" id="editTransStaff" style="width:100%;">
+    </div>
+    <div class="form-field" style="margin-bottom:14px;">
+      <label>메모</label>
+      <input type="text" id="editTransMemo" style="width:100%;">
+    </div>
+    <div style="font-size:11px; color:var(--text-light); margin-bottom:14px;">
+      💡 재고 수량은 저장 시 기존 내역의 영향을 되돌리고 수정된 값으로 다시 반영됩니다.
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="closeEditModal()">취소</button>
+      <button class="primary" onclick="saveEditTransaction()">💾 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 8-2. 선택 항목 일괄 수정 모달 -->
+<!-- ============================================================ -->
+<div class="modal-overlay" id="bulkEditModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:var(--card-bg); border:1px solid var(--glass-border); border-radius:var(--radius-card); padding:24px; width:min(440px, 92vw); max-height:90vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 style="margin:0; color:var(--text);">✏️ 선택 항목 일괄 수정</h3>
+      <span style="cursor:pointer; font-size:18px; color:var(--text-light);" onclick="closeBulkEditModal()">✕</span>
+    </div>
+    <div style="font-size:13px; color:var(--text-light); margin-bottom:10px;" id="bulkEditCount"></div>
+    <div style="font-size:11px; color:var(--text-light); margin-bottom:14px;">
+      💡 체크한 항목만 선택한 모든 건에 동일하게 적용됩니다. 수량·단가는 건마다 달라서 일괄 수정 대상에서 뺐어요 — 필요하면 각 줄의 ✏️ 수정을 이용해주세요.
+    </div>
+
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyStore" onchange="document.getElementById('bulkEditStore').disabled=!this.checked">
+      <label style="width:70px; margin:0;">매장</label>
+      <select id="bulkEditStore" style="flex:1;" disabled></select>
+    </div>
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyType" onchange="document.getElementById('bulkEditType').disabled=!this.checked">
+      <label style="width:70px; margin:0;">유형</label>
+      <select id="bulkEditType" style="flex:1;" disabled>
+        <option value="입고">입고</option>
+        <option value="판매출고">판매출고</option>
+        <option value="출고">출고 (매출 제외)</option>
+        <option value="반품">반품</option>
+        <option value="폐기">폐기</option>
+        <option value="조정">조정</option>
+        <option value="실사조정">실사조정</option>
+        <option value="이동출고">이동출고</option>
+        <option value="이동입고">이동입고</option>
+        <option value="선결예약">선결예약</option>
+      </select>
+    </div>
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyPayment" onchange="document.getElementById('bulkEditPayment').disabled=!this.checked">
+      <label style="width:70px; margin:0;">결제수단</label>
+      <select id="bulkEditPayment" style="flex:1;" disabled>
+        <option value="">미지정</option>
+        <option value="현금">현금</option>
+        <option value="카드">카드</option>
+        <option value="계좌이체">계좌이체</option>
+      </select>
+    </div>
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyDate" onchange="document.getElementById('bulkEditDate').disabled=!this.checked; document.getElementById('bulkEditTime').disabled=!this.checked;">
+      <label style="width:70px; margin:0;">날짜/시간</label>
+      <input type="date" id="bulkEditDate" style="flex:1;" disabled>
+      <input type="time" id="bulkEditTime" style="flex:1;" disabled>
+    </div>
+    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyStaff" onchange="document.getElementById('bulkEditStaff').disabled=!this.checked">
+      <label style="width:70px; margin:0;">담당자</label>
+      <input type="text" id="bulkEditStaff" style="flex:1;" disabled>
+    </div>
+    <div style="margin-bottom:14px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="bulkApplyMemo" onchange="document.getElementById('bulkEditMemo').disabled=!this.checked">
+      <label style="width:70px; margin:0;">메모</label>
+      <input type="text" id="bulkEditMemo" style="flex:1;" disabled>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="closeBulkEditModal()">취소</button>
+      <button class="primary" onclick="saveBulkEdit()">💾 일괄 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 9. JavaScript -->
+<!-- ============================================================ -->
+<script>
+let stores = [];
+const STORE_KEY = 'selected_store_id';
+let currentPage = 1;
+let totalPages = 1;
+let totalItems = 0;
+let selectedIds = new Set();
+let currentRows = [];
+
+const TYPE_CLASS = {
+  '입고': 'badge-success', '입고취소': 'badge-success', '이동입고': 'badge-success',
+  '판매출고': 'badge-danger', '출고': 'badge-warning', '반품': 'badge-danger', '폐기': 'badge-danger', '이동출고': 'badge-danger', '선결출고': 'badge-danger',
+};
+
+const PAYMENT_METHODS = ['', '현금', '카드', '계좌이체'];
+
+function paymentMethodSelect(id, currentMethod, disabled) {
+  const normalized = PAYMENT_METHODS.includes(currentMethod) ? currentMethod : '';
+  const options = PAYMENT_METHODS.map(method => {
+    const label = method || '미지정';
+    return `<option value="${method}" ${method === normalized ? 'selected' : ''}>${label}</option>`;
+  }).join('');
+  return `<select aria-label="결제수단" data-previous-value="${normalized}" style="min-width:88px; font-size:12px; padding:4px 6px;" ${disabled ? 'disabled' : ''}
+    onchange="changeTransactionPayment(${id}, this.value, this)">${options}</select>`;
+}
+
+async function changeTransactionPayment(id, paymentMethod, selectEl) {
+  const previousValue = selectEl.dataset.previousValue ?? '';
+  selectEl.disabled = true;
+  try {
+    await api(`/api/transactions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ payment_method: paymentMethod || null })
+    });
+    selectEl.dataset.previousValue = paymentMethod || '';
+    toast('결제수단을 변경했습니다.', false, '✅');
+  } catch (e) {
+    console.error('결제수단 수정 오류:', e);
+    selectEl.value = previousValue;
+    toast(e.message || '결제수단 변경 중 오류가 발생했습니다.', true, '⚠️');
+  } finally {
+    selectEl.disabled = false;
+  }
+}
+
+// ---------- 매장 로드 ----------
+async function loadStores() {
+  try {
+    stores = await api('/api/stores');
+    const opts = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    document.getElementById('filterStore').innerHTML = '<option value="">전체 매장</option>' + opts;
+
+    // 이미 만들어진 등록 카드가 있다면 매장 목록을 채워준다.
+    document.querySelectorAll('.f_store').forEach(sel => fillStoreSelect(sel));
+
+    // txnStore (장바구니 등록용 매장) 채우기
+    const txnStoreSel = document.getElementById('txnStore');
+    if (txnStoreSel) {
+      txnStoreSel.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    }
+
+    // 🔥 전역 매장 ID 적용
+    const globalStoreId = localStorage.getItem('global_store_id');
+    if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
+      document.getElementById('filterStore').value = globalStoreId;
+      const txnSel = document.getElementById('txnStore');
+      if (txnSel) txnSel.value = globalStoreId;
+      localStorage.setItem(STORE_KEY, globalStoreId); // 기존 키도 함께 업데이트
+    } else if (stores.length > 0) {
+      document.getElementById('filterStore').value = stores[0].id;
+      localStorage.setItem(STORE_KEY, stores[0].id);
+      localStorage.setItem('global_store_id', stores[0].id);
+    }
+  } catch (e) {
+    console.error('매장 로드 오류:', e);
+    toast('매장 목록을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// 개별 등록 카드의 매장 select 채우기
+function fillStoreSelect(selectEl) {
+  if (!stores || stores.length === 0) {
+    selectEl.innerHTML = '<option value="">매장 없음</option>';
+    return;
+  }
+  selectEl.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  const globalStoreId = localStorage.getItem('global_store_id') || localStorage.getItem(STORE_KEY);
+  if (globalStoreId && stores.some(s => s.id == globalStoreId)) {
+    selectEl.value = globalStoreId;
+  } else {
+    selectEl.value = stores[0].id;
+  }
+}
+
+// ---------- 업로드 드롭다운용 매장 로드 ----------
+async function loadStoreSelects() {
+  try {
+    const storesData = await api('/api/stores');
+    const opts = storesData.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    document.getElementById('recordStoreSelect').innerHTML = '<option value="">기본 매장</option>' + opts;
+    document.getElementById('outboundStoreSelect').innerHTML = '<option value="">기본 매장</option>' + opts;
+  } catch (e) {
+    console.error('업로드 매장 목록 로드 오류:', e);
+  }
+}
+
+document.addEventListener('change', function(e) {
+  if (e.target.classList && e.target.classList.contains('f_store')) {
+    localStorage.setItem('global_store_id', e.target.value);
+    localStorage.setItem(STORE_KEY, e.target.value);
+  }
+});
+
+// ================================================================
+// 📝 장바구니 방식 입출고 등록
+// ================================================================
+let txnCart = {};  // { productId: { product, qty } }
+let txnProducts = [];
+const txnSearchGuard = makeSearchGuard();
+
+// 매장 변경 → 장바구니 비움
+function onTxnStoreChange() {
+  const val = document.getElementById('txnStore').value;
+  if (val) localStorage.setItem('global_store_id', val);
+  txnCart = {};
+  renderTxnCart();
+  document.getElementById('txnProductGrid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+}
+
+// 검색
+function onTxnSearchInput() {
+  const q = document.getElementById('txnSearchBox').value.trim();
+  if (q) txnLoadProducts();
+  else document.getElementById('txnProductGrid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
+}
+
+function txnLoadAllProducts() {
+  document.getElementById('txnSearchBox').value = '';
+  txnLoadProducts();
+}
+
+async function txnLoadProducts() {
+  const store_id = document.getElementById('txnStore').value;
+  const q = document.getElementById('txnSearchBox').value.trim();
+  const params = new URLSearchParams({ sort: 'qty', order: 'desc' });
+  if (store_id) params.append('store_id', store_id);
+  if (q) params.append('q', q);
+  const myToken = txnSearchGuard.next();
+  try {
+    const result = await apiSearch('/api/products?' + params.toString());
+    if (!txnSearchGuard.isCurrent(myToken)) return;
+    txnProducts = result;
+    renderTxnProductGrid();
+  } catch (e) {
+    if (!txnSearchGuard.isCurrent(myToken)) return;
+    console.error('제품 로드 오류:', e);
+  }
+}
+
+function renderTxnProductGrid() {
+  const grid = document.getElementById('txnProductGrid');
+  if (!txnProducts || txnProducts.length === 0) {
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">📦</span>표시할 제품이 없습니다.</div>';
+    return;
+  }
+  grid.innerHTML = txnProducts.map(p => {
+    const inCart = txnCart[p.id] ? txnCart[p.id].qty : 0;
+    return `
+      <div class="product-card" onclick="addToTxnCart(${p.id})">
+        <div class="pname">${escapeHtml(p.name)}</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+          ${p.brand_name ? `<span class="brand-tag" style="background:${p.brand_color||'#8a8f98'}; font-size:10px;">${escapeHtml(p.brand_name)}</span>` : '<span></span>'}
+          <span class="pqty">재고 ${fmt(p.qty)}</span>
+        </div>
+        ${inCart > 0 ? `<div style="font-size:12px; color:var(--accent); margin-top:4px;">✓ ${inCart}개 담김</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function addToTxnCart(pid) {
+  const p = txnProducts.find(p => p.id === pid);
+  if (!p) return;
+  if (txnCart[pid]) {
+    txnCart[pid].qty += 1;
+  } else {
+    txnCart[pid] = { product: p, qty: 1 };
+  }
+  renderTxnCart();
+  renderTxnProductGrid();
+}
+
+function changeTxnQty(pid, delta) {
+  if (!txnCart[pid]) return;
+  const newQty = txnCart[pid].qty + delta;
+  if (newQty <= 0) { delete txnCart[pid]; }
+  else { txnCart[pid].qty = newQty; }
+  renderTxnCart();
+  renderTxnProductGrid();
+}
+
+function setTxnQty(pid, value) {
+  const qty = parseInt(value);
+  if (!txnCart[pid]) return;
+  if (isNaN(qty) || qty < 1) { renderTxnCart(); return; }
+  txnCart[pid].qty = qty;
+  renderTxnCart();
+}
+
+function removeFromTxnCart(pid) {
+  delete txnCart[pid];
+  renderTxnCart();
+  renderTxnProductGrid();
+}
+
+function renderTxnCart() {
+  const list = document.getElementById('txnCartList');
+  const entries = Object.entries(txnCart);
+  if (entries.length === 0) {
+    list.innerHTML = '<div class="cart-empty">담긴 제품이 없습니다</div>';
+    document.getElementById('txnCartCount').textContent = '0';
+    document.getElementById('txnCartTotal').textContent = '';
+    return;
+  }
+  list.innerHTML = entries.map(([pid, item]) => `
+    <div class="cart-item">
+      <div class="ci-name">
+        ${escapeHtml(item.product.name)}
+        <div class="ci-sub">재고 ${fmt(item.product.qty)} · 원가 ${fmt(item.product.cost_price)}원</div>
+      </div>
+      <div class="qty-ctrl">
+        <button onclick="changeTxnQty(${pid}, -1)">-</button>
+        <input type="number" class="qty-input" value="${item.qty}" min="1"
+               onchange="setTxnQty(${pid}, this.value)" onfocus="this.select()">
+        <button onclick="changeTxnQty(${pid}, 1)">+</button>
+      </div>
+      <button onclick="removeFromTxnCart(${pid})" style="color:var(--danger); border:none; background:none; font-size:16px; padding:0 4px;">✕</button>
+    </div>
+  `).join('');
+  const totalQty = entries.reduce((s, [, it]) => s + it.qty, 0);
+  document.getElementById('txnCartCount').textContent = entries.length;
+  document.getElementById('txnCartTotal').textContent = `총 ${fmt(totalQty)}개`;
+}
+
+async function registerTxnCart() {
+  const entries = Object.entries(txnCart);
+  if (entries.length === 0) { toast('담긴 제품이 없습니다.', true, '⚠️'); return; }
+  const storeId = document.getElementById('txnStore').value;
+  if (!storeId) { toast('매장을 선택해주세요.', true, '⚠️'); return; }
+  const type = document.getElementById('txnType').value;
+  const staff = document.getElementById('txnStaff').value.trim() || null;
+  const memo = document.getElementById('txnMemo').value.trim() || null;
+
+  const btn = document.getElementById('registerTxnBtn');
+  btn.disabled = true;
+  let ok = 0, fail = 0;
+  for (const [pid, item] of entries) {
+    try {
+      await api('/api/transactions', { method: 'POST', body: JSON.stringify({
+        product_id: parseInt(pid), store_id: storeId, type, quantity: item.qty, staff, memo
+      })});
+      ok++;
+    } catch (e) {
+      console.error('등록 오류:', e);
+      fail++;
+    }
+  }
+  btn.disabled = false;
+  if (ok > 0) {
+    toast(`✅ ${ok}건 등록 완료${fail ? ` (실패 ${fail}건)` : ''}`, fail > 0, fail ? '⚠️' : '✅');
+    txnCart = {};
+    renderTxnCart();
+    renderTxnProductGrid();
+    load();
+    refreshTodayRevenue?.();
+  } else {
+    toast('등록 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ---------- 필터 ----------
+function clearFilters() {
+  document.getElementById('filterStart').value = '';
+  document.getElementById('filterEnd').value = '';
+  document.getElementById('filterType').value = '';
+  document.getElementById('filterStore').value = '';
+  document.getElementById('includeCancelled').checked = false;
+  currentPage = 1;
+  load();
+}
+
+// ---------- 페이지네이션 ----------
+function changePage(delta) {
+  if (delta === 0) {
+    currentPage = 1;
+  } else {
+    const newPage = currentPage + delta;
+    if (newPage < 1 || newPage > totalPages) return;
+    currentPage = newPage;
+  }
+  load();
+}
+
+// ---------- 체크박스 ----------
+function toggleAllCheckboxes() {
+  const checked = document.getElementById('selectAll').checked;
+  document.querySelectorAll('.row-checkbox:not(:disabled)').forEach(cb => {
+    cb.checked = checked;
+    const ids = String(cb.value).split(',').map(Number);
+    ids.forEach(id => {
+      if (checked) {
+        selectedIds.add(id);
+      } else {
+        selectedIds.delete(id);
+      }
+    });
+  });
+  updateSelectedUI();
+  updateBatchHeaderCheckboxes();
+}
+
+// idsCsv: 체크박스 value에 담긴 "12,13" 같은 콤마 구분 id 목록
+// (병합된 줄은 실제로 여러 건의 거래를 대표하므로, 체크박스 하나로 전체를 함께 선택/해제한다)
+function toggleCheckbox(idsCsv) {
+  const cb = document.querySelector(`.row-checkbox[value="${idsCsv}"]`);
+  if (!cb) return;
+  const ids = String(idsCsv).split(',').map(Number);
+  ids.forEach(id => {
+    if (cb.checked) {
+      selectedIds.add(id);
+    } else {
+      selectedIds.delete(id);
+    }
+  });
+  updateSelectedUI();
+  updateSelectAll();
+  updateBatchHeaderCheckboxes();
+}
+
+// ---------- 주문건(결제 묶음) 단위 전체 선택 ----------
+// 헤더 줄의 체크박스 하나로 그 묶음에 속한 항목 전체를 한 번에 선택/해제한다.
+function toggleBatchCheckboxes(batchIndex) {
+  const headerCb = document.querySelector(`.batch-select-checkbox[data-batch="${batchIndex}"]`);
+  if (!headerCb) return;
+  const checked = headerCb.checked;
+  document.querySelectorAll(`.row-checkbox[data-batch="${batchIndex}"]:not(:disabled)`).forEach(cb => {
+    cb.checked = checked;
+    const ids = String(cb.value).split(',').map(Number);
+    ids.forEach(id => {
+      if (checked) {
+        selectedIds.add(id);
+      } else {
+        selectedIds.delete(id);
+      }
+    });
+  });
+  updateSelectedUI();
+  updateSelectAll();
+}
+
+// 각 주문건 헤더 체크박스 상태를, 그 안의 개별 체크박스 선택 여부에 맞춰 동기화한다.
+// 일부만 선택된 경우 체크 표시를 가로줄(indeterminate)로 보여준다.
+function updateBatchHeaderCheckboxes() {
+  document.querySelectorAll('.batch-select-checkbox').forEach(headerCb => {
+    const idx = headerCb.getAttribute('data-batch');
+    const rowCbs = document.querySelectorAll(`.row-checkbox[data-batch="${idx}"]:not(:disabled)`);
+    if (rowCbs.length === 0) {
+      headerCb.checked = false;
+      headerCb.indeterminate = false;
+      return;
+    }
+    const checkedCount = document.querySelectorAll(`.row-checkbox[data-batch="${idx}"]:checked`).length;
+    headerCb.checked = checkedCount === rowCbs.length;
+    headerCb.indeterminate = checkedCount > 0 && checkedCount < rowCbs.length;
+  });
+}
+
+function updateSelectAll() {
+  const allCbs = document.querySelectorAll('.row-checkbox:not(:disabled)');
+  const checkedCbs = document.querySelectorAll('.row-checkbox:checked');
+  document.getElementById('selectAll').checked = allCbs.length > 0 && allCbs.length === checkedCbs.length;
+}
+
+function updateSelectedUI() {
+  const count = selectedIds.size;
+  document.getElementById('bulkCount').textContent = count;
+  document.getElementById('bulkBar').style.display = count > 0 ? 'flex' : 'none';
+}
+
+function clearTxnSelection() {
+  selectedIds.clear();
+  document.getElementById('selectAll').checked = false;
+  document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+  updateBatchHeaderCheckboxes();
+  updateSelectedUI();
+}
+
+// ---------- 체크박스 드래그(클릭한 채로 끌기) 선택 ----------
+// 누른 시작점 체크박스의 "토글될 값"을 그 자리에서 바로 계산해 적용하고, 누른 채로
+// 지나가는 다른 체크박스들도 전부 그 값으로 맞춘다. (엑셀/파일탐색기의 드래그 선택과 동일)
+//
+// ⚠️ 예전 구현은 mousedown 시점엔 목표값을 모른 채 setTimeout(0)으로 "브라우저가 클릭
+// 기본 동작으로 토글해줄 때까지" 기다렸는데, 실제로 마우스를 눌러서 다른 체크박스로
+// 끌고 가면(=드래그) 시작 체크박스에서 mouseup이 일어나지 않으므로 click 이벤트 자체가
+// 발생하지 않아 토글이 절대 일어나지 않았다. 그 결과 목표값이 계속 null로 남아 드래그가
+// 통째로 동작하지 않았다. 지금은 mousedown/touchstart 시점에 목표값을 직접 계산해서
+// 그 자리에서 바로 반영하고, 나중에 도착하는 네이티브 click은 무시(preventDefault)해서
+// 두 번 토글되는 것을 막는다. 같은 이유로 터치(모바일/PWA)에서는 애초에 mousedown류
+// 이벤트가 발생하지 않으므로 touchstart/touchmove로 동일한 로직을 별도 구현했다.
+let txnDragSelecting = false;
+let txnDragTargetChecked = null;
+let txnDragTouched = new Set();
+
+function isTxnDragCheckbox(el) {
+  return !!(el && el.matches && el.matches(
+    'input[type="checkbox"].row-checkbox:not(:disabled), input[type="checkbox"].batch-select-checkbox:not(:disabled)'
+  ));
+}
+
+function txnDragApply(cb) {
+  txnDragTouched.add(cb);
+  if (cb.checked !== txnDragTargetChecked) {
+    cb.checked = txnDragTargetChecked;
+    cb.dispatchEvent(new Event('change'));
+  }
+}
+
+// ----- 마우스(데스크톱) -----
+function handleTxnCheckboxMouseDown(e) {
+  const cb = e.target;
+  if (!isTxnDragCheckbox(cb)) return;
+  txnDragSelecting = true;
+  txnDragTargetChecked = !cb.checked;
+  txnDragTouched = new Set();
+  txnDragApply(cb);
+}
+
+function handleTxnCheckboxMouseOver(e) {
+  if (!txnDragSelecting || txnDragTargetChecked === null) return;
+  const cb = e.target;
+  if (!isTxnDragCheckbox(cb) || txnDragTouched.has(cb)) return;
+  txnDragApply(cb);
+}
+
+// mousedown에서 이미 상태를 직접 바꿔놨으므로, 뒤이어 브라우저가 보내는 네이티브
+// click의 기본 동작(다시 토글)은 막아서 이중 토글을 방지한다.
+function handleTxnCheckboxClick(e) {
+  const cb = e.target;
+  if (isTxnDragCheckbox(cb) && txnDragTouched.has(cb)) {
+    e.preventDefault();
+  }
+}
+
+// ----- 터치(모바일/PWA) -----
+function handleTxnCheckboxTouchStart(e) {
+  const touch = e.touches[0];
+  if (!touch) return;
+  const cb = document.elementFromPoint(touch.clientX, touch.clientY);
+  if (!isTxnDragCheckbox(cb)) return;
+  // 이후 합성(mouse-compat) 클릭 이벤트가 다시 토글하지 않도록 막는다.
+  e.preventDefault();
+  txnDragSelecting = true;
+  txnDragTargetChecked = !cb.checked;
+  txnDragTouched = new Set();
+  txnDragApply(cb);
+}
+
+function handleTxnCheckboxTouchMove(e) {
+  if (!txnDragSelecting || txnDragTargetChecked === null) return;
+  const touch = e.touches[0];
+  if (!touch) return;
+  const cb = document.elementFromPoint(touch.clientX, touch.clientY);
+  if (!isTxnDragCheckbox(cb) || txnDragTouched.has(cb)) return;
+  // 드래그로 체크박스를 훑는 중에는 화면이 스크롤되지 않게 막는다.
+  e.preventDefault();
+  txnDragApply(cb);
+}
+
+function endTxnDragSelect() {
+  txnDragSelecting = false;
+  txnDragTargetChecked = null;
+  // 일반(드래그 없는) 클릭은 mousedown → mouseup → click 순으로 동기 발생한다.
+  // 여기서 txnDragTouched를 바로 비우면, mouseup 직후에 뒤따라오는 click이
+  // "이미 처리된 체크박스"인지 확인할 때(handleTxnCheckboxClick) 못 찾게 되어
+  // 네이티브 토글을 못 막고, mousedown에서 이미 바꿔둔 값이 click 기본 동작으로
+  // 다시 뒤집혀서 원래 상태로 돌아가 버린다. click까지 처리된 뒤(다음 틱)에
+  // 비워야 한다.
+  setTimeout(() => { txnDragTouched = new Set(); }, 0);
+}
+
+document.addEventListener('mouseup', endTxnDragSelect);
+document.addEventListener('touchend', endTxnDragSelect);
+document.addEventListener('touchcancel', endTxnDragSelect);
+
+document.addEventListener('DOMContentLoaded', function() {
+  const txnTbody = document.getElementById('tbody');
+  if (txnTbody) {
+    txnTbody.addEventListener('mousedown', handleTxnCheckboxMouseDown);
+    txnTbody.addEventListener('mouseover', handleTxnCheckboxMouseOver);
+    txnTbody.addEventListener('click', handleTxnCheckboxClick);
+    txnTbody.addEventListener('touchstart', handleTxnCheckboxTouchStart, { passive: false });
+    txnTbody.addEventListener('touchmove', handleTxnCheckboxTouchMove, { passive: false });
+  }
+});
+
+// ---------- 삭제 (행 하나 바로 삭제, 체크박스 선택 불필요) ----------
+async function deleteSingleTransaction(id) {
+  if (!confirm('이 판매 내역을 영구 삭제하시겠습니까? (재고는 복구되고, 기록은 완전히 사라져 복구할 수 없습니다)')) return;
+  try {
+    const result = await api('/api/transactions/cancel_batch', {
+      method: 'POST',
+      body: JSON.stringify({ ids: [id] })
+    });
+    // api()는 서버가 오류(4xx/5xx)를 응답해도 예외를 던지지 않고 __apiError가 붙은
+    // 빈 배열을 돌려준다 (이미 토스트는 api() 안에서 띄웠음). 여기서 또 처리하면
+    // "undefined건 삭제 완료"처럼 결과 필드가 없는데도 성공 메시지가 뜨는 문제가
+    // 있었으므로, 실패 응답이면 바로 멈춘다.
+    if (result && result.__apiError) return;
+    if (result.cancelled > 0) {
+      toast('✅ 삭제되었습니다.', false, '✅');
+      load();
+    } else {
+      toast('삭제할 수 없는 항목입니다.', true, '⚠️');
+    }
+  } catch (e) {
+    console.error('삭제 오류:', e);
+    toast('삭제 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ---------- 삭제 (체크박스로 여러 개 선택 후 일괄 삭제) ----------
+async function deleteSelected() {
+  if (selectedIds.size === 0) {
+    toast('삭제할 항목을 선택해주세요.', true, '⚠️');
+    return;
+  }
+  if (!confirm(`선택한 ${selectedIds.size}개의 판매 내역을 영구 삭제하시겠습니까? (복구할 수 없습니다)`)) return;
+
+  const ids = Array.from(selectedIds);
+  try {
+    const result = await api('/api/transactions/cancel_batch', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    });
+    // 서버가 400/500 등으로 실패하면 api()가 __apiError가 붙은 빈 배열을 돌려주고
+    // 이미 오류 토스트도 띄운 상태다. 그런데도 아래로 내려가면 result.cancelled /
+    // result.failed가 undefined라서 "undefined건 삭제 완료 (실패 undefined건)"처럼
+    // 마치 성공한 것 같은 메시지가 또 뜨고, 선택도 지워지고 목록도 새로고침돼서
+    // 실제로는 삭제가 안 됐는데도 성공한 것처럼 보였다. 실패면 여기서 멈춘다.
+    if (result && result.__apiError) return;
+    const extra = (result.errors && result.errors.length) ? ' - ' + result.errors.join(' ') : '';
+    toast(`✅ ${result.cancelled}건 삭제 완료 (실패 ${result.failed}건)${extra}`, result.failed > 0, result.failed > 0 ? '⚠️' : '✅');
+    selectedIds.clear();
+    document.getElementById('selectAll').checked = false;
+    updateSelectedUI();
+    load();
+  } catch (e) {
+    console.error('일괄 삭제 오류:', e);
+  }
+}
+
+// ---------- 다중 상태 변경 ----------
+async function batchStatusChange() {
+  if (selectedIds.size === 0) {
+    toast('변경할 항목을 선택해주세요.', true, '⚠️');
+    return;
+  }
+  const newStatus = document.getElementById('batchStatusSelect').value;
+  if (!confirm(`선택한 ${selectedIds.size}개의 거래 유형을 '${newStatus}'(으)로 변경하시겠습니까?`)) return;
+
+  const ids = Array.from(selectedIds);
+  try {
+    const result = await api('/api/transactions/batch_status', {
+      method: 'POST',
+      body: JSON.stringify({ ids, new_type: newStatus })
+    });
+    if (result && result.__apiError) return;
+    toast(`✅ ${result.updated}건 변경 완료 (실패 ${result.failed}건)`, result.failed > 0, result.failed > 0 ? '⚠️' : '✅');
+    selectedIds.clear();
+    document.getElementById('selectAll').checked = false;
+    updateSelectedUI();
+    load();
+  } catch (e) {
+    console.error('상태 변경 오류:', e);
+  }
+}
+
+// ---------- 취소 함수 ----------
+async function undoTransaction(id) {
+  if (!confirm('이 거래를 취소하시겠습니까? (재고가 원래대로 복구됩니다)')) return;
+  try {
+    const result = await api(`/api/transactions/${id}/undo`, { method: 'POST' });
+    toast('거래가 취소되었습니다.', false, '✅');
+    load();
+  } catch (e) {
+    console.error('거래 취소 오류:', e);
+  }
+}
+
+// 병합해서 보여준 줄(같은 가격+상품명+시간)을 취소할 때는 그 줄에 속한 거래를 모두 취소한다.
+async function undoTransactionGroup(ids) {
+  if (ids.length === 1) return undoTransaction(ids[0]);
+  if (!confirm(`이 줄은 ${ids.length}건이 합쳐진 항목입니다. 전체를 취소하시겠습니까? (재고가 원래대로 복구됩니다)`)) return;
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      await api(`/api/transactions/${id}/undo`, { method: 'POST' });
+      ok++;
+    } catch (e) {
+      console.error('거래 취소 오류:', e);
+      fail++;
+    }
+  }
+  toast(`✅ ${ok}건 취소 완료${fail ? ` (실패 ${fail}건)` : ''}`, fail > 0, fail ? '⚠️' : '✅');
+  load();
+}
+
+// 병합해서 보여준 줄을 삭제할 때는 그 줄에 속한 거래를 한 번에 영구 삭제한다.
+async function deleteGroupTransactions(ids) {
+  const msg = ids.length === 1
+    ? '이 판매 내역을 영구 삭제하시겠습니까? (재고는 복구되고, 기록은 완전히 사라져 복구할 수 없습니다)'
+    : `이 줄은 ${ids.length}건이 합쳐진 항목입니다. 전체를 영구 삭제하시겠습니까? (재고는 복구되고, 기록은 완전히 사라져 복구할 수 없습니다)`;
+  if (!confirm(msg)) return;
+  try {
+    const result = await api('/api/transactions/cancel_batch', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    });
+    if (result && result.__apiError) return;
+    if (result.cancelled > 0) {
+      toast(`✅ ${result.cancelled}건 삭제되었습니다.`, false, '✅');
+      load();
+    } else {
+      toast('삭제할 수 없는 항목입니다.', true, '⚠️');
+    }
+  } catch (e) {
+    console.error('삭제 오류:', e);
+    toast('삭제 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ---------- 선결제 주문 취소 (입출고관리 화면에서 바로) ----------
+// '선결예약'/'선결출고' 배치 헤더의 "주문 취소" 버튼에서 호출된다.
+// 대기(아직 미출고)/출고완료(재고가 실제로 빠져나감) 상태를 몰라도 되도록,
+// 백엔드의 cancel_any 엔드포인트가 주문 상태를 보고 알아서 삭제/취소를 나눠 처리한다.
+async function cancelPreOrderFromTxn(orderId) {
+  if (!confirm(`이 선결제 주문(#${orderId})을 취소하시겠습니까?\n출고 완료된 주문이면 재고가 복구되고 매출도 상쇄 처리됩니다.`)) return;
+  try {
+    const result = await api(`/api/pre_orders/${orderId}/cancel_any`, { method: 'POST' });
+    if (result && result.__apiError) return;
+    toast(`✅ 선결제 주문 #${orderId}이 취소되었습니다.`, false, '✅');
+    load();
+  } catch (e) {
+    console.error('선결제 주문 취소 오류:', e);
+    toast('취소 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ---------- 결제 묶음(배치) 단위로 묶고, 같은 가격+상품명+시간 항목은 수량 합산 ----------
+// 판매 등록에서 결제 한 번에 나간 상품들, 혹은 입출고 등록에서 같은 시각에
+// 한꺼번에 등록한 상품들을 "결제 묶음" 하나로 묶어서 보여준다.
+// 같은 묶음 안에서 상품+단가가 완전히 같은 줄은 수량을 합쳐서 한 줄로 표시한다.
+function buildTransactionBatches(rows) {
+  const batches = [];
+  let current = null;
+  for (const t of rows) {
+    // 같은 매장·유형·분단위 시각이면 같은 결제/등록 묶음으로 본다.
+    const minuteKey = fmtDateTime(t.date_time);
+    const batchKey = `${t.store_id}|${t.type}|${minuteKey}`;
+    if (!current || current.key !== batchKey) {
+      current = {
+        key: batchKey,
+        date_time: t.date_time,
+        type: t.type,
+        store_name: t.store_name,
+        payment_method: t.payment_method,
+        staff: t.staff,
+        items: [],
+        itemMap: {}
+      };
+      batches.push(current);
+    }
+    const isCancelled = t.is_cancelled || false;
+    const itemKey = `${t.product_id}|${t.unit_price}|${isCancelled}`;
+    let item = current.itemMap[itemKey];
+    if (!item) {
+      item = {
+        product_id: t.product_id,
+        product_name: t.product_name,
+        brand_name: t.brand_name,
+        brand_color: t.brand_color,
+        unit_price: t.unit_price,
+        type: t.type,
+        quantity: 0,
+        ids: [],
+        memo: null,
+        payment_method: t.payment_method,
+        is_cancelled: isCancelled
+      };
+      current.itemMap[itemKey] = item;
+      current.items.push(item);
+    }
+    item.quantity += t.quantity;
+    item.ids.push(t.id);
+    if (t.memo && t.memo !== '-') item.memo = t.memo;
+  }
+  // 배치별 금액 합계(취소된 건 제외: 단가 × 수량)를 미리 계산해둔다.
+  for (const b of batches) {
+    b.totalAmount = b.items
+      .filter(item => !item.is_cancelled)
+      .reduce((sum, item) => sum + (Number(item.unit_price) || 0) * (Number(item.quantity) || 0), 0);
+  }
+  return batches;
+}
+
+function renderTransactionBatch(batch, batchIndex) {
+  // '선결예약'/'선결출고'는 선결제 주문(pre_orders)에 딸린 기록이라, 이 화면의
+  // 일반 체크박스 다건삭제로 낱개 삭제하면 재고·매출 집계가 주문 상태와 어긋난다.
+  // 대신 주문 단위로 안전하게 되돌리는 "주문 취소" 버튼을 배치 헤더에 달아서
+  // (백엔드의 /api/pre_orders/<id>/cancel_any 가 대기/출고완료 상태를 알아서
+  // 구분해 처리) 이 화면에서 바로 취소할 수 있게 한다.
+  const PREORDER_TXN_TYPES = ['선결예약', '선결출고'];
+  const isPreorderItem = item => PREORDER_TXN_TYPES.includes(item.type);
+  const hasSelectableItems = batch.items.some(item => !item.is_cancelled && !isPreorderItem(item));
+  const isPreorderBatch = PREORDER_TXN_TYPES.includes(batch.type);
+  // memo는 "선결제 확정 출고 (주문 #23)" 또는 "선결제 대기 #23" 형태로 저장되므로
+  // #뒤의 숫자만 뽑아내면 주문 번호를 알 수 있다.
+  const preOrderId = isPreorderBatch
+    ? (() => {
+        for (const item of batch.items) {
+          const m = item.memo && item.memo.match(/#(\d+)/);
+          if (m) return m[1];
+        }
+        return null;
+      })()
+    : null;
+  const cancelOrderBtn = (isPreorderBatch && preOrderId)
+    ? `<button class="danger" style="margin-left:8px;" onclick="cancelPreOrderFromTxn(${preOrderId})">🚫 주문 취소 (#${preOrderId})</button>`
+    : '';
+  const headerRow = `
+    <tr class="batch-header-row" style="background:var(--card-bg);">
+      <td style="padding:6px 8px;"><input type="checkbox" class="batch-select-checkbox" data-batch="${batchIndex}" onchange="toggleBatchCheckboxes(${batchIndex})" ${hasSelectableItems ? '' : 'disabled'} title="이 주문건 전체 선택"></td>
+      <td colspan="11" style="font-size:12px; color:var(--text-light); padding:6px 8px;">
+        <span style="white-space:nowrap; font-weight:600; color:var(--text);">${fmtDateTime(batch.date_time)}</span>
+        &nbsp;·&nbsp;<span class="badge ${TYPE_CLASS[batch.type] || 'badge-neutral'}">${batch.type}</span>
+        &nbsp;·&nbsp;${escapeHtml(batch.store_name)}
+        ${batch.staff ? `&nbsp;·&nbsp;담당 ${escapeHtml(batch.staff)}` : ''}
+        &nbsp;·&nbsp;<span style="font-weight:700; color:var(--text);">합계 ${fmt(batch.totalAmount)}원</span>
+        ${cancelOrderBtn}
+      </td>
+    </tr>
+  `;
+  const itemRows = batch.items.map(item => {
+    const cancellable = ['입고', '판매출고', '반품', '폐기'].includes(item.type);
+    const isCancelled = item.is_cancelled;
+    const idsCsv = item.ids.join(',');
+    const idsArr = `[${idsCsv}]`;
+    const singleId = item.ids.length === 1 ? item.ids[0] : null;
+    const editableTypes = ['입고', '판매출고', '반품', '폐기', '조정', '실사조정', '이동출고', '이동입고', '선결예약'];
+    const isEditable = !isCancelled && editableTypes.includes(item.type);
+    const editBtn = isEditable ? `<button onclick="openEditModal(${idsArr})" style="margin-right:4px;">✏️ 수정</button>` : '';
+    const deleteBtn = (!isCancelled && ['판매출고', '출고'].includes(item.type))
+      ? `<button class="danger" title="바로 삭제 (재고 복구 후 영구삭제)" onclick="deleteGroupTransactions(${idsArr})">🗑️ 삭제</button>`
+      : '';
+    let actionCell = '';
+    if (isCancelled) {
+      actionCell = editBtn + '<span style="font-size:11px; color:var(--text-light);">취소됨</span>';
+    } else if (cancellable) {
+      actionCell = editBtn + `<button class="danger" onclick="undoTransactionGroup(${idsArr})">취소</button>` + deleteBtn;
+    } else {
+      actionCell = editBtn + deleteBtn + (editBtn || deleteBtn ? '' : '<span style="font-size:11px; color:var(--text-light);">-</span>');
+    }
+    const mergedNote = item.ids.length > 1
+      ? ` <span style="font-size:10px; color:var(--text-light);" title="같은 가격의 동일 상품 ${item.ids.length}건을 합쳤습니다">×${item.ids.length}건 합계</span>`
+      : '';
+    return `
+      <tr style="${isCancelled ? 'opacity:0.45;' : ''}">
+        <td><input type="checkbox" class="row-checkbox" data-batch="${batchIndex}" value="${idsCsv}" onchange="toggleCheckbox('${idsCsv}')" ${isCancelled ? 'disabled title="이미 취소된 건은 선택할 수 없습니다"' : (isPreorderItem(item) ? 'disabled title="선결제 관련 기록은 낱개 삭제 대신, 위쪽 배치 제목줄의 \'주문 취소\' 버튼으로 주문 전체를 취소해주세요."' : '')}></td>
+        <td></td>
+        <td style="font-weight:${['입고','이동입고'].includes(item.type) ? '600' : 'normal'};">${escapeHtml(item.product_name)}${mergedNote}</td>
+        <td>${item.brand_name ? `<span class="brand-tag" style="background:${item.brand_color || '#8a8f98'};">${escapeHtml(item.brand_name)}</span>` : '-'}</td>
+        <td></td>
+        <td></td>
+        <td style="font-size:12px; text-align:right; padding-right:8px;">${fmt(item.unit_price)}</td>
+        <td style="font-weight:700; text-align:right; padding-right:8px;">${fmt(item.quantity)}</td>
+        <td>${singleId ? paymentMethodSelect(singleId, item.payment_method, isCancelled) : `<span style="font-size:11px; color:var(--text-light);">${escapeHtml(item.payment_method || '-')}</span>`}</td>
+        <td></td>
+        <td style="font-size:12px; color:${item.memo ? 'var(--accent)' : 'var(--text-light)'}; font-weight:${item.memo ? '600' : 'normal'};">${escapeHtml(item.memo || '-')}</td>
+        <td>${actionCell}</td>
+      </tr>
+    `;
+  }).join('');
+  return headerRow + itemRows;
+}
+
+// ---------- 목록 로드 ----------
+async function load() {
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
+  document.getElementById('totalCount').textContent = '...';
+
+  try {
+    const limit = parseInt(document.getElementById('rowsPerPage').value) || 20;
+    const offset = (currentPage - 1) * limit;
+    const includeCancelled = document.getElementById('includeCancelled').checked ? '1' : '0';
+    const params = new URLSearchParams({
+      start_date: document.getElementById('filterStart').value,
+      end_date: document.getElementById('filterEnd').value,
+      type: document.getElementById('filterType').value,
+      store_id: document.getElementById('filterStore').value,
+      limit: limit,
+      offset: offset,
+      include_cancelled: includeCancelled
+    });
+    const data = await api('/api/transactions?' + params.toString());
+
+    if (data.error) {
+      toast(`⚠️ ${data.error}`, true, '⚠️');
+      document.getElementById('tbody').innerHTML = `<tr><td colspan="12"><div class="empty"><span class="empty-icon">⚠️</span>${escapeHtml(data.error)}</div></td></tr>`;
+      document.getElementById('totalCount').textContent = '0';
+      document.getElementById('pageInfo').textContent = '0 / 0';
+      document.getElementById('pageInfoBottom').textContent = '0 / 0';
+      return;
+    }
+
+    const rows = data.items || [];
+    currentRows = rows;
+    totalItems = data.total || 0;
+    totalPages = Math.ceil(totalItems / limit) || 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const tbody = document.getElementById('tbody');
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">📭</span>입출고 내역이 없습니다.</div></td></tr>';
+      document.getElementById('selectAll').checked = false;
+      document.getElementById('selectAll').disabled = true;
+    } else {
+      document.getElementById('selectAll').disabled = false;
+      selectedIds.clear();
+      document.getElementById('selectAll').checked = false;
+      updateSelectedUI();
+
+      const batches = buildTransactionBatches(rows);
+      tbody.innerHTML = batches.map((b, i) => renderTransactionBatch(b, i)).join('');
+      updateBatchHeaderCheckboxes();
+    }
+
+    document.getElementById('totalCount').textContent = totalItems;
+    document.getElementById('pageInfo').textContent = `${currentPage} / ${totalPages}`;
+    document.getElementById('pageInfoBottom').textContent = `${currentPage} / ${totalPages}`;
+    document.getElementById('prevPageBtn').disabled = currentPage <= 1;
+    document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
+  } catch (e) {
+    console.error('입출고 내역 로드 오류:', e);
+    toast('내역을 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="12"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
+    document.getElementById('totalCount').textContent = '0';
+    document.getElementById('pageInfo').textContent = '0 / 0';
+    document.getElementById('pageInfoBottom').textContent = '0 / 0';
+  }
+}
+
+// ================================================================
+// ✏️ 입출고 내역 수정
+// ================================================================
+// ids: 병합된 줄이면 그 줄에 속한 여러 거래 id, 단일 줄이면 요소 1개짜리 배열
+function openEditModal(ids) {
+  if (!Array.isArray(ids)) ids = [ids];
+  const rows = ids.map(id => currentRows.find(r => r.id === id)).filter(Boolean);
+  if (rows.length === 0) { toast('내역을 찾을 수 없습니다.', true, '⚠️'); return; }
+  const t = rows[0];
+  const totalQty = rows.reduce((s, r) => s + r.quantity, 0);
+
+  document.getElementById('editTransIds').value = JSON.stringify(ids);
+  document.getElementById('editTransProductName').textContent = `${t.product_name} (${t.store_name})`;
+  document.getElementById('editTransGroupNote').textContent = rows.length > 1
+    ? `⚠️ 같은 상품·가격·시간의 거래 ${rows.length}건이 합쳐진 항목입니다. 수량을 바꾸면 원래 비율대로 각 건에 나눠서 반영되고, 나머지 항목은 ${rows.length}건 전체에 동일하게 적용됩니다.`
+    : '';
+
+  const storeSel = document.getElementById('editTransStore');
+  storeSel.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  storeSel.value = t.store_id;
+
+  document.getElementById('editTransType').value = t.type;
+  document.getElementById('editTransQty').value = totalQty;
+  document.getElementById('editTransPrice').value = t.unit_price ?? '';
+  document.getElementById('editTransPayment').value = PAYMENT_METHODS.includes(t.payment_method) ? t.payment_method : '';
+  document.getElementById('editTransStaff').value = t.staff || '';
+  document.getElementById('editTransMemo').value = t.memo || '';
+
+  const m = String(t.date_time || '').match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
+  document.getElementById('editTransDate').value = m ? m[1] : (String(t.date_time || '').slice(0, 10));
+  document.getElementById('editTransTime').value = m ? m[2] : '00:00';
+
+  document.getElementById('editTransModal').style.display = 'flex';
+}
+
+function closeEditModal() {
+  document.getElementById('editTransModal').style.display = 'none';
+}
+
+async function saveEditTransaction() {
+  let ids;
+  try { ids = JSON.parse(document.getElementById('editTransIds').value || '[]'); } catch (e) { ids = []; }
+  if (!ids.length) { toast('수정할 항목을 찾을 수 없습니다.', true, '⚠️'); return; }
+
+  const dateVal = document.getElementById('editTransDate').value;
+  const timeVal = document.getElementById('editTransTime').value || '00:00';
+  const totalQuantity = parseInt(document.getElementById('editTransQty').value, 10);
+
+  if (!dateVal || !totalQuantity || totalQuantity <= 0) {
+    toast('날짜와 수량(1 이상)을 확인해주세요.', true, '⚠️');
+    return;
+  }
+
+  const basePayload = {
+    store_id: document.getElementById('editTransStore').value,
+    type: document.getElementById('editTransType').value,
+    unit_price: document.getElementById('editTransPrice').value || null,
+    payment_method: document.getElementById('editTransPayment').value || null,
+    staff: document.getElementById('editTransStaff').value || '',
+    memo: document.getElementById('editTransMemo').value || null,
+    date_time: `${dateVal} ${timeVal}:00`
+  };
+
+  // 병합된 여러 건이면, 원래 각 건의 수량 비율대로 새 총수량을 나눠서 적용한다.
+  // (마지막 건이 나머지를 받아서 합계가 입력한 총수량과 정확히 같아지도록 맞춘다)
+  const rows = ids.map(id => currentRows.find(r => r.id === id)).filter(Boolean);
+  const origTotal = rows.reduce((s, r) => s + r.quantity, 0) || ids.length;
+  const qtyById = {};
+  let remaining = totalQuantity;
+  ids.forEach((id, idx) => {
+    if (idx === ids.length - 1) {
+      qtyById[id] = remaining;
+      return;
+    }
+    const row = rows.find(r => r.id === id);
+    const origQty = row ? row.quantity : Math.round(origTotal / ids.length);
+    const q = Math.max(1, Math.round(origQty * totalQuantity / origTotal));
+    qtyById[id] = q;
+    remaining -= q;
+  });
+  if (qtyById[ids[ids.length - 1]] < 1) {
+    toast('입력한 수량이 너무 적어 항목별로 1개 이상씩 나눌 수 없습니다. 더 큰 값을 입력해주세요.', true, '⚠️');
+    return;
+  }
+
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      await api(`/api/transactions/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...basePayload, quantity: qtyById[id] })
+      });
+      ok++;
+    } catch (e) {
+      console.error('수정 오류:', e);
+      fail++;
+    }
+  }
+  if (ok > 0) {
+    toast(`✅ ${ok}건 수정 완료${fail ? ` (실패 ${fail}건)` : ''}`, fail > 0, fail ? '⚠️' : '✅');
+    closeEditModal();
+    load();
+  } else {
+    toast('수정 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ---------- 선택 항목 일괄 수정 ----------
+function openBulkEditModal() {
+  if (selectedIds.size === 0) { toast('수정할 항목을 선택해주세요.', true, '⚠️'); return; }
+  document.getElementById('bulkEditCount').textContent = `선택한 ${selectedIds.size}건에 적용됩니다.`;
+
+  const storeSel = document.getElementById('bulkEditStore');
+  storeSel.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+
+  ['Store', 'Type', 'Payment', 'Date', 'Staff', 'Memo'].forEach(f => {
+    document.getElementById(`bulkApply${f}`).checked = false;
+  });
+  document.getElementById('bulkEditStore').disabled = true;
+  document.getElementById('bulkEditType').disabled = true;
+  document.getElementById('bulkEditPayment').disabled = true;
+  document.getElementById('bulkEditDate').disabled = true;
+  document.getElementById('bulkEditTime').disabled = true;
+  document.getElementById('bulkEditStaff').disabled = true;
+  document.getElementById('bulkEditMemo').disabled = true;
+  document.getElementById('bulkEditStaff').value = '';
+  document.getElementById('bulkEditMemo').value = '';
+  document.getElementById('bulkEditDate').value = '';
+  document.getElementById('bulkEditTime').value = '';
+
+  document.getElementById('bulkEditModal').style.display = 'flex';
+}
+
+function closeBulkEditModal() {
+  document.getElementById('bulkEditModal').style.display = 'none';
+}
+
+async function saveBulkEdit() {
+  const ids = Array.from(selectedIds);
+  if (ids.length === 0) { toast('수정할 항목을 선택해주세요.', true, '⚠️'); return; }
+
+  const payload = {};
+  if (document.getElementById('bulkApplyStore').checked) payload.store_id = document.getElementById('bulkEditStore').value;
+  if (document.getElementById('bulkApplyType').checked) payload.type = document.getElementById('bulkEditType').value;
+  if (document.getElementById('bulkApplyPayment').checked) payload.payment_method = document.getElementById('bulkEditPayment').value || null;
+  if (document.getElementById('bulkApplyDate').checked) {
+    const dateVal = document.getElementById('bulkEditDate').value;
+    const timeVal = document.getElementById('bulkEditTime').value || '00:00';
+    if (!dateVal) { toast('날짜를 입력해주세요.', true, '⚠️'); return; }
+    payload.date_time = `${dateVal} ${timeVal}:00`;
+  }
+  if (document.getElementById('bulkApplyStaff').checked) payload.staff = document.getElementById('bulkEditStaff').value || '';
+  if (document.getElementById('bulkApplyMemo').checked) payload.memo = document.getElementById('bulkEditMemo').value || null;
+
+  if (Object.keys(payload).length === 0) {
+    toast('적용할 항목을 하나 이상 체크해주세요.', true, '⚠️');
+    return;
+  }
+  if (!confirm(`선택한 ${ids.length}건에 위 내용을 일괄 적용하시겠습니까?`)) return;
+
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      await api(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      ok++;
+    } catch (e) {
+      console.error('일괄 수정 오류:', e);
+      fail++;
+    }
+  }
+  toast(`✅ ${ok}건 일괄 수정 완료${fail ? ` (실패 ${fail}건)` : ''}`, fail > 0, fail ? '⚠️' : '✅');
+  closeBulkEditModal();
+  selectedIds.clear();
+  document.getElementById('selectAll').checked = false;
+  updateSelectedUI();
+  load();
+}
+
+// ================================================================
+// 📤 출고 내역 일괄 업로드 (매장 선택 포함)
+// ================================================================
+
+// ---------- 공통 처리 함수 ----------
+async function processUpload(file, adjustStock, resultDivId, storeSelectId) {
+  const resultDiv = document.getElementById(resultDivId);
+  if (!resultDiv) return;
+  
+  resultDiv.innerHTML = '<span style="color:var(--text-light);">⏳ 업로드 처리 중...</span>';
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('adjust_stock', adjustStock ? 'true' : 'false');
+  
+  const storeSelect = document.getElementById(storeSelectId);
+  if (storeSelect && storeSelect.value) {
+    formData.append('store_id', storeSelect.value);
+  }
+
+  try {
+    const res = await fetch('/api/import/transactions', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      resultDiv.innerHTML = `<span style="color:var(--danger);">❌ ${data.error}</span>`;
+      toast(data.error, true, '⚠️');
+      return;
+    }
+
+    let html = '';
+    if (data.success > 0) {
+      html += `<div style="color:var(--accent); font-weight:600;">✅ 성공: ${data.success}건</div>`;
+    }
+    if (data.failed > 0) {
+      html += `<div style="color:var(--danger); font-weight:600;">❌ 실패: ${data.failed}건</div>`;
+      if (data.errors && data.errors.length > 0) {
+        html += `<div style="margin-top:6px; font-size:12px; max-height:150px; overflow-y:auto; background:var(--hover-bg); padding:6px 10px; border-radius:var(--radius);">`;
+        data.errors.slice(0, 10).forEach(err => {
+          html += `<div style="padding:2px 0; border-bottom:1px solid var(--border);">${escapeHtml(err)}</div>`;
+        });
+        if (data.errors.length > 10) {
+          html += `<div>... 외 ${data.errors.length - 10}개 오류</div>`;
+        }
+        html += `</div>`;
+      }
+    }
+    if (data.success === 0 && data.failed === 0) {
+      html = `<span style="color:var(--text-light);">⚠️ 처리된 행이 없습니다. 파일 내용을 확인하세요.</span>`;
+    }
+    resultDiv.innerHTML = html;
+
+    const msg = `업로드 완료: ${data.success}건 성공`;
+    toast(msg, data.failed > 0, data.failed > 0 ? '⚠️' : '✅');
+    
+    if (data.success > 0) {
+      load();
+    }
+  } catch (e) {
+    console.error('업로드 오류:', e);
+    resultDiv.innerHTML = `<span style="color:var(--danger);">❌ 업로드 중 오류가 발생했습니다.</span>`;
+    toast('업로드 중 오류가 발생했습니다.', true, '⚠️');
+  }
+}
+
+// ---------- 기록용 업로드 ----------
+async function uploadRecord(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  await processUpload(file, false, 'recordUploadResult', 'recordStoreSelect');
+  event.target.value = '';
+}
+
+// ---------- 출고용 업로드 ----------
+async function uploadOutbound(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  if (!confirm('⚠️ 출고용 업로드는 실제 재고가 차감됩니다. 계속하시겠습니까?')) {
+    event.target.value = '';
+    return;
+  }
+  
+  await processUpload(file, true, 'outboundUploadResult', 'outboundStoreSelect');
+  event.target.value = '';
+}
+
+// ---------- 템플릿 다운로드 ----------
+async function downloadTemplate(adjust) {
+  const url = adjust ? '/api/import/transactions_template?adjust=true' : '/api/import/transactions_template?adjust=false';
+  await downloadFile(url, '입출고_업로드_템플릿.csv');
+}
+
+// 참고: 파일 다운로드는 common.js의 공용 downloadFile()을 사용한다.
+// (이 파일에 있던 별도 구현은 common.js 버전을 덮어써서, 서버 오류가 나도
+//  아무 반응 없이 조용히 실패하고 PWA/모바일에서 저장이 안 되는 문제가 있었다.)
+
+// ---------- 초기화 ----------
+document.addEventListener('DOMContentLoaded', async function() {
+  await loadStores();
+  loadStoreSelects();
+  currentPage = 1;
+  load();
+});
+</script>
+
+<style>
+/* .page-btn / .brand-tag / .table-wrap / .txn-row / .txn-remove-btn /
+   .f_brand_display / .selectedInfo 는 static/style.css(HYPER-GLASS)에서 관리한다. */
+#pageInfo, #pageInfoBottom {
+  font-size: 13px;
+  color: var(--text-light);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+</style>
+{% endblock %}
