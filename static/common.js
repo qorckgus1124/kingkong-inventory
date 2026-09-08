@@ -537,14 +537,22 @@ async function syncOfflineQueue(silent) {
         body: JSON.stringify(item.body),
         cache: 'no-store',
       });
+      let data = null;
+      try { data = await res.json(); } catch (e) {}
       if (res.ok) {
         success++;
       } else {
+        // 서버가 거부한 항목(재고 부족, 유효성 오류 등)은 재시도해도 계속 실패하므로
+        // 이유를 남겨서 화면에 보여준다. 원인을 모르면 "동기화해도 안 없어진다"처럼 보인다.
         fail++;
+        item.last_error = (data && data.error) ? data.error : `서버 오류 (${res.status})`;
+        item.last_attempt_at = new Date().toISOString();
         remaining.push(item);
       }
     } catch (e) {
-      // 여전히 오프라인/네트워크 오류 -> 다음 기회에 재시도
+      // 네트워크 자체가 안 되는 경우 -> 다음 기회에 재시도, 원인은 네트워크로 표시
+      item.last_error = '네트워크 연결 실패 (재시도 예정)';
+      item.last_attempt_at = new Date().toISOString();
       remaining.push(item);
     }
   }
@@ -558,6 +566,57 @@ async function syncOfflineQueue(silent) {
   }
 }
 
+// 큐에서 특정 항목(들)을 사용자가 직접 지운다.
+// 재고 부족처럼 서버가 계속 거부해서 영구히 안 없어지는 항목을 정리할 때 사용.
+function removeOfflineQueueItem(id) {
+  const list = getOfflineQueue().filter(item => item.id !== id);
+  setOfflineQueue(list);
+  renderOfflineQueueDetail();
+}
+
+function clearOfflineQueue() {
+  if (!confirm('대기 중인 오프라인 항목을 모두 삭제할까요? 서버에 등록되지 않은 내용은 사라집니다.')) return;
+  setOfflineQueue([]);
+  renderOfflineQueueDetail();
+}
+
+function renderOfflineQueueDetail() {
+  const panel = document.getElementById('offlineQueueDetail');
+  if (!panel) return;
+  const list = getOfflineQueue();
+  if (!list.length) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+  panel.style.display = 'block';
+  panel.innerHTML = list.map(item => `
+    <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start; padding:8px 0; border-bottom:1px solid rgba(0,0,0,0.08);">
+      <div style="min-width:0;">
+        <div style="font-size:12px; font-weight:600;">${(item.label || item.endpoint || '').toString().replace(/</g, '&lt;')}</div>
+        <div style="font-size:11px; color:var(--text-light);">${new Date(item.created_at).toLocaleString('ko-KR')}</div>
+        ${item.last_error ? `<div style="font-size:11px; color:var(--danger, #e5484d); margin-top:2px;">⚠️ ${item.last_error.toString().replace(/</g, '&lt;')}</div>` : ''}
+      </div>
+      <button onclick="removeOfflineQueueItem('${item.id}')" style="flex-shrink:0; border:none; background:none; color:var(--text-light); cursor:pointer; font-size:13px;" title="이 항목 삭제">✕</button>
+    </div>
+  `).join('') + `
+    <div style="text-align:right; padding-top:6px;">
+      <button onclick="clearOfflineQueue()" style="border:none; background:none; color:var(--danger, #e5484d); font-size:11px; cursor:pointer; text-decoration:underline;">전체 삭제</button>
+    </div>
+  `;
+}
+
+function toggleOfflineQueueDetail() {
+  const panel = document.getElementById('offlineQueueDetail');
+  if (!panel) return;
+  const showing = panel.style.display === 'block';
+  if (showing) {
+    panel.style.display = 'none';
+  } else {
+    renderOfflineQueueDetail();
+  }
+}
+
 function updateOfflineBanner(syncing) {
   const banner = document.getElementById('offlineQueueBanner');
   if (!banner) return;
@@ -566,6 +625,8 @@ function updateOfflineBanner(syncing) {
   const btn = document.getElementById('offlineQueueSyncBtn');
   if (list.length === 0) {
     banner.style.display = 'none';
+    const panel = document.getElementById('offlineQueueDetail');
+    if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
     return;
   }
   banner.style.display = 'flex';
@@ -574,6 +635,8 @@ function updateOfflineBanner(syncing) {
     btn.disabled = !!syncing || !navigator.onLine;
     btn.textContent = syncing ? '동기화 중...' : (navigator.onLine ? '지금 동기화' : '오프라인');
   }
+  const panel = document.getElementById('offlineQueueDetail');
+  if (panel && panel.style.display === 'block') renderOfflineQueueDetail();
 }
 
 window.addEventListener('online', () => {

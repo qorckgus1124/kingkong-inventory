@@ -245,9 +245,13 @@ function filterMobileNavItems(query) {
 
 <!-- 플로팅 패널 -->
 <!-- 오프라인 임시 입력 대기 배너 (모든 페이지 공통) -->
-<div id="offlineQueueBanner" style="display:none; position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:1000; align-items:center; gap:10px; background:var(--warning-light); color:var(--warning); border:1px solid var(--warning); padding:8px 10px 8px 14px; border-radius:999px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,0.15);">
-  <span>📴 오프라인 대기 <strong id="offlineQueueCount">0</strong>건</span>
-  <button id="offlineQueueSyncBtn" onclick="syncOfflineQueue()" style="padding:5px 12px; font-size:12px; border-radius:999px; border:none; background:var(--warning); color:#fff; cursor:pointer;">지금 동기화</button>
+<div style="position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:1000; display:flex; flex-direction:column; align-items:center; gap:8px;">
+  <div id="offlineQueueBanner" style="display:none; align-items:center; gap:10px; background:var(--warning-light); color:var(--warning); border:1px solid var(--warning); padding:8px 10px 8px 14px; border-radius:999px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,0.15);" title="이 대기 목록은 현재 사용 중인 이 브라우저(기기)에만 저장됩니다. 다른 컴퓨터에서는 보이지 않습니다.">
+    <span>📴 오프라인 대기 <strong id="offlineQueueCount">0</strong>건 (이 기기)</span>
+    <button onclick="toggleOfflineQueueDetail()" style="padding:5px 10px; font-size:12px; border-radius:999px; border:1px solid var(--warning); background:transparent; color:var(--warning); cursor:pointer;">내용 보기</button>
+    <button id="offlineQueueSyncBtn" onclick="syncOfflineQueue()" style="padding:5px 12px; font-size:12px; border-radius:999px; border:none; background:var(--warning); color:#fff; cursor:pointer;">지금 동기화</button>
+  </div>
+  <div id="offlineQueueDetail" style="display:none; width:320px; max-height:280px; overflow-y:auto; background:var(--bg-card, #fff); color:var(--text); border:1px solid rgba(0,0,0,0.12); border-radius:12px; padding:10px 12px; box-shadow:0 8px 24px rgba(0,0,0,0.18);"></div>
 </div>
 
 <div class="floating-panel" id="floatingPanel">
