@@ -589,6 +589,7 @@ async function loadPreProducts(forceLoad = false) {
 }
 
 function onPreSearchInput() {
+  preShowAll = false;
   const q = document.getElementById('pre_searchBox').value.trim();
   const brandQ = document.getElementById('pre_brandSearchBox').value.trim();
   const excludeQ = document.getElementById('pre_excludeBox').value.trim();
@@ -610,10 +611,26 @@ function onPreExcludeInput() {
   onPreSearchInput();
 }
 
+// 선결제 탭에서 "전체 보기"로 목록을 연 상태인지 기억한다. (등록/확정/취소 뒤 새로고침할 때 사용)
+let preShowAll = false;
+
 function loadAllPreProducts() {
   document.getElementById('pre_searchBox').value = '';
   document.getElementById('pre_brandSearchBox').value = '';
+  preShowAll = true;
   loadPreProducts(true);
+}
+
+// 선결제 등록/출고 확정/주문 취소 뒤: 사용자가 보던 목록 상태를 그대로 유지한 채 재고만 새로고침한다.
+// (검색어/브랜드/제외 단어가 있으면 그 조건으로, "전체 보기" 중이었으면 전체로, 아무것도 안 보던 중이면 빈 안내 화면 유지)
+function refreshPreGrid() {
+  const hasFilter = ['pre_searchBox', 'pre_brandSearchBox', 'pre_excludeBox']
+    .some(id => document.getElementById(id).value.trim());
+  if (hasFilter) {
+    loadPreProducts(false);
+  } else if (preShowAll) {
+    loadPreProducts(true);
+  }
 }
 
 // ---------- 선결제 그리드 ----------
@@ -1243,12 +1260,7 @@ async function checkoutPreOrder() {
     renderPreCart();
     clearPreCustomerFields();
     await loadPreOrders();
-    const q = document.getElementById('pre_searchBox').value.trim();
-    if (q) {
-      loadPreProducts(false);
-    } else {
-      loadPreProducts(true);
-    }
+    refreshPreGrid();
   } catch (e) {
     console.error('❌ 선결제 등록 오류 상세:', e);
   }
@@ -1415,12 +1427,7 @@ async function confirmPreOrder(orderId) {
     toast('출고 확정되었습니다.', false, '✅');
     await loadPreOrders();
     await loadConfirmedPreOrders();
-    const q = document.getElementById('pre_searchBox').value.trim();
-    if (q) {
-      loadPreProducts(false);
-    } else {
-      loadPreProducts(true);
-    }
+    refreshPreGrid();
   } catch (e) {
     console.error('❌ 출고 확정 오류:', e);
   }
@@ -1499,12 +1506,7 @@ async function cancelPreOrder(orderId) {
     if (apiFailed(result)) { await loadConfirmedPreOrders(); return; }
     toast('주문이 취소되고 재고가 복구되었습니다.', false, '✅');
     await loadConfirmedPreOrders();
-    const q = document.getElementById('pre_searchBox').value.trim();
-    if (q) {
-      loadPreProducts(false);
-    } else {
-      loadPreProducts(true);
-    }
+    refreshPreGrid();
   } catch (e) {
     console.error('❌ 확정 주문 취소 오류:', e);
   }
