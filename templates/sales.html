@@ -95,6 +95,13 @@
     <div class="sale-right">
       <!-- 상단 고정 영역: 고객 정보 + 합계 + 결제수단 + 등록 -->
       <div class="cart-header">
+        <div id="pre_editBanner" style="display:none; margin-bottom:8px; padding:8px 10px; border:1px solid var(--accent); border-radius:var(--radius); background:var(--card-bg); font-size:13px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <strong id="pre_editBannerText" style="color:var(--text);">✏️ 주문 수정 중</strong>
+            <button type="button" onclick="cancelPreEdit()" style="padding:2px 10px; font-size:12px;">수정 취소</button>
+          </div>
+          <div style="font-size:11px; color:var(--text-light); margin-top:2px;">고객 정보와 제품을 고친 뒤 아래 '수정 저장'을 눌러주세요. (출고 확정 전 주문만 수정 가능)</div>
+        </div>
         <div style="margin-bottom:8px;">
           <div class="form-field" style="margin-bottom:4px;">
             <label style="font-size:12px; color:var(--text-light);">👤 고객명</label>
@@ -114,6 +121,7 @@
           </div>
         </div>
         <div class="cart-title" style="margin-top:4px;">🛒 장바구니</div>
+        <div class="quick-btns" id="pre_quickBtns"></div>
         <div class="cart-total-breakdown">
           <div class="ctb-row"><span>상품 합계</span><span id="pre_cartSubtotal">0원</span></div>
           <div class="ctb-row discount-row">
@@ -127,7 +135,7 @@
           <button id="pre_pay-카드" onclick="selectPrePayment('카드')">카드</button>
           <button id="pre_pay-계좌이체" onclick="selectPrePayment('계좌이체')">계좌이체</button>
         </div>
-        <button class="primary" style="width:100%; padding:12px; font-size:16px;" onclick="checkoutPreOrder()">💳 선결제 등록</button>
+        <button id="pre_checkoutBtn" class="primary" style="width:100%; padding:12px; font-size:16px;" onclick="checkoutPreOrder()">💳 선결제 등록</button>
       </div>
       <!-- 중간: 스크롤 영역 (장바구니 아이템) - 담긴 제품 수만큼 늘어나고, 넘치면 이 안에서만 스크롤된다 -->
       <div class="cart-items-wrap">
@@ -219,6 +227,41 @@ let preProducts = [];
 const PRE_CART_DISCOUNT_KEY = 'pre_cart_discount';
 let preCartDiscount = parseInt(localStorage.getItem(PRE_CART_DISCOUNT_KEY)) || 0;
 const PRE_CART_STORE_KEY = 'pre_cart_store_id';
+
+// ✏️ 출고 확정 전 주문 수정: 수정 중인 주문 번호 (새로고침해도 유지)
+const PRE_EDIT_KEY = 'pre_editing_order_id';
+let preEditingOrderId = parseInt(localStorage.getItem(PRE_EDIT_KEY), 10) || null;
+let preOrdersCache = {};   // 출고 대기 목록(주문번호 → 주문) — 수정 시작할 때 사용
+
+// api()는 실패해도 예외를 던지지 않고 "실패 표시가 붙은 빈 배열"을 돌려준다.
+// 그래서 try/catch만으로는 실패를 알 수 없으니 반드시 이 함수로 확인해야 한다.
+function apiFailed(result) {
+  return !!(result && result.__apiError);
+}
+
+// 브랜드/카테고리 칩 (장바구니·주문 목록에서 공통으로 사용)
+function brandCategoryChips(catName, catColor, brandName, brandColor, hideUncategorized) {
+  const chips = [];
+  if (catName) {
+    chips.push(`<span class="chip" style="background:${escapeHtml(catColor || '#8a8f98')}; font-size:10px; padding:2px 8px; color:white;">${escapeHtml(catName)}</span>`);
+  } else if (!hideUncategorized) {
+    chips.push(`<span class="chip" style="background:#8a8f98; font-size:10px; padding:2px 8px; color:white;">미분류</span>`);
+  }
+  if (brandName) {
+    chips.push(`<span class="chip" style="background:${escapeHtml(brandColor || '#8a8f98')}; font-size:10px; padding:2px 8px; color:white;">${escapeHtml(brandName)}</span>`);
+  }
+  return chips.length ? `<span style="display:inline-flex; gap:4px; flex-wrap:wrap; vertical-align:middle;">${chips.join('')}</span>` : '';
+}
+
+// 장바구니 항목(제품 객체)용: 제품에 카테고리 이름이 없으면 카테고리 목록에서 찾아 채운다.
+function cartProductChips(product) {
+  let catName = product.category_name, catColor = product.category_color;
+  if (!catName && product.category_id != null) {
+    const cat = categories.find(c => c.id === product.category_id);
+    if (cat) { catName = cat.name; catColor = cat.color; }
+  }
+  return brandCategoryChips(catName, catColor, product.brand_name, product.brand_color, !!product.unlimited);
+}
 
 // 같은 제품이라도 서비스 여부·개별 할인·판매가가 다르면 다른 행으로 유지한다.
 // 가격 조건이 섞이는 것을 막아 1~3원 단위의 합계 오차도 원천 차단한다.
@@ -437,6 +480,7 @@ function onPreStoreChange() {
   if (preCartStoreId && preCartStoreId !== val) {
     preCart = {};
     saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+    if (preEditingOrderId) { setPreEditing(null); clearPreCustomerFields(); }
     renderPreCart();
   }
   localStorage.setItem(PRE_CART_STORE_KEY, val);
@@ -616,17 +660,53 @@ async function loadQuickItems() {
 
 function renderQuickBtns() {
   const wrap = document.getElementById('quickBtns');
-  if (!wrap) return;
-  if (!quickItems || quickItems.length === 0) {
-    wrap.innerHTML = '';
+  const preWrap = document.getElementById('pre_quickBtns');
+  const failed = apiFailed(quickItems);
+  if (failed || !quickItems || quickItems.length === 0) {
+    if (wrap) wrap.innerHTML = '';
+    if (preWrap) preWrap.innerHTML = '';
     return;
   }
-  wrap.innerHTML = quickItems.map(qi => `
+  if (wrap) wrap.innerHTML = quickItems.map(qi => `
     <button type="button" class="quick-btn" onclick="addQuickItem(${qi.id})">
       ⚡ ${escapeHtml(qi.name)}
       <span class="qb-price">${fmt(qi.sale_price)}원</span>
     </button>
   `).join('');
+  // 선결제 장바구니에도 공팟/퀵비 같은 퀵 상품을 똑같이 담을 수 있게 한다.
+  if (preWrap) preWrap.innerHTML = quickItems.map(qi => `
+    <button type="button" class="quick-btn" onclick="addPreQuickItem(${qi.id})">
+      ⚡ ${escapeHtml(qi.name)}
+      <span class="qb-price">${fmt(qi.sale_price)}원</span>
+    </button>
+  `).join('');
+}
+
+// 선결제용 퀵 상품 담기 (재고 체크 없음 — 출고 확정 때도 재고를 차감하지 않는다)
+function addPreQuickItem(pid) {
+  const qi = quickItems.find(p => p.id === pid);
+  if (!qi) return;
+
+  const mergeTarget = findMergeableCartLine(preCart, pid);
+  if (mergeTarget) {
+    mergeTarget[1].qty += 1;
+  } else {
+    const key = createCartLineKey(preCart, pid, 'normal');
+    preCart[key] = {
+      product: {
+        id: qi.id,
+        name: qi.name,
+        sale_price: qi.sale_price,
+        cost_price: qi.cost_price,
+        qty: 999999,
+        unlimited: true
+      },
+      qty: 1,
+      type: 'normal'
+    };
+  }
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  renderPreCart();
 }
 
 // 재고 체크 없이 바로 장바구니에 담는다 (단가는 이후 장바구니에서 임의로 변경 가능).
@@ -1025,6 +1105,7 @@ function renderPreCart() {
         <div class="ci-name">
           ${escapeHtml(item.product.name)}
           ${isService ? ' <span style="color:var(--text-light); font-size:11px;">(서비스)</span>' : ''}
+          <div style="margin:2px 0;">${cartProductChips(item.product)}</div>
           <div class="ci-sub">${fmt(unitPrice)}원 × ${qty}${lineDiscount > 0 ? ` - ${fmt(lineDiscount)}원` : ''} = ${fmt(lineTotal)}원</div>
           ${!isService ? `
           <div class="ci-edit-row">
@@ -1134,19 +1215,23 @@ async function checkoutPreOrder() {
     items: items,
   };
 
+  const editingId = preEditingOrderId;
   try {
-    const result = await api('/api/pre_orders', { method: 'POST', body: JSON.stringify(payload) });
-    console.log('✅ 선결제 등록 성공:', result);
-    toast('선결제 주문이 등록되었습니다.', false, '✅');
+    const result = editingId
+      ? await api(`/api/pre_orders/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) })
+      : await api('/api/pre_orders', { method: 'POST', body: JSON.stringify(payload) });
+    // api()는 실패해도 예외를 던지지 않는다. 실패했는데 "등록되었습니다"를 띄우고
+    // 장바구니를 비워버리면 입력한 내용이 그대로 사라지므로, 여기서 반드시 막는다.
+    if (apiFailed(result)) return;
+
+    toast(editingId ? `주문 #${editingId}이 수정되었습니다.` : '선결제 주문이 등록되었습니다.', false, '✅');
     preCart = {};
     saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
     preCartDiscount = 0;
     localStorage.removeItem(PRE_CART_DISCOUNT_KEY);
+    setPreEditing(null);
     renderPreCart();
-    document.getElementById('pre_customer_name').value = '';
-    document.getElementById('pre_customer_phone').value = '';
-    document.getElementById('pre_customer_address').value = '';
-    { const m = document.getElementById('pre_request_memo'); m.value = ''; m.style.height = 'auto'; }
+    clearPreCustomerFields();
     await loadPreOrders();
     const q = document.getElementById('pre_searchBox').value.trim();
     if (q) {
@@ -1159,7 +1244,103 @@ async function checkoutPreOrder() {
   }
 }
 
+function clearPreCustomerFields() {
+  document.getElementById('pre_customer_name').value = '';
+  document.getElementById('pre_customer_phone').value = '';
+  document.getElementById('pre_customer_address').value = '';
+  const m = document.getElementById('pre_request_memo');
+  m.value = '';
+  m.style.height = 'auto';
+}
+
+// ---------- 출고 확정 전 주문 수정 ----------
+function setPreEditing(orderId) {
+  preEditingOrderId = orderId || null;
+  if (preEditingOrderId) localStorage.setItem(PRE_EDIT_KEY, String(preEditingOrderId));
+  else localStorage.removeItem(PRE_EDIT_KEY);
+
+  const banner = document.getElementById('pre_editBanner');
+  const text = document.getElementById('pre_editBannerText');
+  const btn = document.getElementById('pre_checkoutBtn');
+  if (banner) banner.style.display = preEditingOrderId ? 'block' : 'none';
+  if (text && preEditingOrderId) text.textContent = `✏️ 주문 #${preEditingOrderId} 수정 중`;
+  if (btn) btn.textContent = preEditingOrderId ? '💾 수정 저장' : '💳 선결제 등록';
+}
+
+function startEditPreOrder(orderId, skipConfirm) {
+  const order = preOrdersCache[orderId];
+  if (!order) {
+    toast('주문 정보를 찾을 수 없습니다. 새로고침 후 다시 시도해주세요.', true, '⚠️');
+    return;
+  }
+  const hasCartContent = Object.keys(preCart).length > 0;
+  if (!skipConfirm && hasCartContent && preEditingOrderId !== orderId) {
+    if (!confirm(`지금 선결제 장바구니에 담긴 내용이 지워지고, 주문 #${orderId}의 내용으로 바뀝니다.\n계속할까요?`)) return;
+  }
+
+  // 주문의 제품들을 장바구니로 옮겨 담는다 (단가·할인·서비스 상태 그대로).
+  preCart = {};
+  (order.items || []).forEach(it => {
+    const type = it.is_service ? 'service' : 'normal';
+    const key = createCartLineKey(preCart, it.product_id, type);
+    preCart[key] = {
+      product: {
+        id: it.product_id,
+        name: it.product_name,
+        sale_price: it.sale_price || 0,
+        brand_name: it.brand_name,
+        brand_color: it.brand_color,
+        category_name: it.category_name,
+        category_color: it.category_color,
+        unlimited: !!it.unlimited_stock,
+        qty: it.unlimited_stock ? 999999 : 0
+      },
+      qty: it.quantity,
+      type,
+      priceOverride: it.is_service ? null : it.unit_price,
+      discount: it.is_service ? 0 : (it.discount_amount || 0)
+    };
+  });
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  preCartDiscount = 0;
+  localStorage.removeItem(PRE_CART_DISCOUNT_KEY);
+
+  document.getElementById('pre_customer_name').value = order.customer_name || '';
+  document.getElementById('pre_customer_phone').value = order.customer_phone || '';
+  document.getElementById('pre_customer_address').value = order.customer_address || '';
+  const memo = document.getElementById('pre_request_memo');
+  memo.value = order.request_memo || '';
+  autoGrowTextarea(memo);
+  if (order.payment_method) selectPrePayment(order.payment_method);
+
+  setPreEditing(orderId);
+  renderPreCart();
+  const head = document.getElementById('pre_editBanner');
+  if (head && head.scrollIntoView) head.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelPreEdit() {
+  if (!confirm('수정을 취소할까요? 장바구니와 입력한 내용이 비워집니다. (주문 자체는 그대로 유지됩니다)')) return;
+  preCart = {};
+  saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+  preCartDiscount = 0;
+  localStorage.removeItem(PRE_CART_DISCOUNT_KEY);
+  setPreEditing(null);
+  clearPreCustomerFields();
+  renderPreCart();
+}
+
 // ---------- 선결제 출고 대기 목록 ----------
+function preOrderItemHtml(item) {
+  const pname = item.product_name || `#${item.product_id}`;
+  const lineTotal = item.is_service ? 0 : (item.unit_price * item.quantity) - (item.discount_amount || 0);
+  const chips = brandCategoryChips(item.category_name, item.category_color, item.brand_name, item.brand_color, !!item.unlimited_stock);
+  return `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:2px 0;">
+    <span>${escapeHtml(pname)}${item.is_service ? ' <span style="color:var(--text-light); font-size:11px;">(서비스)</span>' : ''} × ${item.quantity} = ${fmt(lineTotal)}원</span>
+    ${chips}
+  </div>`;
+}
+
 async function loadPreOrders() {
   const store_id = document.getElementById('pre_store').value;
   if (!store_id) {
@@ -1170,6 +1351,12 @@ async function loadPreOrders() {
   try {
     const orders = await api(`/api/pre_orders?store_id=${store_id}&status=대기`);
     const container = document.getElementById('pre_order_list');
+    if (apiFailed(orders)) {
+      container.innerHTML = '<div style="color:var(--danger); text-align:center; padding:10px 0;">⚠️ 출고 대기 목록을 불러오지 못했습니다. 🔄 새로고침을 눌러주세요.</div>';
+      return;
+    }
+    preOrdersCache = {};
+    orders.forEach(o => { preOrdersCache[o.id] = o; });
     if (!orders || orders.length === 0) {
       container.innerHTML = '<div style="color:var(--text-light); text-align:center; padding:10px 0;">출고 대기 주문이 없습니다.</div>';
       return;
@@ -1188,14 +1375,12 @@ async function loadPreOrders() {
           ${o.request_memo ? `📝 ${escapeHtml(o.request_memo)}` : ''}
         </div>
         <div style="font-size:12px; margin:2px 0; color:var(--text);">
-          ${o.items.map(item => {
-            const pname = item.product_name || `#${item.product_id}`;
-            return `<div>${escapeHtml(pname)} × ${item.quantity} = ${fmt((item.unit_price * item.quantity) - (item.discount_amount || 0))}원</div>`;
-          }).join('')}
+          ${o.items.map(preOrderItemHtml).join('')}
         </div>
         <div style="font-size:11px; color:var(--text-light);">💰 총액: ${fmt(o.total_amount)}원 (${o.payment_method})</div>
         <div style="display:flex; gap:4px; margin-top:6px;">
           <button class="primary" onclick="confirmPreOrder(${o.id})" style="padding:2px 10px; font-size:11px;">✅ 출고 확정</button>
+          <button onclick="startEditPreOrder(${o.id})" style="padding:2px 10px; font-size:11px;">✏️ 수정</button>
           <button class="danger" onclick="deletePreOrder(${o.id})" style="padding:2px 10px; font-size:11px;">🗑️ 취소</button>
         </div>
       </div>
@@ -1209,7 +1394,14 @@ async function loadPreOrders() {
 async function confirmPreOrder(orderId) {
   if (!confirm('이 주문을 출고 확정하시겠습니까? (재고가 차감됩니다)')) return;
   try {
-    await api(`/api/pre_orders/${orderId}/confirm`, { method: 'PUT' });
+    const result = await api(`/api/pre_orders/${orderId}/confirm`, { method: 'PUT' });
+    if (apiFailed(result)) {
+      // 실패 사유 토스트는 api()가 이미 띄웠다. 성공 토스트가 그걸 덮어쓰지 않도록 여기서 멈추고,
+      // 서버의 실제 상태가 화면에 맞도록 목록만 다시 불러온다.
+      await loadPreOrders();
+      await loadConfirmedPreOrders();
+      return;
+    }
     toast('출고 확정되었습니다.', false, '✅');
     await loadPreOrders();
     await loadConfirmedPreOrders();
@@ -1227,7 +1419,16 @@ async function confirmPreOrder(orderId) {
 async function deletePreOrder(orderId) {
   if (!confirm('이 주문을 취소하시겠습니까? (복구할 수 없습니다)')) return;
   try {
-    await api(`/api/pre_orders/${orderId}`, { method: 'DELETE' });
+    const result = await api(`/api/pre_orders/${orderId}`, { method: 'DELETE' });
+    if (apiFailed(result)) { await loadPreOrders(); return; }
+    if (preEditingOrderId === orderId) {
+      // 수정 중이던 주문이 취소됐으면 수정 상태도 함께 풀어준다.
+      preCart = {};
+      saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+      setPreEditing(null);
+      clearPreCustomerFields();
+      renderPreCart();
+    }
     toast('주문이 취소되었습니다.', false, '✅');
     await loadPreOrders();
   } catch (e) {
@@ -1246,6 +1447,10 @@ async function loadConfirmedPreOrders() {
   try {
     const orders = await api(`/api/pre_orders?store_id=${store_id}&status=출고완료`);
     const container = document.getElementById('pre_order_confirmed_list');
+    if (apiFailed(orders)) {
+      container.innerHTML = '<div style="color:var(--danger); text-align:center; padding:10px 0;">⚠️ 출고 완료 목록을 불러오지 못했습니다. 🔄 새로고침을 눌러주세요.</div>';
+      return;
+    }
     if (!orders || orders.length === 0) {
       container.innerHTML = '<div style="color:var(--text-light); text-align:center; padding:10px 0;">출고 완료된 주문이 없습니다.</div>';
       return;
@@ -1263,10 +1468,7 @@ async function loadConfirmedPreOrders() {
           ${o.customer_address ? `🏠 ${escapeHtml(o.customer_address)}` : ''}
         </div>
         <div style="font-size:12px; margin:2px 0; color:var(--text);">
-          ${o.items.map(item => {
-            const pname = item.product_name || `#${item.product_id}`;
-            return `<div>${escapeHtml(pname)} × ${item.quantity} = ${fmt((item.unit_price * item.quantity) - (item.discount_amount || 0))}원</div>`;
-          }).join('')}
+          ${o.items.map(preOrderItemHtml).join('')}
         </div>
         <div style="font-size:11px; color:var(--text-light);">💰 총액: ${fmt(o.total_amount)}원 (${o.payment_method})</div>
         <div style="display:flex; gap:4px; margin-top:6px;">
@@ -1283,7 +1485,8 @@ async function loadConfirmedPreOrders() {
 async function cancelPreOrder(orderId) {
   if (!confirm('이 확정된 주문을 취소하시겠습니까?\n차감됐던 재고가 되돌아오고, 매출 통계에서도 빠집니다. (복구할 수 없습니다)')) return;
   try {
-    await api(`/api/pre_orders/${orderId}/cancel`, { method: 'POST' });
+    const result = await api(`/api/pre_orders/${orderId}/cancel`, { method: 'POST' });
+    if (apiFailed(result)) { await loadConfirmedPreOrders(); return; }
     toast('주문이 취소되고 재고가 복구되었습니다.', false, '✅');
     await loadConfirmedPreOrders();
     const q = document.getElementById('pre_searchBox').value.trim();
@@ -1333,8 +1536,24 @@ document.addEventListener('DOMContentLoaded', async function() {
   preCart = loadCartFromStorage(PRE_CART_STORAGE_KEY);
   renderCart();
   renderPreCart();
+  setPreEditing(preEditingOrderId);
   
   await loadStores();
+
+  // 수정 중이던 주문이 있으면 서버에 저장된 내용으로 다시 채운다 (새로고침하면 입력칸이
+  // 비어버려서, 그대로 저장하면 고객 정보가 지워지는 일을 막기 위함).
+  if (preEditingOrderId) {
+    if (preOrdersCache[preEditingOrderId]) {
+      startEditPreOrder(preEditingOrderId, true);
+    } else {
+      preCart = {};
+      saveCartToStorage(PRE_CART_STORAGE_KEY, preCart);
+      setPreEditing(null);
+      clearPreCustomerFields();
+      renderPreCart();
+      toast('수정 중이던 주문을 찾을 수 없어 수정 모드를 해제했습니다.', true, '⚠️');
+    }
+  }
   await loadQuickItems();
   console.log('✅ 판매 등록 초기화 완료');
 });

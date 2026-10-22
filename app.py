@@ -6618,24 +6618,38 @@ def api_pre_orders():
                 result.append(d)
 
             # 🔥 화면에서 어떤 제품인지 바로 보이도록, 항목별 product_id에 해당하는
-            # 제품명을 한꺼번에 조회해 붙여준다. 프론트가 자체 캐시(products 배열)에
+            # 제품명/브랜드/카테고리를 한꺼번에 조회해 붙여준다. 프론트가 자체 캐시(products 배열)에
             # 의존하면, 선결제 탭만 사용해 그 캐시가 비어있는 경우 제품명 대신
             # "#123" 같은 ID만 보이는 문제가 있었다 (products 배열은 일반 판매 탭
             # 검색에서만 채워짐).
             if all_product_ids:
                 cur.execute(
-                    "SELECT id, name FROM products WHERE id = ANY(%s)",
+                    """SELECT p.id, p.name, p.sale_price, COALESCE(p.unlimited_stock, 0) AS unlimited_stock,
+                              b.name AS brand_name, b.color AS brand_color,
+                              c.name AS category_name, c.color AS category_color
+                       FROM products p
+                       LEFT JOIN brands b ON b.id = p.brand_id
+                       LEFT JOIN categories c ON c.id = p.category_id
+                       WHERE p.id = ANY(%s)""",
                     (list(all_product_ids),)
                 )
-                name_map = {row["id"]: row["name"] for row in cur.fetchall()}
+                info_map = {row["id"]: row for row in cur.fetchall()}
                 for d in result:
                     for item in d["items"]:
-                        item["product_name"] = name_map.get(item["product_id"], f"#{item['product_id']}")
+                        info = info_map.get(item["product_id"])
+                        item["product_name"] = info["name"] if info else f"#{item['product_id']}"
+                        item["sale_price"] = (info["sale_price"] or 0) if info else 0
+                        item["unlimited_stock"] = bool(info["unlimited_stock"]) if info else False
+                        item["brand_name"] = info["brand_name"] if info else None
+                        item["brand_color"] = info["brand_color"] if info else None
+                        item["category_name"] = info["category_name"] if info else None
+                        item["category_color"] = info["category_color"] if info else None
 
             return jsonify(result)
         except Exception as e:
+            rollback_quietly()
             print(f"❌ 선결제 주문 조회 오류: {e}")
-            return jsonify([])
+            return jsonify({"error": f"선결제 주문을 불러오지 못했습니다: {e}"}), 500
 
     try:
         data = request.get_json(force=True)
@@ -6659,54 +6673,9 @@ def api_pre_orders():
         if payment_method not in ("현금", "카드", "계좌이체"):
             return jsonify({"error": "결제수단은 '현금', '카드', '계좌이체'만 가능합니다."}), 400
 
-        if not items or len(items) == 0:
-            return jsonify({"error": "주문 항목이 없습니다."}), 400
-
-        total_amount = 0
-        validated_items = []
-        for idx, item in enumerate(items):
-            product_id = item.get("product_id")
-            qty = int(item.get("quantity") or 0)
-            unit_price = int(item.get("unit_price") or 0)
-            discount = int(item.get("discount_amount") or 0)
-            is_service = bool(item.get("is_service", False))
-
-            # 서비스 행은 판매가/할인 입력값과 무관하게 항상 0원으로 정규화한다.
-            # 이 값을 별도 저장해 같은 제품의 정상 판매 행과 절대로 합쳐지지 않게 한다.
-            if is_service:
-                unit_price = 0
-                discount = 0
-
-            if not product_id:
-                return jsonify({"error": f"{idx+1}번째 항목: 제품 ID가 없습니다."}), 400
-            if qty <= 0:
-                return jsonify({"error": f"{idx+1}번째 항목: 수량은 1 이상이어야 합니다."}), 400
-            if unit_price < 0:
-                return jsonify({"error": f"{idx+1}번째 항목: 단가는 0 이상이어야 합니다."}), 400
-            if discount < 0:
-                return jsonify({"error": f"{idx+1}번째 항목: 할인금액은 0 이상이어야 합니다."}), 400
-            if discount > unit_price * qty:
-                return jsonify({"error": f"{idx+1}번째 항목: 할인금액이 상품 금액을 초과합니다."}), 400
-
-            cur.execute("SELECT id, cost_price FROM products WHERE id = %s", (product_id,))
-            product = cur.fetchone()
-            if not product:
-                return jsonify({"error": f"제품 ID {product_id}가 존재하지 않습니다."}), 400
-
-            line_total = (unit_price * qty) - discount
-            final_unit_price = line_total // qty if qty > 0 else 0
-            total_amount += line_total
-
-            validated_items.append({
-                "product_id": product_id,
-                "quantity": qty,
-                "unit_price": unit_price,
-                "discount_amount": discount,
-                "final_unit_price": final_unit_price,
-                "line_total": line_total,
-                "is_service": is_service,
-                "cost_price": product["cost_price"] or 0
-            })
+        validated_items, total_amount, item_error = _validate_pre_order_items(cur, items)
+        if item_error:
+            return jsonify({"error": item_error}), 400
 
         customer_id = upsert_customer(cur, customer_name, customer_phone, customer_address)
 
@@ -6717,30 +6686,7 @@ def api_pre_orders():
         )
         order_id = cur.fetchone()["id"]
 
-        for item in validated_items:
-            # 단가를 반올림해 수량에 곱하면 1~3원이 남는 문제가 생긴다. 최종 행 금액을
-            # 몫과 나머지로 분리해 저장해, 거래 금액 합계가 선결제 총액과 정확히 일치하게 한다.
-            base_price, remainder = divmod(item["line_total"], item["quantity"])
-            price_groups = []
-            if remainder:
-                price_groups.append((remainder, base_price + 1))
-            if item["quantity"] - remainder:
-                price_groups.append((item["quantity"] - remainder, base_price))
-            for group_qty, group_unit_price in price_groups:
-                cur.execute(
-                    """INSERT INTO stock_transactions
-                    (product_id, store_id, type, quantity, unit_cost, unit_price, payment_method, staff, memo)
-                    VALUES (%s, %s, '선결예약', %s, %s, %s, %s, NULL, %s)""",
-                    (item["product_id"], store_id, group_qty, item["cost_price"], group_unit_price,
-                     payment_method, f"선결제 대기 #{order_id}")
-                )
-
-        for item in validated_items:
-            cur.execute(
-                """INSERT INTO pre_order_items (pre_order_id, product_id, quantity, unit_price, discount_amount, is_service)
-                   VALUES (%s, %s, %s, %s, %s, %s)""",
-                (order_id, item["product_id"], item["quantity"], item["unit_price"], item["discount_amount"], int(item["is_service"]))
-            )
+        _insert_pre_order_rows(cur, order_id, store_id, payment_method, validated_items)
 
         conn.commit()
         return jsonify({"id": order_id, "ok": True})
@@ -6750,44 +6696,232 @@ def api_pre_orders():
         print(f"❌ 선결제 주문 등록 오류: {e}")
         return jsonify({"error": f"서버 내부 오류: {str(e)}"}), 500
 
+
+def _validate_pre_order_items(cur, items):
+    """선결제 주문 항목을 검증하고 (검증된 항목 목록, 총액, 오류메시지)를 돌려준다.
+    신규 등록(POST)과 수정(PUT)이 똑같은 규칙을 쓰도록 한곳에 모았다."""
+    if not items:
+        return None, 0, "주문 항목이 없습니다."
+
+    total_amount = 0
+    validated_items = []
+    for idx, item in enumerate(items):
+        product_id = item.get("product_id")
+        qty = int(item.get("quantity") or 0)
+        unit_price = int(item.get("unit_price") or 0)
+        discount = int(item.get("discount_amount") or 0)
+        is_service = bool(item.get("is_service", False))
+
+        # 서비스 행은 판매가/할인 입력값과 무관하게 항상 0원으로 정규화한다.
+        # 이 값을 별도 저장해 같은 제품의 정상 판매 행과 절대로 합쳐지지 않게 한다.
+        if is_service:
+            unit_price = 0
+            discount = 0
+
+        if not product_id:
+            return None, 0, f"{idx+1}번째 항목: 제품 ID가 없습니다."
+        if qty <= 0:
+            return None, 0, f"{idx+1}번째 항목: 수량은 1 이상이어야 합니다."
+        if unit_price < 0:
+            return None, 0, f"{idx+1}번째 항목: 단가는 0 이상이어야 합니다."
+        if discount < 0:
+            return None, 0, f"{idx+1}번째 항목: 할인금액은 0 이상이어야 합니다."
+        if discount > unit_price * qty:
+            return None, 0, f"{idx+1}번째 항목: 할인금액이 상품 금액을 초과합니다."
+
+        cur.execute("SELECT id, cost_price FROM products WHERE id = %s", (product_id,))
+        product = cur.fetchone()
+        if not product:
+            return None, 0, f"제품 ID {product_id}가 존재하지 않습니다."
+
+        line_total = (unit_price * qty) - discount
+        final_unit_price = line_total // qty if qty > 0 else 0
+        total_amount += line_total
+
+        validated_items.append({
+            "product_id": product_id,
+            "quantity": qty,
+            "unit_price": unit_price,
+            "discount_amount": discount,
+            "final_unit_price": final_unit_price,
+            "line_total": line_total,
+            "is_service": is_service,
+            "cost_price": product["cost_price"] or 0
+        })
+    return validated_items, total_amount, None
+
+
+def _insert_pre_order_rows(cur, order_id, store_id, payment_method, validated_items, reserved_at=None):
+    """'선결예약' 매출 거래와 선결제 항목(pre_order_items)을 저장한다.
+    reserved_at을 주면 매출 거래 시각을 그 값으로 유지한다 (주문 수정 시 원래 접수 시각 보존)."""
+    for item in validated_items:
+        # 단가를 반올림해 수량에 곱하면 1~3원이 남는 문제가 생긴다. 최종 행 금액을
+        # 몫과 나머지로 분리해 저장해, 거래 금액 합계가 선결제 총액과 정확히 일치하게 한다.
+        base_price, remainder = divmod(item["line_total"], item["quantity"])
+        price_groups = []
+        if remainder:
+            price_groups.append((remainder, base_price + 1))
+        if item["quantity"] - remainder:
+            price_groups.append((item["quantity"] - remainder, base_price))
+        for group_qty, group_unit_price in price_groups:
+            if reserved_at is not None:
+                cur.execute(
+                    """INSERT INTO stock_transactions
+                    (product_id, store_id, type, quantity, unit_cost, unit_price, payment_method, staff, memo, date_time)
+                    VALUES (%s, %s, '선결예약', %s, %s, %s, %s, NULL, %s, %s)""",
+                    (item["product_id"], store_id, group_qty, item["cost_price"], group_unit_price,
+                     payment_method, f"선결제 대기 #{order_id}", reserved_at)
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO stock_transactions
+                    (product_id, store_id, type, quantity, unit_cost, unit_price, payment_method, staff, memo)
+                    VALUES (%s, %s, '선결예약', %s, %s, %s, %s, NULL, %s)""",
+                    (item["product_id"], store_id, group_qty, item["cost_price"], group_unit_price,
+                     payment_method, f"선결제 대기 #{order_id}")
+                )
+
+    for item in validated_items:
+        cur.execute(
+            """INSERT INTO pre_order_items (pre_order_id, product_id, quantity, unit_price, discount_amount, is_service)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (order_id, item["product_id"], item["quantity"], item["unit_price"], item["discount_amount"], int(item["is_service"]))
+        )
+
+
+@app.route("/api/pre_orders/<int:order_id>", methods=["PUT"])
+def api_pre_order_update(order_id):
+    """출고 확정 전('대기') 선결제 주문의 인적 사항(고객명/연락처/주소/요청사항)과
+    결제수단, 제품 목록을 한 번에 수정한다.
+    - 재고는 확정 시점에만 움직이므로, 여기서는 매출 기록('선결예약')만 새 내용으로 교체한다.
+    - 매출 거래 시각은 원래 접수 시각을 그대로 유지한다."""
+    conn = get_db()
+    cur = g.cursor
+    try:
+        data = request.get_json(force=True)
+        customer_name = (data.get("customer_name") or "").strip()
+        customer_phone = (data.get("customer_phone") or "").strip()
+        customer_address = (data.get("customer_address") or "").strip()
+        request_memo = (data.get("request_memo") or "").strip()
+        payment_method = data.get("payment_method")
+        items = data.get("items", [])
+
+        if payment_method not in ("현금", "카드", "계좌이체"):
+            return jsonify({"error": "결제수단은 '현금', '카드', '계좌이체' 중에서 선택해주세요."}), 400
+
+        # 확정/취소가 동시에 일어나지 않도록 이 주문 행을 잠그고 상태를 확인한다.
+        cur.execute("SELECT * FROM pre_orders WHERE id = %s FOR UPDATE", (order_id,))
+        order = cur.fetchone()
+        if not order:
+            return jsonify({"error": "주문을 찾을 수 없습니다."}), 404
+        if order["status"] != "대기":
+            return jsonify({"error": f"이미 '{order['status']}' 상태인 주문은 수정할 수 없습니다. (출고 확정 전 주문만 수정 가능)"}), 400
+
+        validated_items, total_amount, item_error = _validate_pre_order_items(cur, items)
+        if item_error:
+            return jsonify({"error": item_error}), 400
+
+        store_id = order["store_id"]
+        customer_id = upsert_customer(cur, customer_name, customer_phone, customer_address)
+
+        memo_key = f"선결제 대기 #{order_id}"
+        cur.execute("SELECT MIN(date_time) AS reserved_at FROM stock_transactions WHERE type='선결예약' AND memo = %s", (memo_key,))
+        row = cur.fetchone()
+        reserved_at = row["reserved_at"] if row else None
+
+        cur.execute("DELETE FROM stock_transactions WHERE type='선결예약' AND memo = %s", (memo_key,))
+        cur.execute("DELETE FROM pre_order_items WHERE pre_order_id = %s", (order_id,))
+        cur.execute(
+            """UPDATE pre_orders
+               SET customer_name = %s, customer_phone = %s, customer_address = %s, request_memo = %s,
+                   payment_method = %s, total_amount = %s, customer_id = %s, updated_at = CURRENT_TIMESTAMP
+               WHERE id = %s""",
+            (customer_name, customer_phone, customer_address, request_memo,
+             payment_method, total_amount, customer_id, order_id)
+        )
+        _insert_pre_order_rows(cur, order_id, store_id, payment_method, validated_items, reserved_at)
+
+        conn.commit()
+        return jsonify({"ok": True, "id": order_id})
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ 선결제 주문 수정 오류: {e}")
+        return jsonify({"error": f"주문 수정 중 오류가 발생했습니다: {e}"}), 500
+
+
 @app.route("/api/pre_orders/<int:order_id>/confirm", methods=["PUT"])
 def api_pre_order_confirm(order_id):
     conn = get_db()
     cur = g.cursor
-    cur.execute("SELECT * FROM pre_orders WHERE id = %s", (order_id,))
-    order = cur.fetchone()
-    if not order:
-        return jsonify({"error": "주문을 찾을 수 없습니다."}), 404
-    if order["status"] != "대기":
-        return jsonify({"error": "이미 처리된 주문입니다."}), 400
+    try:
+        cur.execute("SELECT * FROM pre_orders WHERE id = %s", (order_id,))
+        order = cur.fetchone()
+        if not order:
+            return jsonify({"error": "주문을 찾을 수 없습니다."}), 404
+        if order["status"] != "대기":
+            return jsonify({"error": f"이미 처리된 주문입니다. (현재 상태: {order['status']})"}), 400
 
-    cur.execute("SELECT * FROM pre_order_items WHERE pre_order_id = %s", (order_id,))
-    items = cur.fetchall()
-
-    for item in items:
-        product_id = item["product_id"]
-        quantity = item["quantity"]
         store_id = order["store_id"]
-        err = _apply_stock_delta(conn, store_id, product_id, "판매출고", quantity)
-        if err:
-            return jsonify({"error": f"재고 부족: {err}"}), 400
 
-        # ⚠️ 버그 수정: 여기서 실제로 store_stock을 차감하면서도 stock_transactions에는
-        # 아무 기록도 남기지 않고 있었다. 이 주문의 매출/수량은 이미 예약 시점에 생성된
-        # '선결예약' 거래로 리포트에 반영되고 있으므로(같은 항목을 또 매출로 잡으면
-        # 이중 집계가 된다), 매출 집계용 유형('판매출고'/'판매취소'/'선결예약')과는
-        # 다른 '선결출고' 유형으로 "실제로 언제 재고가 빠져나갔는지"만 감사 기록을
-        # 남긴다. 거래 목록/타임머신에서 이 시점의 재고 변화를 확인할 수 있게 된다.
+        # 상태를 '대기' → '출고완료'로 먼저 바꿔 행을 잠근다. 더블클릭/동시 요청이 와도
+        # 한쪽만 통과하고(rowcount 0이면 이미 처리된 것), 아래에서 재고가 부족하면 전체를
+        # 롤백하므로 상태도 함께 원래대로 돌아간다.
         cur.execute(
-            """INSERT INTO stock_transactions
-            (product_id, store_id, type, quantity, memo)
-            VALUES (%s, %s, '선결출고', %s, %s)""",
-            (product_id, store_id, quantity, f"선결제 확정 출고 (주문 #{order_id})")
+            "UPDATE pre_orders SET status = '출고완료', updated_at = CURRENT_TIMESTAMP WHERE id = %s AND status = '대기'",
+            (order_id,)
         )
+        if cur.rowcount != 1:
+            conn.rollback()
+            return jsonify({"error": "이미 처리된 주문입니다. 새로고침 후 확인해주세요."}), 400
 
-    cur.execute("UPDATE pre_orders SET status = '출고완료', updated_at = CURRENT_TIMESTAMP WHERE id = %s", (order_id,))
-    conn.commit()
-    return jsonify({"ok": True, "order_id": order_id})
+        # 같은 제품이 여러 줄(정상/서비스 등)로 들어있을 수 있으므로 제품별로 합산해서 처리한다.
+        cur.execute(
+            """SELECT poi.product_id, SUM(poi.quantity) AS quantity,
+                      MAX(p.name) AS name, MAX(COALESCE(p.unlimited_stock, 0)) AS unlimited_stock
+               FROM pre_order_items poi
+               JOIN products p ON p.id = poi.product_id
+               WHERE poi.pre_order_id = %s
+               GROUP BY poi.product_id
+               ORDER BY poi.product_id""",
+            (order_id,)
+        )
+        items = cur.fetchall()
+        if not items:
+            conn.rollback()
+            return jsonify({"error": "이 주문에 담긴 제품이 없어 출고 확정할 수 없습니다."}), 400
+
+        for item in items:
+            # 재고 무관(퀵 버튼) 상품(퀵비/공팟 등)은 재고 차감도, 출고 기록도 하지 않는다.
+            # (일반 판매의 /api/sales 와 같은 규칙)
+            if item["unlimited_stock"]:
+                continue
+
+            product_id = item["product_id"]
+            quantity = int(item["quantity"])
+            err = _apply_stock_delta(conn, store_id, product_id, "판매출고", quantity)
+            if err:
+                conn.rollback()
+                return jsonify({"error": f"'{item['name']}' 출고 확정 불가: {err} (필요 수량 {quantity})"}), 400
+
+            # ⚠️ 버그 수정: 여기서 실제로 store_stock을 차감하면서도 stock_transactions에는
+            # 아무 기록도 남기지 않고 있었다. 이 주문의 매출/수량은 이미 예약 시점에 생성된
+            # '선결예약' 거래로 리포트에 반영되고 있으므로(같은 항목을 또 매출로 잡으면
+            # 이중 집계가 된다), 매출 집계용 유형('판매출고'/'판매취소'/'선결예약')과는
+            # 다른 '선결출고' 유형으로 "실제로 언제 재고가 빠져나갔는지"만 감사 기록을
+            # 남긴다. 거래 목록/타임머신에서 이 시점의 재고 변화를 확인할 수 있게 된다.
+            cur.execute(
+                """INSERT INTO stock_transactions
+                (product_id, store_id, type, quantity, memo)
+                VALUES (%s, %s, '선결출고', %s, %s)""",
+                (product_id, store_id, quantity, f"선결제 확정 출고 (주문 #{order_id})")
+            )
+
+        conn.commit()
+        return jsonify({"ok": True, "order_id": order_id})
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ 선결제 출고 확정 오류 (주문 #{order_id}): {e}")
+        return jsonify({"error": f"출고 확정 중 오류가 발생했습니다: {e}"}), 500
 
 
 @app.route("/api/pre_orders/<int:order_id>/cancel_any", methods=["POST"])
@@ -6834,13 +6968,21 @@ def api_pre_order_cancel(order_id):
         return jsonify({"error": "취소할 수 없는 상태입니다."}), 400
 
     store_id = order["store_id"]
-    cur.execute("SELECT * FROM pre_order_items WHERE pre_order_id = %s", (order_id,))
+    cur.execute(
+        """SELECT poi.*, COALESCE(p.unlimited_stock, 0) AS unlimited_stock
+           FROM pre_order_items poi JOIN products p ON p.id = poi.product_id
+           WHERE poi.pre_order_id = %s""",
+        (order_id,)
+    )
     items = cur.fetchall()
 
     try:
         # 1) 확정 시 실제로 빠져나간 재고를 항목별로 되돌린다 (판매취소는 감소 유형이
         #    아니므로 _apply_stock_delta가 자동으로 재고를 더해준다).
+        #    재고 무관(퀵 버튼) 상품은 확정 때 재고를 차감하지 않았으므로 복구도 하지 않는다.
         for item in items:
+            if item["unlimited_stock"]:
+                continue
             err = _apply_stock_delta(conn, store_id, item["product_id"], "판매취소", item["quantity"])
             if err:
                 conn.rollback()
