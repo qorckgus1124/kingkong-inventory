@@ -25,6 +25,10 @@
       <svg class="i3d" aria-hidden="true"><use href="#i3d-tags"></use></svg>
       <input type="text" id="brandSearchBox" placeholder="브랜드명 검색" autocomplete="off" oninput="onBrandSearchInput()">
     </span>
+    <span class="search-field" style="width:200px;" title="이 단어가 제품명/브랜드명에 들어있는 제품은 검색 결과에서 뺍니다. 여러 개는 공백 또는 쉼표로 구분하세요.">
+      <span aria-hidden="true" style="margin-right:4px;">🚫</span>
+      <input type="text" id="excludeBox" placeholder="제외 단어 (예: 딸기, 수박)" autocomplete="off" oninput="onExcludeInput()">
+    </span>
     <button onclick="loadAllProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
   </div>
 
@@ -80,6 +84,10 @@
     <span class="search-field" style="width:160px;">
       <svg class="i3d" aria-hidden="true"><use href="#i3d-tags"></use></svg>
       <input type="text" id="pre_brandSearchBox" placeholder="브랜드명 검색" autocomplete="off" oninput="onPreBrandSearchInput()">
+    </span>
+    <span class="search-field" style="width:200px;" title="이 단어가 제품명/브랜드명에 들어있는 제품은 검색 결과에서 뺍니다. 여러 개는 공백 또는 쉼표로 구분하세요.">
+      <span aria-hidden="true" style="margin-right:4px;">🚫</span>
+      <input type="text" id="pre_excludeBox" placeholder="제외 단어 (예: 딸기, 수박)" autocomplete="off" oninput="onPreExcludeInput()">
     </span>
     <button onclick="loadAllPreProducts()" class="primary" style="padding:4px 12px; font-size:12px;">📋 전체 보기</button>
   </div>
@@ -398,8 +406,9 @@ async function loadProducts(forceLoad = false) {
 
   const q = document.getElementById('searchBox').value.trim();
   const brandQ = document.getElementById('brandSearchBox').value.trim();
+  const excludeQ = document.getElementById('excludeBox').value.trim();
 
-  if (!q && !brandQ && !forceLoad) {
+  if (!q && !brandQ && !excludeQ && !forceLoad) {
     document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
     return;
   }
@@ -408,6 +417,7 @@ async function loadProducts(forceLoad = false) {
   const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc', hide_zero_stock: '1' });
   if (q) params.append('q', q);
   if (brandQ) params.append('brand_q', brandQ);
+  if (excludeQ) params.append('exclude_q', excludeQ);
 
   const myToken = normalSearchGuard.next();
   try {
@@ -430,7 +440,8 @@ async function loadProducts(forceLoad = false) {
 function onSearchInput() {
   const q = document.getElementById('searchBox').value.trim();
   const brandQ = document.getElementById('brandSearchBox').value.trim();
-  if (q || brandQ) {
+  const excludeQ = document.getElementById('excludeBox').value.trim();
+  if (q || brandQ || excludeQ) {
     loadProducts(false);
   } else {
     document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
@@ -440,14 +451,12 @@ function onSearchInput() {
 
 // 🔥 브랜드명 전용 검색: 이 칸에 입력하면 브랜드명으로만 검색된다 (제품명 검색과 별개)
 function onBrandSearchInput() {
-  const q = document.getElementById('searchBox').value.trim();
-  const brandQ = document.getElementById('brandSearchBox').value.trim();
-  if (q || brandQ) {
-    loadProducts(false);
-  } else {
-    document.getElementById('grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
-    products = [];
-  }
+  onSearchInput();
+}
+
+// 🚫 제외 단어 칸 (일반 판매): 검색어/브랜드와 함께 쓰거나, 단독으로 써도 "전체 - 제외 단어" 목록이 나온다.
+function onExcludeInput() {
+  onSearchInput();
 }
 
 function loadAllProducts() {
@@ -543,8 +552,9 @@ async function loadPreProducts(forceLoad = false) {
 
   const q = document.getElementById('pre_searchBox').value.trim();
   const brandQ = document.getElementById('pre_brandSearchBox').value.trim();
+  const excludeQ = document.getElementById('pre_excludeBox').value.trim();
 
-  if (!q && !brandQ && !forceLoad) {
+  if (!q && !brandQ && !excludeQ && !forceLoad) {
     document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
     return;
   }
@@ -559,6 +569,7 @@ async function loadPreProducts(forceLoad = false) {
   });
   if (q) params.append('q', q);
   if (brandQ) params.append('brand_q', brandQ);
+  if (excludeQ) params.append('exclude_q', excludeQ);
 
   const myToken = preSearchGuard.next();
   try {
@@ -580,24 +591,23 @@ async function loadPreProducts(forceLoad = false) {
 function onPreSearchInput() {
   const q = document.getElementById('pre_searchBox').value.trim();
   const brandQ = document.getElementById('pre_brandSearchBox').value.trim();
-  if (q || brandQ) {
+  const excludeQ = document.getElementById('pre_excludeBox').value.trim();
+  if (q || brandQ || excludeQ) {
     loadPreProducts(false);
   } else {
     document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
-    products = [];
+    preProducts = [];
   }
 }
 
 // 🔥 브랜드명 전용 검색 (선결제 탭)
 function onPreBrandSearchInput() {
-  const q = document.getElementById('pre_searchBox').value.trim();
-  const brandQ = document.getElementById('pre_brandSearchBox').value.trim();
-  if (q || brandQ) {
-    loadPreProducts(false);
-  } else {
-    document.getElementById('pre_grid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
-    products = [];
-  }
+  onPreSearchInput();
+}
+
+// 🚫 제외 단어 칸 (선결제 판매): 일반 판매 탭과 완전히 별개로 동작한다.
+function onPreExcludeInput() {
+  onPreSearchInput();
 }
 
 function loadAllPreProducts() {

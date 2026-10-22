@@ -7,6 +7,7 @@
 <div class="tab-row">
   <button class="tab-btn active" data-tab="single" onclick="switchProductTab('single')">단일 등록</button>
   <button class="tab-btn" data-tab="multi" onclick="switchProductTab('multi')">다중 등록</button>
+  <button class="tab-btn" data-tab="quick" onclick="switchProductTab('quick')">⚡ 간편 추가</button>
 </div>
 
 <!-- 단일 등록 -->
@@ -54,6 +55,9 @@
       <div class="form-field">
         <button class="primary" onclick="addProduct()" style="width:100%">+ 제품 등록</button>
       </div>
+      <div class="form-field">
+        <button onclick="addProduct(true)" style="width:100%" title="지금 입력한 정보로 등록하고, 입력칸은 그대로 남겨둡니다. 이름만 바꿔서 바로 또 등록할 수 있어요.">📑 등록 후 복사해서 또 만들기</button>
+      </div>
     </div>
   </div>
 </div>
@@ -74,11 +78,20 @@
   </div>
 </div>
 
+<!-- 간편 추가 (엑셀처럼 여러 줄 한 번에 등록) -->
+<div id="tab-quick" class="tab-content" style="display:none;">
+  {% include '_quick_add_grid.html' %}
+</div>
+
 <!-- 제품 목록 툴바 -->
 <div class="toolbar">
   <span class="search-field">
     <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
     <input type="text" id="searchBox" placeholder="제품명 또는 브랜드명 검색" autocomplete="off" oninput="debouncedLoad()">
+  </span>
+  <span class="search-field" style="width:200px;" title="이 단어가 제품명/브랜드명에 들어있는 제품은 목록에서 뺍니다. 여러 개는 공백 또는 쉼표로 구분하세요.">
+    <span aria-hidden="true" style="margin-right:4px;">🚫</span>
+    <input type="text" id="excludeBox" placeholder="제외 단어 (예: 딸기, 수박)" autocomplete="off" oninput="debouncedLoad()">
   </span>
   <button onclick="loadAll()" class="primary">📋 전체 보기</button>
   <select id="filterCategory" onchange="load()"><option value="">전체 카테고리</option><option value="__none__">미분류</option></select>
@@ -260,13 +273,31 @@ function switchProductTab(tab) {
   document.getElementById(`tab-${tab}`).style.display = 'block';
   
   // 🔥 최적화: multi 탭일 때만 렌더링
-  if (tab === 'multi') {
+  if (tab === 'multi' && !document.querySelector('#productRows .product-row')) {
     renderProductRows();
+  }
+  if (tab === 'quick' && history.replaceState) {
+    history.replaceState(null, '', '#quick');
+  } else if (history.replaceState && location.hash === '#quick') {
+    history.replaceState(null, '', location.pathname + location.search);
   }
 }
 
 // ---------- 다중 등록 행 관리 ----------
-function renderProductRows() {
+// 지금 입력된 카드 값들을 읽어둔다 (카드를 늘리거나 줄이거나 복제해도 입력값이 사라지지 않게)
+function snapshotProductRows() {
+  return Array.from(document.querySelectorAll('#productRows .product-row')).map(row => ({
+    name: row.querySelector('.multi-name')?.value || '',
+    brand: row.querySelector('.multi-brand')?.value || '',
+    category: row.querySelector('.multi-category')?.value || '',
+    cost: row.querySelector('.multi-cost')?.value ?? '0',
+    sale: row.querySelector('.multi-sale')?.value ?? '0',
+    qty: row.querySelector('.multi-qty')?.value ?? '0',
+    store: row.querySelector('.multi-store')?.value || ''
+  }));
+}
+
+function renderProductRows(values) {
   const container = document.getElementById('productRows');
   let html = '';
   for (let i = 0; i < productRowCount; i++) {
@@ -292,6 +323,7 @@ function renderProductRows() {
             </select>
           </div>
           <div style="display:flex; gap:4px; align-items:center; justify-content:flex-end;">
+            <button onclick="duplicateProductRow(${i})" title="이 카드의 입력값을 그대로 복사해 바로 아래에 새 카드를 만듭니다." style="padding:2px 8px; font-size:12px;">⧉ 복제</button>
             <button onclick="removeProductRow(${i})" class="danger" style="padding:2px 8px; font-size:12px;">✕</button>
           </div>
         </div>
@@ -299,6 +331,20 @@ function renderProductRows() {
     `;
   }
   container.innerHTML = html;
+
+  if (values) {
+    container.querySelectorAll('.product-row').forEach((row, i) => {
+      const v = values[i];
+      if (!v) return;
+      row.querySelector('.multi-name').value = v.name;
+      row.querySelector('.multi-brand').value = v.brand;
+      row.querySelector('.multi-category').value = v.category;
+      row.querySelector('.multi-cost').value = v.cost;
+      row.querySelector('.multi-sale').value = v.sale;
+      row.querySelector('.multi-qty').value = v.qty;
+      row.querySelector('.multi-store').value = v.store;
+    });
+  }
   
   if (document.getElementById('autoCopy').checked) {
     const firstRow = container.querySelector('.product-row');
@@ -346,8 +392,22 @@ function addProductRow() {
     toast('최대 10개까지 추가할 수 있습니다.', true, '⚠️');
     return;
   }
+  const snap = snapshotProductRows();
   productRowCount++;
-  renderProductRows();
+  renderProductRows(snap);
+}
+
+// 카드 하나의 입력값(제품명 포함)을 그대로 복사해 바로 아래에 새 카드로 끼워 넣는다.
+function duplicateProductRow(index) {
+  if (productRowCount >= 10) {
+    toast('최대 10개까지 추가할 수 있습니다.', true, '⚠️');
+    return;
+  }
+  const snap = snapshotProductRows();
+  if (!snap[index]) return;
+  snap.splice(index + 1, 0, { ...snap[index] });
+  productRowCount++;
+  renderProductRows(snap);
 }
 
 function removeProductRow(index) {
@@ -355,8 +415,11 @@ function removeProductRow(index) {
     toast('최소 1개는 남겨야 합니다.', true, '⚠️');
     return;
   }
+  const snap = snapshotProductRows();
+  // 인덱스가 없으면(마지막 제품 제거 버튼) 마지막 카드를, 있으면 그 카드를 지운다.
+  snap.splice(Number.isInteger(index) ? index : snap.length - 1, 1);
   productRowCount--;
-  renderProductRows();
+  renderProductRows(snap);
 }
 
 async function saveMultiProducts() {
@@ -525,7 +588,8 @@ function debouncedLoad() {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     const q = document.getElementById('searchBox').value.trim();
-    if (q) {
+    const excludeQ = (document.getElementById('excludeBox')?.value || '').trim();
+    if (q || excludeQ) {
       initialLoadDone = true;
       load();
     } else {
@@ -540,6 +604,7 @@ function debouncedLoad() {
 }
 
 function loadAll() {
+  // 제외 단어 칸은 비우지 않는다: "전체 보기"도 제외 단어를 반영해 보여준다.
   initialLoadDone = true;
   document.getElementById('searchBox').value = '';
   load();
@@ -608,7 +673,9 @@ async function load() {
     const includeZero = document.getElementById('includeZeroStock')?.checked ? '1' : '0';
     const isTextSearch = Boolean(q);
     const hide_zero_stock = (isTextSearch || includeZero === '1') ? '0' : '1';
+    const exclude_q = (document.getElementById('excludeBox')?.value || '').trim();
     const params = new URLSearchParams({ q, category_id, brand_id, sort: sortState.col, order: sortState.order, show_inactive, hide_zero_stock });
+    if (exclude_q) params.append('exclude_q', exclude_q);
     if (store_id) params.append('store_id', store_id);
     const result = await apiSearch('/api/products?' + params.toString());
     if (!productsSearchGuard.isCurrent(myToken)) return;
@@ -1029,7 +1096,7 @@ function closeModal() {
 }
 
 // ---------- 단일 제품 등록 ----------
-async function addProduct() {
+async function addProduct(keepValues = false) {
   const name = document.getElementById('f_name').value.trim();
   if (!name) { toast('제품명을 입력해주세요.', true, '⚠️'); return; }
 
@@ -1059,8 +1126,16 @@ async function addProduct() {
 
   try {
     await api('/api/products', { method: 'POST', body: JSON.stringify(payload) });
-    ['f_name','f_cost','f_cardcost','f_sale','f_initial_qty','f_memo','f_brand_new'].forEach(id => document.getElementById(id).value = '');
-    toast('제품을 등록했습니다.', false, '✅');
+    if (keepValues === true) {
+      // 입력한 정보를 그대로 남겨둔다: 제품명만 고쳐서 바로 또 등록할 수 있게 이름 칸을 선택해 준다.
+      const nameEl = document.getElementById('f_name');
+      nameEl.focus();
+      nameEl.select();
+      toast('등록했습니다. 입력값이 그대로 남아있어요. 이름만 바꿔 또 등록하세요.', false, '📑');
+    } else {
+      ['f_name','f_cost','f_cardcost','f_sale','f_initial_qty','f_memo','f_brand_new'].forEach(id => document.getElementById(id).value = '');
+      toast('제품을 등록했습니다.', false, '✅');
+    }
     initialLoadDone = true;
     await load();
   } catch (e) {
@@ -1207,6 +1282,17 @@ document.addEventListener('DOMContentLoaded', function() {
   loadStoresForSelects();
   load();
   renderProductRows();
+  if (location.hash === '#quick') switchProductTab('quick');
+});
+
+// 간편 추가 탭에서 등록이 끝나면 제품 목록/브랜드 목록을 새로 고친다.
+document.addEventListener('qa:saved', async () => {
+  await loadBrands();
+  if (initialLoadDone) await load();
+});
+
+window.addEventListener('hashchange', () => {
+  if (location.hash === '#quick') switchProductTab('quick');
 });
 </script>
 {% endblock %}

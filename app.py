@@ -1517,7 +1517,8 @@ def forecast_page():
 
 @app.route("/quick_add")
 def quick_add_page():
-    return render_template("quick_add.html", active="quick_add")
+    # 간편 상품 추가는 제품 관리 화면의 "간편 추가" 탭 안으로 합쳐졌다. (예전 주소는 그리로 보낸다)
+    return redirect("/#quick")
 
 
 @app.route("/analysis")

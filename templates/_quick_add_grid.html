@@ -263,6 +263,7 @@
         (errors.length ? '<div class="qa-fail" style="font-weight:600;">⚠️ ' + errors.length + '개는 등록되지 않았습니다 (빨간 줄을 고쳐서 다시 등록하세요)</div>' + failLines.join('') : '');
       if (created.length) say(created.length + '개 상품을 등록했습니다.' + (errors.length ? ' (' + errors.length + '개 실패)' : ''), errors.length > 0 && !created.length);
       loadLookups(); // 새로 생긴 브랜드가 자동완성에 바로 보이도록
+      if (created.length) document.dispatchEvent(new CustomEvent('qa:saved', { detail: { count: created.length } }));
     } catch (err) {
       console.error('간편 상품 추가 오류:', err);
       say('서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.', true);
