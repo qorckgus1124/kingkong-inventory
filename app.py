@@ -4589,7 +4589,8 @@ def api_statistics():
             end_date = now_kst().strftime("%Y-%m-%d")
         if not start_date:
             if period == "day":
-                start_date = (now_kst() - timedelta(days=14)).strftime("%Y-%m-%d")
+                # 오늘 포함 최근 31일
+                start_date = (now_kst() - timedelta(days=30)).strftime("%Y-%m-%d")
             elif period == "week":
                 start_date = (now_kst() - timedelta(days=56)).strftime("%Y-%m-%d")
             elif period == "month":
@@ -4667,6 +4668,17 @@ def api_statistics():
                     "profit": live["profit"],
                 })
             rows.sort(key=lambda r: r["period_key"])
+
+        # 일별은 거래가 없던 날도 0으로 채워서, 범위 안의 모든 날짜(최대 31일)가 보이게 한다.
+        if period == "day" and (end_d - start_d).days <= 366:
+            by_key = {r["period_key"]: r for r in rows}
+            filled = []
+            d = start_d
+            while d <= end_d:
+                key = d.strftime("%Y-%m-%d")
+                filled.append(by_key.get(key) or {"period_key": key, "sold_qty": 0, "revenue": 0, "profit": 0})
+                d += timedelta(days=1)
+            rows = filled
 
         return jsonify(rows)
     except Exception as e:
@@ -6017,7 +6029,7 @@ def api_export_statistics():
         end_date = now_kst().strftime("%Y-%m-%d")
     if not start_date:
         if period == "day":
-            start_date = (now_kst() - timedelta(days=14)).strftime("%Y-%m-%d")
+            start_date = (now_kst() - timedelta(days=30)).strftime("%Y-%m-%d")
         elif period == "week":
             start_date = (now_kst() - timedelta(days=56)).strftime("%Y-%m-%d")
         elif period == "month":
