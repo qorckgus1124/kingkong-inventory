@@ -1,0 +1,312 @@
+{# 간편 상품 추가: 엑셀처럼 여러 줄을 한 번에 등록 (상품 추가 전용).
+   단독 페이지(/quick_add)와 제품 관리 화면 어디서든 이 파일을 include 해서 끼워 쓸 수 있다.
+   이 조각 안의 id/클래스는 모두 qa 로 시작해서 다른 화면 코드와 겹치지 않는다. #}
+<div class="card qa-card" id="qaRoot">
+  <div class="qa-top">
+    <div class="qa-title">⚡ 간편 상품 추가 <span class="qa-hint">상품 추가 전용 · 한 줄 = 상품 1개</span></div>
+    <label class="qa-store">현재 재고 입고 매장
+      <select id="qaStore"></select>
+    </label>
+  </div>
+  <div class="qa-help">
+    상품명 / 카테고리 / 브랜드 / 원가 / 카드원가 / 판매가 / 현재 재고를 적으세요.
+    엑셀에서 복사한 표를 <b>붙여넣기(Ctrl+V)</b> 하면 여러 줄이 한 번에 채워집니다.
+    <b>Enter</b>·<b>↑↓</b> 로 아래/위 칸 이동, 마지막 줄에서 Enter 를 누르면 줄이 늘어납니다.
+    브랜드를 비워두면 상품명에서 자동으로 찾고, 카테고리는 이미 있는 이름만 가능합니다.
+  </div>
+
+  <div class="qa-wrap">
+    <table class="qa-table" id="qaTable">
+      <thead>
+        <tr>
+          <th class="qa-no">#</th>
+          <th class="qa-c-name">상품명</th>
+          <th class="qa-c-cat">카테고리</th>
+          <th class="qa-c-brand">브랜드</th>
+          <th class="qa-c-num">원가</th>
+          <th class="qa-c-num">카드원가</th>
+          <th class="qa-c-num">판매가</th>
+          <th class="qa-c-num">현재 재고</th>
+          <th class="qa-del"></th>
+        </tr>
+      </thead>
+      <tbody id="qaBody"></tbody>
+    </table>
+  </div>
+  <datalist id="qaCatList"></datalist>
+  <datalist id="qaBrandList"></datalist>
+
+  <div class="qa-actions">
+    <button type="button" onclick="qaAddRows(1)">＋ 줄 추가</button>
+    <button type="button" onclick="qaAddRows(10)">＋ 10줄 추가</button>
+    <button type="button" onclick="qaClear()">전체 비우기</button>
+    <span class="qa-spacer"></span>
+    <span class="qa-count" id="qaCount"></span>
+    <button type="button" class="primary" id="qaSaveBtn" onclick="qaSave()">💾 한 번에 등록</button>
+  </div>
+  <div class="qa-result" id="qaResult" style="display:none;"></div>
+</div>
+
+<style>
+.qa-card { padding: 16px; margin-bottom: 14px; }
+.qa-top { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.qa-title { font-size: 16px; font-weight: 700; }
+.qa-hint { font-size: 12px; color: var(--text-light); font-weight: 400; margin-left: 6px; }
+.qa-store { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.qa-store select { padding: 6px 8px; font-size: 13px; }
+.qa-help { font-size: 12px; color: var(--text-light); line-height: 1.6; margin: 8px 0 12px; }
+.qa-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.qa-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
+.qa-table th { position: sticky; top: 0; background: var(--card-bg, #f6f7fb); font-size: 12px; text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.qa-table td { padding: 0; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
+.qa-table td:last-child { border-right: none; }
+.qa-table input { width: 100%; box-sizing: border-box; border: none; background: transparent; padding: 9px 8px; font-size: 13px; color: inherit; outline: none; }
+.qa-table input:focus { background: rgba(80, 110, 255, .10); box-shadow: inset 0 0 0 2px var(--accent, #4f6bff); }
+.qa-table td.qa-no, .qa-table th.qa-no { width: 36px; text-align: center; color: var(--text-light); padding: 0 4px; }
+.qa-c-num { width: 110px; }
+.qa-c-cat { width: 130px; }
+.qa-c-brand { width: 150px; }
+.qa-table td.qa-num input { text-align: right; }
+.qa-del { width: 34px; }
+.qa-table td.qa-del { text-align: center; }
+.qa-del-btn { border: none; background: transparent; cursor: pointer; color: var(--text-light); font-size: 14px; padding: 6px; }
+.qa-del-btn:hover { color: var(--danger, #e5484d); }
+.qa-table tr.qa-err td { background: rgba(229, 72, 77, .09); }
+.qa-table td.qa-bad input { color: var(--danger, #e5484d); }
+.qa-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.qa-spacer { flex: 1; }
+.qa-count { font-size: 12px; color: var(--text-light); }
+.qa-result { margin-top: 12px; font-size: 13px; line-height: 1.7; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); }
+.qa-result .qa-ok { color: var(--success, #1f9d55); font-weight: 600; }
+.qa-result .qa-fail { color: var(--danger, #e5484d); }
+</style>
+
+<script>
+(function () {
+  var COLS = ['name', 'category', 'brand', 'cost_price', 'card_cost_price', 'sale_price', 'qty'];
+  var NUM_COLS = { cost_price: 1, card_cost_price: 1, sale_price: 1, qty: 1 };
+  var INITIAL_ROWS = 10;
+  var catNames = {};   // 정규화한 카테고리명 -> true (없는 카테고리 빨간 표시용)
+
+  function norm(t) { return String(t || '').replace(/\s+/g, '').toLowerCase(); }
+  function $(id) { return document.getElementById(id); }
+  function say(msg, isError) {
+    if (typeof toast === 'function') toast(msg, !!isError, isError ? '⚠️' : '✅');
+    else alert(msg);
+  }
+
+  function buildRow() {
+    var tr = document.createElement('tr');
+    var html = '<td class="qa-no"></td>';
+    COLS.forEach(function (c) {
+      var isNum = NUM_COLS[c];
+      var extra = '';
+      if (c === 'category') extra = ' list="qaCatList"';
+      if (c === 'brand') extra = ' list="qaBrandList"';
+      html += '<td class="' + (isNum ? 'qa-num' : '') + '" data-col="' + c + '">' +
+              '<input type="text" data-col="' + c + '" autocomplete="off"' + extra +
+              (isNum ? ' inputmode="numeric"' : '') + '></td>';
+    });
+    html += '<td class="qa-del"><button type="button" class="qa-del-btn" title="이 줄 삭제" tabindex="-1">✕</button></td>';
+    tr.innerHTML = html;
+    return tr;
+  }
+
+  function renumber() {
+    var rows = $('qaBody').rows;
+    for (var i = 0; i < rows.length; i++) rows[i].cells[0].textContent = i + 1;
+    updateCount();
+  }
+
+  function rowValues(tr) {
+    var v = {};
+    COLS.forEach(function (c) { v[c] = tr.querySelector('input[data-col="' + c + '"]').value.trim(); });
+    return v;
+  }
+  function rowIsEmpty(tr) {
+    var v = rowValues(tr);
+    return COLS.every(function (c) { return v[c] === ''; });
+  }
+  function updateCount() {
+    var filled = 0, rows = $('qaBody').rows;
+    for (var i = 0; i < rows.length; i++) if (!rowIsEmpty(rows[i])) filled++;
+    $('qaCount').textContent = '입력된 줄 ' + filled + ' / 전체 ' + rows.length;
+  }
+
+  window.qaAddRows = function (n) {
+    var body = $('qaBody');
+    for (var i = 0; i < n; i++) body.appendChild(buildRow());
+    renumber();
+  };
+  window.qaClear = function () {
+    if (!confirm('입력한 내용을 모두 지울까요?')) return;
+    $('qaBody').innerHTML = '';
+    qaAddRows(INITIAL_ROWS);
+    $('qaResult').style.display = 'none';
+  };
+
+  function focusCell(tr, col) {
+    if (!tr) return;
+    var input = tr.querySelector('input[data-col="' + col + '"]');
+    if (input) { input.focus(); input.select(); }
+  }
+
+  // ---- 키보드: Enter/↓ = 아래 칸, ↑ = 위 칸 (마지막 줄에서 아래로 가면 줄 추가) ----
+  $('qaBody').addEventListener('keydown', function (e) {
+    var input = e.target;
+    if (!input || input.tagName !== 'INPUT') return;
+    var tr = input.closest('tr'), col = input.dataset.col;
+    if (e.key === 'Enter' || e.key === 'ArrowDown') {
+      // 자동완성 목록을 고르는 중의 ↓ 는 방해하지 않는다 (Enter 만 아래 칸 이동)
+      if (e.key === 'ArrowDown' && (col === 'category' || col === 'brand') && input.value === '') return;
+      e.preventDefault();
+      if (!tr.nextElementSibling) qaAddRows(1);
+      focusCell(tr.nextElementSibling, col);
+    } else if (e.key === 'ArrowUp') {
+      if (tr.previousElementSibling) { e.preventDefault(); focusCell(tr.previousElementSibling, col); }
+    }
+  });
+
+  // ---- 엑셀/표 붙여넣기: 탭·줄바꿈으로 나뉜 값을 눌러둔 칸부터 채운다 ----
+  $('qaBody').addEventListener('paste', function (e) {
+    var input = e.target;
+    if (!input || input.tagName !== 'INPUT') return;
+    var text = (e.clipboardData || window.clipboardData).getData('text');
+    if (!text || (text.indexOf('\t') === -1 && text.indexOf('\n') === -1)) return; // 한 칸 붙여넣기는 기본 동작
+    e.preventDefault();
+    var lines = text.replace(/\r/g, '').split('\n');
+    while (lines.length && lines[lines.length - 1] === '') lines.pop();
+    var tr = input.closest('tr');
+    var startCol = COLS.indexOf(input.dataset.col);
+    lines.forEach(function (line, li) {
+      if (!tr) { qaAddRows(1); tr = $('qaBody').lastElementChild; }
+      line.split('\t').forEach(function (cell, ci) {
+        var col = COLS[startCol + ci];
+        if (!col) return;
+        tr.querySelector('input[data-col="' + col + '"]').value = cell.trim();
+      });
+      if (li < lines.length - 1) tr = tr.nextElementSibling;
+    });
+    $('qaBody').querySelectorAll('input').forEach(markBad);
+    updateCount();
+  });
+
+  function markBad(input) {
+    if (input.dataset.col !== 'category') return;
+    var v = input.value.trim();
+    var bad = v !== '' && Object.keys(catNames).length > 0 && !catNames[norm(v)];
+    input.closest('td').classList.toggle('qa-bad', bad);
+    input.title = bad ? '등록되지 않은 카테고리입니다' : '';
+  }
+  $('qaBody').addEventListener('input', function (e) {
+    var input = e.target;
+    if (input.tagName !== 'INPUT') return;
+    markBad(input);
+    input.closest('tr').classList.remove('qa-err');
+    updateCount();
+  });
+  $('qaBody').addEventListener('click', function (e) {
+    var btn = e.target.closest('.qa-del-btn');
+    if (!btn) return;
+    var tr = btn.closest('tr');
+    tr.parentNode.removeChild(tr);
+    if (!$('qaBody').rows.length) qaAddRows(1);
+    renumber();
+  });
+
+  // ---- 저장 ----
+  window.qaSave = async function () {
+    var trs = Array.prototype.slice.call($('qaBody').rows);
+    var payload = [], byNumber = {};
+    trs.forEach(function (tr, i) {
+      tr.classList.remove('qa-err');
+      if (rowIsEmpty(tr)) return;
+      var v = rowValues(tr);
+      v.row = i + 1;
+      payload.push(v);
+      byNumber[i + 1] = tr;
+    });
+    if (!payload.length) { say('등록할 줄이 없습니다. 상품명을 입력해주세요.', true); return; }
+
+    var btn = $('qaSaveBtn');
+    btn.disabled = true;
+    var oldLabel = btn.textContent;
+    btn.textContent = '등록 중...';
+    var box = $('qaResult');
+    try {
+      var res = await fetch('/api/products/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store_id: $('qaStore').value || null, rows: payload }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok || data.error) {
+        say(data.error || '등록 중 오류가 발생했습니다.', true);
+        return;
+      }
+      var created = data.created || [], errors = data.errors || [];
+      // 성공한 줄은 지우고, 실패한 줄만 남겨서 바로 고쳐 다시 올릴 수 있게 한다.
+      created.forEach(function (c) {
+        var tr = byNumber[c.row];
+        if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
+      });
+      var failLines = [];
+      errors.forEach(function (er) {
+        var tr = byNumber[er.row];
+        if (tr && tr.parentNode) tr.classList.add('qa-err');
+        failLines.push('<div class="qa-fail">· ' + er.row + '번 줄(수정 전 번호): ' + escapeText(er.error) + '</div>');
+      });
+      if (!$('qaBody').rows.length) qaAddRows(INITIAL_ROWS);
+      renumber();
+      box.style.display = 'block';
+      box.innerHTML = '<div class="qa-ok">✅ ' + created.length + '개 등록 완료</div>' +
+        (errors.length ? '<div class="qa-fail" style="font-weight:600;">⚠️ ' + errors.length + '개는 등록되지 않았습니다 (빨간 줄을 고쳐서 다시 등록하세요)</div>' + failLines.join('') : '');
+      if (created.length) say(created.length + '개 상품을 등록했습니다.' + (errors.length ? ' (' + errors.length + '개 실패)' : ''), errors.length > 0 && !created.length);
+      loadLookups(); // 새로 생긴 브랜드가 자동완성에 바로 보이도록
+    } catch (err) {
+      console.error('간편 상품 추가 오류:', err);
+      say('서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.', true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldLabel;
+    }
+  };
+
+  function escapeText(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+
+  // ---- 자동완성 / 매장 목록 ----
+  async function getJson(url) {
+    try { var r = await fetch(url); return await r.json(); } catch (e) { return null; }
+  }
+  async function loadLookups() {
+    var cats = await getJson('/api/categories');
+    if (Array.isArray(cats)) {
+      catNames = {};
+      cats.forEach(function (c) { catNames[norm(c.name)] = true; });
+      $('qaCatList').innerHTML = cats.map(function (c) { return '<option value="' + escapeText(c.name) + '">'; }).join('');
+      $('qaBody').querySelectorAll('input[data-col="category"]').forEach(markBad);
+    }
+    var brands = await getJson('/api/brands');
+    if (Array.isArray(brands)) {
+      $('qaBrandList').innerHTML = brands.map(function (b) { return '<option value="' + escapeText(b.name) + '">'; }).join('');
+    }
+  }
+  async function loadStores() {
+    var stores = await getJson('/api/stores');
+    var sel = $('qaStore');
+    if (!Array.isArray(stores) || !stores.length) { sel.innerHTML = '<option value="">(매장 없음)</option>'; return; }
+    sel.innerHTML = stores.map(function (s) { return '<option value="' + s.id + '">' + escapeText(s.name) + '</option>'; }).join('');
+    var gid = null;
+    try { gid = localStorage.getItem('global_store_id'); } catch (e) {}
+    if (gid && stores.some(function (s) { return String(s.id) === String(gid); })) sel.value = gid;
+  }
+
+  qaAddRows(INITIAL_ROWS);
+  loadStores();
+  loadLookups();
+})();
+</script>

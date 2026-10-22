@@ -118,6 +118,34 @@ def build_token_match_sql(q, columns):
     return "(" + " AND ".join(and_parts) + ")", params
 
 
+def exclude_tokens(q):
+    """제외 단어 입력칸의 값을 낱말 목록으로 만든다. 공백 또는 쉼표로 구분한다.
+    예) "딸기, 수박 민트" -> ["딸기", "수박", "민트"]"""
+    return [normalize_search(t) for t in re.split(r"[\s,]+", (q or "").strip()) if t.strip()]
+
+
+def build_exclude_sql(exclude_q, columns):
+    """제외 단어가 columns 중 어느 한 곳에라도 들어있으면 그 행을 결과에서 뺀다.
+
+    검색 규칙(build_token_match_sql)과 똑같이 공백을 제거/소문자로 맞춘 칼럼을 쓰고,
+    %, _ 는 글자 그대로 취급한다. 제외 단어가 여러 개면 하나라도 걸리면 제외된다.
+    반환: (조건 SQL, 파라미터 목록). 제외 단어가 없으면 (None, []).
+    """
+    tokens = exclude_tokens(exclude_q)
+    if not tokens or not columns:
+        return None, []
+    and_parts = []
+    params = []
+    for token in tokens:
+        pattern = f"%{escape_like(token)}%"
+        or_parts = []
+        for col in columns:
+            or_parts.append(f"COALESCE({col}, '') LIKE %s ESCAPE '\\'")
+            params.append(pattern)
+        and_parts.append("NOT (" + " OR ".join(or_parts) + ")")
+    return "(" + " AND ".join(and_parts) + ")", params
+
+
 def upsert_customer(cur, name, phone, address=None):
     """전화번호를 기준으로 고객을 찾아 없으면 새로 등록하고, 있으면 이름/주소가
     비어있던 경우에 한해 채워 넣는다. 선결제 주문이 들어올 때마다 호출되어
@@ -1418,8 +1446,8 @@ def api_version():
     예) https://<내-render-주소>/api/version 접속했을 때 아래 값이 안 보이면
     (404가 뜨거나 다른 값이 보이면) 새로 배포한 코드가 아직 반영되지 않은 것이다."""
     return jsonify({
-        "build": "search-fix-v4-race-2026-07-27",
-        "note": "검색어 공백 무시 + 브랜드/제품명 경계 버그 수정 + 타이핑 중 검색 결과 뒤집힘(경쟁 상태) 수정 적용됨",
+        "build": "exclude-words-bulk-add-v1-2026-10-22",
+        "note": "제외 단어 검색(/api/products, /api/products/search, /api/analysis) + 간편 상품 추가(/api/products/bulk, /quick_add) + 출고 분석에 서비스 출고 합산 적용됨",
     })
 
 
@@ -1485,6 +1513,11 @@ def transfer_page():
 def forecast_page():
     # 출고 예측은 통합 화면(출고 분석)으로 합쳐졌다.
     return redirect("/analysis")
+
+
+@app.route("/quick_add")
+def quick_add_page():
+    return render_template("quick_add.html", active="quick_add")
 
 
 @app.route("/analysis")
@@ -2073,6 +2106,13 @@ def api_products():
                 if cond:
                     sql += f" AND {cond}"
                     params.extend(cond_params)
+            # 🚫 제외 단어: 제품명/브랜드명에 이 단어가 들어있는 제품은 결과에서 뺀다.
+            exclude_q = request.args.get("exclude_q", "").strip()
+            if exclude_q:
+                cond, cond_params = build_exclude_sql(exclude_q, [name_col, brand_col])
+                if cond:
+                    sql += f" AND {cond}"
+                    params.extend(cond_params)
             if category_id == '__none__':
                 sql += " AND p.category_id IS NULL"
             elif category_id:
@@ -2259,6 +2299,13 @@ def api_products_search():
         WHERE p.is_active = 1 AND {cond}
     """
     params = list(cond_params)
+    # 🚫 제외 단어 (일반 판매 / 선결제 판매 / 제품 검색 공통): 제품명·브랜드명에 들어있으면 뺀다.
+    exclude_q = request.args.get("exclude_q", "").strip()
+    if exclude_q:
+        ex_cond, ex_params = build_exclude_sql(exclude_q, [name_col, brand_col])
+        if ex_cond:
+            sql += f" AND {ex_cond}"
+            params.extend(ex_params)
     if hide_zero_stock:
         if store_id:
             sql += " AND EXISTS (SELECT 1 FROM store_stock ss WHERE ss.product_id = p.id AND ss.store_id = %s AND ss.qty > 0)"
@@ -2286,6 +2333,195 @@ def api_products_search():
         rollback_quietly()
         print(f"⚠️ 제품 검색 오류 (q={q}): {e}")
         return jsonify([])
+
+# ---------------------------------------------------------------------------
+# API - 간편 상품 추가 (엑셀처럼 여러 줄을 한 번에 등록)
+# ---------------------------------------------------------------------------
+# 한 줄 = 상품 1개: 상품명 / 카테고리 / 브랜드 / 원가 / 카드원가 / 판매가 / 현재 재고
+# - 줄마다 따로 저장한다. 한 줄이 잘못돼도 나머지는 정상 등록되고, 실패한 줄만
+#   (줄 번호와 이유와 함께) 돌려주므로 화면에서 고쳐서 다시 올리면 된다.
+# - 카테고리는 이미 있는 이름이어야 한다(오타로 쓸모없는 분류가 생기는 것을 막기 위해).
+# - 브랜드는 있는 이름이면 그대로 쓰고, 없는 이름이면 기존 방식 그대로 '승인 대기' 브랜드로
+#   새로 만든다. 비워두면 상품명에서 브랜드를 자동 인식한다(기존 제품 등록과 동일).
+# - 같은 이름(공백/대소문자 무시)의 상품이 이미 있으면 중복 방지를 위해 그 줄은 등록하지 않는다.
+
+BULK_PRODUCT_MAX_ROWS = 300
+
+
+def _bulk_to_int(value, label):
+    """'12,000' / '₩12000' / '' 같은 입력을 정수로 바꾼다. 비어있으면 0."""
+    if value is None:
+        return 0, None
+    text = str(value).strip().replace(",", "").replace("₩", "").replace("원", "").replace(" ", "")
+    if text == "":
+        return 0, None
+    try:
+        number = int(float(text))
+    except (TypeError, ValueError):
+        return 0, f"{label} 값이 숫자가 아닙니다."
+    if number < 0:
+        return 0, f"{label}는 0 이상이어야 합니다."
+    return number, None
+
+
+@app.route("/api/products/bulk", methods=["POST"])
+def api_products_bulk():
+    conn = get_db()
+    cur = g.cursor
+    data = request.get_json(force=True) or {}
+    rows = data.get("rows") or []
+    store_id = data.get("store_id") or None
+
+    if not isinstance(rows, list) or not rows:
+        return jsonify({"error": "등록할 줄이 없습니다."}), 400
+    if len(rows) > BULK_PRODUCT_MAX_ROWS:
+        return jsonify({"error": f"한 번에 최대 {BULK_PRODUCT_MAX_ROWS}줄까지 등록할 수 있습니다."}), 400
+
+    try:
+        cur.execute("SELECT id FROM stores ORDER BY id")
+        store_ids = [r["id"] for r in cur.fetchall()]
+        if not store_ids:
+            return jsonify({"error": "등록된 매장이 없습니다. 매장을 먼저 등록해주세요."}), 400
+        if store_id:
+            try:
+                store_id = int(store_id)
+            except (TypeError, ValueError):
+                return jsonify({"error": "매장 값이 올바르지 않습니다."}), 400
+            if store_id not in store_ids:
+                return jsonify({"error": "선택한 매장을 찾을 수 없습니다."}), 400
+        target_store_id = store_id or store_ids[0]
+
+        cur.execute("SELECT id, name FROM categories")
+        cat_map = {normalize_search(r["name"]): r["id"] for r in cur.fetchall()}
+        cur.execute("SELECT id, name FROM brands")
+        brand_map = {normalize_search(r["name"]): r["id"] for r in cur.fetchall()}
+        cur.execute("SELECT name FROM products")
+        existing_names = {normalize_search(r["name"]) for r in cur.fetchall()}
+
+        # 브랜드를 비워둔 줄의 자동 인식용 (기존 제품 등록과 같은 매핑 테이블)
+        cur.execute("SELECT brand_name, category_name FROM brand_category_mapping")
+        mapping_rows = cur.fetchall()
+        brand_to_cat_name = {}
+        for r in mapping_rows:
+            brand_to_cat_name.setdefault(r["brand_name"], r["category_name"])
+        auto_brand_list = sorted(brand_to_cat_name.keys(), key=len, reverse=True)
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 간편 상품 추가 준비 오류: {e}")
+        return jsonify({"error": f"준비 중 오류가 발생했습니다: {e}"}), 500
+
+    created = []
+    errors = []
+    seen_in_batch = set()
+
+    for idx, raw in enumerate(rows):
+        line_no = raw.get("row") if isinstance(raw, dict) and raw.get("row") else idx + 1
+        if not isinstance(raw, dict):
+            errors.append({"row": line_no, "error": "줄 형식이 올바르지 않습니다."})
+            continue
+
+        name = (raw.get("name") or "").strip()
+        if not name:
+            errors.append({"row": line_no, "error": "상품명을 입력해주세요."})
+            continue
+        name_key = normalize_search(name)
+        if name_key in existing_names or name_key in seen_in_batch:
+            errors.append({"row": line_no, "error": f"'{name}' 은(는) 이미 등록된 상품명입니다."})
+            continue
+
+        cost_price, err = _bulk_to_int(raw.get("cost_price"), "원가")
+        if err:
+            errors.append({"row": line_no, "error": err}); continue
+        card_cost_price, err = _bulk_to_int(raw.get("card_cost_price"), "카드원가")
+        if err:
+            errors.append({"row": line_no, "error": err}); continue
+        sale_price, err = _bulk_to_int(raw.get("sale_price"), "판매가")
+        if err:
+            errors.append({"row": line_no, "error": err}); continue
+        qty, err = _bulk_to_int(raw.get("qty"), "현재 재고")
+        if err:
+            errors.append({"row": line_no, "error": err}); continue
+
+        category_text = (raw.get("category") or "").strip()
+        brand_text = (raw.get("brand") or "").strip()
+
+        category_id = None
+        if category_text:
+            category_id = cat_map.get(normalize_search(category_text))
+            if category_id is None:
+                errors.append({"row": line_no, "error": f"등록되지 않은 카테고리입니다: {category_text}"})
+                continue
+
+        # 줄마다 저장점을 잡아, 한 줄이 실패해도 앞서 성공한 줄은 그대로 살린다.
+        cur.execute("SAVEPOINT bulk_row")
+        try:
+            new_brand_key = None
+            brand_id = None
+            if brand_text:
+                brand_id = brand_map.get(normalize_search(brand_text))
+                if brand_id is None:
+                    cur.execute(
+                        "INSERT INTO brands (name, status) VALUES (%s, 'pending') RETURNING id",
+                        (brand_text,)
+                    )
+                    brand_id = cur.fetchone()["id"]
+                    new_brand_key = normalize_search(brand_text)
+            else:
+                auto_brand, _ = extract_brand_from_name(name, auto_brand_list)
+                if auto_brand:
+                    brand_id = brand_map.get(normalize_search(auto_brand))
+                    if brand_id is None:
+                        cur.execute(
+                            "INSERT INTO brands (name, status) VALUES (%s, 'pending') RETURNING id",
+                            (auto_brand,)
+                        )
+                        brand_id = cur.fetchone()["id"]
+                        new_brand_key = normalize_search(auto_brand)
+                    if category_id is None:
+                        mapped_cat = brand_to_cat_name.get(auto_brand)
+                        if mapped_cat:
+                            category_id = cat_map.get(normalize_search(mapped_cat))
+
+            cur.execute(
+                """INSERT INTO products (name, brand_id, category_id, cost_price, card_cost_price, sale_price, memo, parent_product_id, option_name)
+                   VALUES (%s, %s, %s, %s, %s, %s, NULL, NULL, NULL) RETURNING id""",
+                (name, brand_id, category_id, cost_price, card_cost_price, sale_price)
+            )
+            product_id = cur.fetchone()["id"]
+
+            for sid in store_ids:
+                cur.execute(
+                    "INSERT INTO store_stock (store_id, product_id, qty, min_qty) VALUES (%s, %s, %s, 0) ON CONFLICT DO NOTHING",
+                    (sid, product_id, qty if sid == target_store_id else 0)
+                )
+            if qty > 0:
+                cur.execute(
+                    """INSERT INTO stock_transactions
+                       (product_id, store_id, type, quantity, unit_cost, unit_price, memo)
+                       VALUES (%s, %s, '입고', %s, %s, %s, '초기입고')""",
+                    (product_id, target_store_id, qty, cost_price, sale_price)
+                )
+            cur.execute("RELEASE SAVEPOINT bulk_row")
+        except Exception as e:
+            cur.execute("ROLLBACK TO SAVEPOINT bulk_row")
+            print(f"❌ 간편 상품 추가 {line_no}번 줄 오류: {e}")
+            errors.append({"row": line_no, "error": f"저장 중 오류가 발생했습니다: {e}"})
+            continue
+
+        if new_brand_key:
+            brand_map[new_brand_key] = brand_id
+        seen_in_batch.add(name_key)
+        created.append({"row": line_no, "id": product_id, "name": name})
+
+    try:
+        conn.commit()
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 간편 상품 추가 커밋 오류: {e}")
+        return jsonify({"error": f"저장 중 오류가 발생했습니다: {e}"}), 500
+
+    return jsonify({"ok": True, "created": created, "errors": errors})
+
 
 # ---------------------------------------------------------------------------
 # API - 중복 제품 탐지 / 병합
@@ -5840,8 +6076,8 @@ def api_turnover_rate():
 # 화면마다 숫자가 달랐던 문제를 없애기 위해, 모든 계산은 compute_analysis() 한 곳에서만 한다.
 #
 # 계산 정의
-#   판매 수량  = 판매출고 + 선결예약 - 판매취소   (서비스(0원) 판매도 포함)
-#   서비스 수량 = 위와 같은 방식, 단가 0원인 행만
+#   판매 수량  = 판매출고 + 선결예약 + 출고(서비스) - 판매취소   (서비스(0원) 판매도 포함)
+#   서비스 수량 = 위와 같은 방식, 단가 0원(또는 단가 없는 일반 출고)인 행만
 #   매출       = 거래에 기록된 단가 x 수량 (취소는 차감)
 #   순이익     = (거래 단가 - 거래 당시 원가) x 수량
 #   재고       = 조회 시점의 현재 재고 (store_stock 합계) - 과거 시점 재고가 아님
@@ -5849,7 +6085,7 @@ def api_turnover_rate():
 #   예상 수요  = 일평균 판매 x 목표 재고일수
 #   부족 수량  = max(0, 예상 수요 [+ 최소재고] - 현재 재고)
 #   추천 발주  = 올림(부족 수량 x (1 + 여유율))
-# 제외: 선결출고(재고 감사용 기록이라 이중 집계), 입고/이동/폐기/일반 출고,
+# 제외: 선결출고(재고 감사용 기록이라 이중 집계), 입고/이동/폐기,
 #       메모에 이동/교환이 들어간 거래(판매 실적과 같은 규칙), 옵션이 있는 부모 제품(묶음 라벨),
 #       퀵상품(공팟/퀵비 등 재고 무관 상품, 옵션으로 포함 가능)
 
@@ -5861,8 +6097,10 @@ ANALYSIS_SORT_KEYS = (
 ANALYSIS_ASC_DEFAULT_KEYS = ("name", "brand", "days_to_deplete")
 
 # 판매출고/선결예약은 +, 판매취소는 - 로 합산하는 수량식
+# 일반 '출고'(매출 없이 내보낸 서비스 출고)도 판매 수량에 합친다. 단가가 없으므로(NULL) 매출은 0원,
+# 서비스 수량(service_qty)에도 자동으로 잡힌다.
 _ANALYSIS_SIGNED_QTY = (
-    "(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity::bigint "
+    "(CASE WHEN t.type IN ('판매출고', '선결예약', '출고') THEN t.quantity::bigint "
     "WHEN t.type = '판매취소' THEN -t.quantity::bigint ELSE 0 END)"
 )
 
@@ -5951,6 +6189,7 @@ def parse_analysis_args(args):
         "brand_q": (args.get("brand_q") or "").strip(),
         "product_ids": _analysis_to_id_list(args, "product_ids"),
         "product_q": (args.get("product_q") or "").strip(),
+        "exclude_q": (args.get("exclude_q") or "").strip(),
         "target_days": _analysis_to_int(args, "target_days", 14, 1, 365),
         "buffer_pct": _analysis_to_int(args, "buffer_pct", 10, 0, 1000),
         "min_pct": _analysis_to_int(args, "min_pct", 30, 0, 1000),
@@ -6022,7 +6261,7 @@ def compute_analysis(cur, a):
         sql = f"""{name} AS (
             SELECT t.product_id, {cols}
             FROM stock_transactions t
-            WHERE t.type IN ('판매출고', '선결예약', '판매취소')
+            WHERE t.type IN ('판매출고', '선결예약', '판매취소', '출고')
               AND t.date_time >= %s AND t.date_time < %s{clause}
               AND (t.memo IS NULL OR (t.memo NOT LIKE %s AND t.memo NOT LIKE %s))
             GROUP BY t.product_id
@@ -6072,6 +6311,11 @@ def compute_analysis(cur, a):
         params.append(a["product_ids"])
     if a["product_q"]:
         cond, cond_params = build_token_match_sql(a["product_q"], [name_col, brand_col])
+        if cond:
+            where.append(cond)
+            params.extend(cond_params)
+    if a["exclude_q"]:
+        cond, cond_params = build_exclude_sql(a["exclude_q"], [name_col, brand_col])
         if cond:
             where.append(cond)
             params.extend(cond_params)

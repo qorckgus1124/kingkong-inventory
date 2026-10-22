@@ -49,6 +49,12 @@
         <div class="autocomplete-list" id="anProductList"></div>
       </div>
     </div>
+
+    <!-- 제외 단어: 제품명/브랜드명에 이 단어가 들어있는 제품은 결과에서 뺀다 -->
+    <div class="an-field">
+      <span class="an-label">제외 단어 <span class="an-hint">(공백·쉼표로 여러 개 · 하나라도 들어있으면 제외)</span></span>
+      <input type="text" id="anExcludeInput" placeholder="🚫 예) 샘플, 체험" autocomplete="off" style="width:100%;">
+    </div>
   </div>
 
   <!-- 기간 -->
@@ -204,7 +210,7 @@ const COLS = [
     td: r => r.category ? `<span class="chip" style="background:${r.category_color || '#8a8f98'};">${escapeHtml(r.category)}</span>` : '<span class="an-muted">미분류</span>' },
   { k: 'sold_qty', label: '판매수량', core: true, def: true, sort: 'sold_qty', num: true,
     td: r => `<b class="an-strong">${fmt(r.sold_qty)}</b>` },
-  { k: 'service_qty', label: '(서비스)', def: true, sort: 'service_qty', num: true,
+  { k: 'service_qty', label: '(서비스 포함분)', def: true, sort: 'service_qty', num: true,
     td: r => r.service_qty ? `<span class="an-muted">(${fmt(r.service_qty)})</span>` : '<span class="an-muted">-</span>' },
   { k: 'revenue', label: '매출', core: true, def: true, sort: 'revenue', num: true, td: r => fmt(r.revenue) },
   { k: 'profit', label: '순이익', core: true, def: true, sort: 'profit', num: true,
@@ -467,6 +473,8 @@ function buildParams(forExport) {
   const pq = document.getElementById('anProductInput').value.trim();
   if (bq) p.set('brand_q', bq);
   if (pq) p.set('product_q', pq);
+  const xq = document.getElementById('anExcludeInput').value.trim();
+  if (xq) p.set('exclude_q', xq);
   p.set('start_date', document.getElementById('anStart').value);
   p.set('end_date', document.getElementById('anEnd').value);
   p.set('target_days', document.getElementById('anTarget').value || '14');
@@ -699,6 +707,7 @@ function resetFilters() {
   brandPicker.renderChips(); productPicker.renderChips();
   document.getElementById('anBrandInput').value = '';
   document.getElementById('anProductInput').value = '';
+  document.getElementById('anExcludeInput').value = '';
   document.querySelector('input[name="anGroup"][value="product"]').checked = true;
   document.getElementById('anTarget').value = 14;
   document.getElementById('anBuffer').value = 10;
@@ -725,7 +734,7 @@ document.getElementById('anPresets').addEventListener('click', e => {
   if (b) pickPreset(b.dataset.p);
 });
 document.getElementById('anSort').addEventListener('change', () => runQuery(true));
-['anTarget', 'anBuffer', 'anMinPct', 'anLimit'].forEach(id =>
+['anTarget', 'anBuffer', 'anMinPct', 'anLimit', 'anExcludeInput'].forEach(id =>
   document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') runQuery(true); }));
 
 document.addEventListener('DOMContentLoaded', async function () {
@@ -739,7 +748,8 @@ document.addEventListener('DOMContentLoaded', async function () {
   productPicker = makePicker({
     input: 'anProductInput', list: 'anProductList', chips: 'anProductChips', map: state.products,
     search: async q => {
-      const rows = await apiSearch('/api/products/search?limit=15&q=' + encodeURIComponent(q));
+      const xq = document.getElementById('anExcludeInput').value.trim();
+      const rows = await apiSearch('/api/products/search?limit=15&q=' + encodeURIComponent(q) + (xq ? '&exclude_q=' + encodeURIComponent(xq) : ''));
       return (Array.isArray(rows) ? rows : []).map(p => ({ id: p.id, name: p.name, sub: p.brand_name || '' }));
     },
   });
