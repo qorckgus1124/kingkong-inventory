@@ -12,6 +12,7 @@ import secrets
 import hashlib
 import gzip
 import time
+import math
 from functools import wraps
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -22,7 +23,7 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 import psycopg2.errors
-from flask import Flask, g, jsonify, render_template, request, send_file, send_from_directory
+from flask import Flask, g, jsonify, redirect, render_template, request, send_file, send_from_directory
 
 # 서버가 어느 지역(UTC 등)에서 돌아가더라도 항상 한국 시간 기준으로 동작하도록 고정
 KST = ZoneInfo("Asia/Seoul")
@@ -774,6 +775,8 @@ def create_indexes():
         # 재고 합계/재고 0 숨김은 product_id 기준으로 훑는다.
         "CREATE INDEX IF NOT EXISTS idx_stock_product ON store_stock(product_id);",
         "CREATE INDEX IF NOT EXISTS idx_stock_product_qty ON store_stock(product_id, qty);",
+        # 출고 분석(/analysis): 유형 + 기간으로 거래를 좁혀 읽는다.
+        "CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON stock_transactions(type, date_time);",
     ]
     for stmt in statements:
         try:
@@ -1446,7 +1449,8 @@ def sales_page():
 
 @app.route("/performance")
 def performance_page():
-    return render_template("performance.html", active="performance")
+    # 판매 실적은 통합 화면(출고 분석)으로 합쳐졌다.
+    return redirect("/analysis")
 
 @app.route("/statistics")
 def statistics_page():
@@ -1470,7 +1474,8 @@ def daily_report_page():
 
 @app.route("/recommend_order")
 def recommend_order_page():
-    return render_template("recommend_order.html", active="recommend_order")
+    # 발주 추천은 통합 화면(출고 분석)으로 합쳐졌다.
+    return redirect("/analysis")
 
 @app.route("/transfer")
 def transfer_page():
@@ -1478,7 +1483,13 @@ def transfer_page():
 
 @app.route("/forecast")
 def forecast_page():
-    return render_template("forecast.html", active="forecast")
+    # 출고 예측은 통합 화면(출고 분석)으로 합쳐졌다.
+    return redirect("/analysis")
+
+
+@app.route("/analysis")
+def analysis_page():
+    return render_template("analysis.html", active="analysis")
 
 @app.route("/customers")
 def customers_page():
@@ -1494,7 +1505,8 @@ def quick_io_page():
 
 @app.route("/turnover")
 def turnover_page():
-    return render_template("turnover.html", active="turnover")
+    # 재고회전율은 통합 화면(출고 분석)으로 합쳐졌다.
+    return redirect("/analysis")
 
 @app.route("/static/product_images/<path:filename>")
 def product_image(filename):
@@ -5819,6 +5831,521 @@ def api_turnover_rate():
     except Exception as e:
         print(f"❌ 재고회전율 조회 오류: {e}")
         return jsonify([])
+
+
+# ---------------------------------------------------------------------------
+# API - 통합 출고 분석 (/analysis)
+# ---------------------------------------------------------------------------
+# 출고 예측 · 발주 추천 · 재고회전율 · 판매 실적을 한 화면으로 합친 집계.
+# 화면마다 숫자가 달랐던 문제를 없애기 위해, 모든 계산은 compute_analysis() 한 곳에서만 한다.
+#
+# 계산 정의
+#   판매 수량  = 판매출고 + 선결예약 - 판매취소   (서비스(0원) 판매도 포함)
+#   서비스 수량 = 위와 같은 방식, 단가 0원인 행만
+#   매출       = 거래에 기록된 단가 x 수량 (취소는 차감)
+#   순이익     = (거래 단가 - 거래 당시 원가) x 수량
+#   재고       = 조회 시점의 현재 재고 (store_stock 합계) - 과거 시점 재고가 아님
+#   최소재고   = 판매 수량 x 최소재고 비율(%)  (올림, 기본 30%)
+#   예상 수요  = 일평균 판매 x 목표 재고일수
+#   부족 수량  = max(0, 예상 수요 [+ 최소재고] - 현재 재고)
+#   추천 발주  = 올림(부족 수량 x (1 + 여유율))
+# 제외: 선결출고(재고 감사용 기록이라 이중 집계), 입고/이동/폐기/일반 출고,
+#       메모에 이동/교환이 들어간 거래(판매 실적과 같은 규칙), 옵션이 있는 부모 제품(묶음 라벨),
+#       퀵상품(공팟/퀵비 등 재고 무관 상품, 옵션으로 포함 가능)
+
+ANALYSIS_SORT_KEYS = (
+    "sold_qty", "revenue", "profit", "margin_rate", "turnover", "recommend_qty",
+    "recommend_cost", "current_qty", "days_to_deplete", "service_qty",
+    "qty_change_pct", "name", "brand",
+)
+ANALYSIS_ASC_DEFAULT_KEYS = ("name", "brand", "days_to_deplete")
+
+# 판매출고/선결예약은 +, 판매취소는 - 로 합산하는 수량식
+_ANALYSIS_SIGNED_QTY = (
+    "(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity::bigint "
+    "WHEN t.type = '판매취소' THEN -t.quantity::bigint ELSE 0 END)"
+)
+
+
+def _analysis_to_int(args, name, default, lo, hi):
+    raw = args.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        value = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        raise ValueError(f"'{name}' 값이 올바른 숫자가 아닙니다.")
+    return min(max(value, lo), hi)
+
+
+def _analysis_to_flag(args, name):
+    return str(args.get(name, "0")).strip().lower() in ("1", "true", "on", "yes")
+
+
+def _analysis_to_id_list(args, name):
+    out = []
+    for part in str(args.get(name, "") or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(int(part))
+        except ValueError:
+            raise ValueError(f"'{name}' 값이 올바르지 않습니다.")
+    return out
+
+
+def parse_analysis_args(args):
+    """쿼리 파라미터를 검증해서 집계에 쓸 값으로 바꾼다. 잘못된 값이면 ValueError."""
+    today = now_kst().date()
+
+    def to_date(name, default):
+        raw = (args.get(name) or "").strip()
+        if not raw:
+            return default
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            raise ValueError("날짜는 YYYY-MM-DD 형식이어야 합니다.")
+
+    end = to_date("end_date", today)
+    start = to_date("start_date", end - timedelta(days=29))
+    if start > end:
+        raise ValueError("시작일이 종료일보다 늦습니다.")
+    if (end - start).days + 1 > 3660:
+        raise ValueError("조회 기간은 최대 10년까지 가능합니다.")
+
+    group_by = (args.get("group_by") or "product").strip()
+    if group_by not in ("product", "brand", "category"):
+        group_by = "product"
+
+    store_raw = (args.get("store_id") or "").strip()
+    store_id = None
+    if store_raw:
+        try:
+            store_id = int(store_raw)
+        except ValueError:
+            raise ValueError("매장 값이 올바르지 않습니다.")
+
+    sort_raw = (args.get("sort_by") or "sold_qty_desc").strip()
+    if sort_raw.endswith("_asc"):
+        sort_key, sort_dir = sort_raw[:-4], "asc"
+    elif sort_raw.endswith("_desc"):
+        sort_key, sort_dir = sort_raw[:-5], "desc"
+    else:
+        sort_key = sort_raw
+        sort_dir = "asc" if sort_raw in ANALYSIS_ASC_DEFAULT_KEYS else "desc"
+    if sort_key not in ANALYSIS_SORT_KEYS:
+        sort_key, sort_dir = "sold_qty", "desc"
+
+    limit = _analysis_to_int(args, "limit", 50, 0, 1000)  # 0 = 전체
+    offset = _analysis_to_int(args, "offset", 0, 0, 10_000_000)
+
+    return {
+        "start": start,
+        "end": end,
+        "store_id": store_id,
+        "group_by": group_by,
+        "category_ids": _analysis_to_id_list(args, "category_ids"),
+        "brand_ids": _analysis_to_id_list(args, "brand_ids"),
+        "brand_q": (args.get("brand_q") or "").strip(),
+        "product_ids": _analysis_to_id_list(args, "product_ids"),
+        "product_q": (args.get("product_q") or "").strip(),
+        "target_days": _analysis_to_int(args, "target_days", 14, 1, 365),
+        "buffer_pct": _analysis_to_int(args, "buffer_pct", 10, 0, 1000),
+        "min_pct": _analysis_to_int(args, "min_pct", 30, 0, 1000),
+        "apply_min": _analysis_to_flag(args, "apply_min"),
+        "sort_key": sort_key,
+        "sort_dir": sort_dir,
+        "limit": limit,
+        "offset": offset,
+        "hide_zero_sales": _analysis_to_flag(args, "hide_zero_sales"),
+        "only_zero_stock": _analysis_to_flag(args, "only_zero_stock"),
+        "include_quick": _analysis_to_flag(args, "include_quick"),
+        "compare_prev": _analysis_to_flag(args, "compare_prev"),
+    }
+
+
+def _analysis_round_up(value):
+    """부동소수점 오차(예: 2.0000000001)로 한 개가 더 붙지 않도록 먼저 반올림한 뒤 올림한다."""
+    return int(math.ceil(round(value, 6)))
+
+
+def _analysis_finalize(row, days):
+    """합계가 채워진 행에서 비율/파생 지표를 계산한다 (제품 행과 묶음 행에 같이 쓴다)."""
+    base = row["_base_sold"]
+    current = row["current_qty"]
+    row["avg_daily"] = round(base / days, 2) if days > 0 else 0
+    row["days_to_deplete"] = round(current / (base / days), 1) if base > 0 and days > 0 and current >= 0 else None
+    turnover = (base / current) if current > 0 else None
+    row["turnover"] = round(turnover, 2) if turnover is not None else None
+    row["turnover_30d"] = round(turnover * 30.0 / days, 2) if turnover is not None and days > 0 else None
+    row["margin_rate"] = round(row["profit"] * 100.0 / row["revenue"], 1) if row["revenue"] else None
+    row["expected_demand"] = round(row["_expected"], 1)
+    row["shortage"] = round(row["_shortage"], 1)
+    prev = row.get("prev_sold_qty")
+    if prev is not None:
+        row["qty_change"] = row["sold_qty"] - prev
+        row["qty_change_pct"] = round((row["sold_qty"] - prev) * 100.0 / prev, 1) if prev > 0 else None
+    else:
+        row["qty_change"] = None
+        row["qty_change_pct"] = None
+
+
+def compute_analysis(cur, a):
+    """통합 출고 분석의 유일한 집계 함수. 조건에 맞는 전체 결과(정렬 완료)와 요약을 돌려준다."""
+    start, end = a["start"], a["end"]
+    days = (end - start).days + 1
+    midnight = datetime.min.time()
+    start_dt = datetime.combine(start, midnight)
+    end_dt = datetime.combine(end + timedelta(days=1), midnight)  # 종료일 포함(그날 23:59:59까지)
+    prev_start_dt = datetime.combine(start - timedelta(days=days), midnight)
+    store_id = a["store_id"]
+    compare = a["compare_prev"]
+
+    # ---- 거래(판매) 집계 CTE: 이번 기간 / (선택) 직전 기간 ----
+    def sales_cte(name, d0, d1, full):
+        params = [d0, d1]
+        clause = ""
+        if store_id is not None:
+            clause = " AND t.store_id = %s"
+            params.append(store_id)
+        params.extend(["%이동%", "%교환%"])
+        if full:
+            cols = f"""
+                COALESCE(SUM({_ANALYSIS_SIGNED_QTY}), 0) AS sold_qty,
+                COALESCE(SUM(CASE WHEN COALESCE(t.unit_price, 0) = 0 THEN {_ANALYSIS_SIGNED_QTY} ELSE 0 END), 0) AS service_qty,
+                COALESCE(SUM({_ANALYSIS_SIGNED_QTY} * COALESCE(t.unit_price, 0)::bigint), 0) AS revenue,
+                COALESCE(SUM({_ANALYSIS_SIGNED_QTY} * (COALESCE(t.unit_price, 0) - COALESCE(t.unit_cost, 0))::bigint), 0) AS profit"""
+        else:
+            cols = f"COALESCE(SUM({_ANALYSIS_SIGNED_QTY}), 0) AS sold_qty"
+        sql = f"""{name} AS (
+            SELECT t.product_id, {cols}
+            FROM stock_transactions t
+            WHERE t.type IN ('판매출고', '선결예약', '판매취소')
+              AND t.date_time >= %s AND t.date_time < %s{clause}
+              AND (t.memo IS NULL OR (t.memo NOT LIKE %s AND t.memo NOT LIKE %s))
+            GROUP BY t.product_id
+        )"""
+        return sql, params
+
+    cs_sql, cs_params = sales_cte("cs", start_dt, end_dt, True)
+    ctes = [cs_sql]
+    params = list(cs_params)
+    if compare:
+        ps_sql, ps_params = sales_cte("ps", prev_start_dt, start_dt, False)
+        ctes.append(ps_sql)
+        params.extend(ps_params)
+
+    # ---- 현재 재고 CTE (조회 시점 기준) ----
+    st_sql = "st AS (SELECT ss.product_id, COALESCE(SUM(ss.qty), 0) AS qty FROM store_stock ss"
+    if store_id is not None:
+        st_sql += " WHERE ss.store_id = %s"
+        params.append(store_id)
+    st_sql += " GROUP BY ss.product_id)"
+    ctes.append(st_sql)
+
+    # ---- 제품 조건 (카테고리 AND 브랜드 AND 제품, 각 조건 안의 여러 값은 OR) ----
+    where = [
+        # 판매가 있었던 제품은 비활성이어도 실적에 남긴다 (발주는 활성 제품만 추천)
+        "(p.is_active = 1 OR COALESCE(cs.sold_qty, 0) <> 0)",
+        # 옵션이 있는 부모 제품은 묶음 라벨이라 제외 (옵션 제품만 집계)
+        "NOT EXISTS (SELECT 1 FROM products v WHERE v.parent_product_id = p.id AND v.is_active = 1)",
+    ]
+    if not a["include_quick"]:
+        where.append("COALESCE(p.unlimited_stock, 0) = 0")
+    if a["category_ids"]:
+        where.append("p.category_id = ANY(%s)")
+        params.append(a["category_ids"])
+    if a["brand_ids"]:
+        where.append("p.brand_id = ANY(%s)")
+        params.append(a["brand_ids"])
+    brand_col = "lower(replace(COALESCE(b.name, ''), ' ', ''))"
+    name_col = "lower(replace(p.name, ' ', ''))"
+    if a["brand_q"]:
+        cond, cond_params = build_token_match_sql(a["brand_q"], [brand_col])
+        if cond:
+            where.append(cond)
+            params.extend(cond_params)
+    if a["product_ids"]:
+        where.append("p.id = ANY(%s)")
+        params.append(a["product_ids"])
+    if a["product_q"]:
+        cond, cond_params = build_token_match_sql(a["product_q"], [name_col, brand_col])
+        if cond:
+            where.append(cond)
+            params.extend(cond_params)
+
+    prev_select = ", COALESCE(ps.sold_qty, 0) AS prev_sold_qty" if compare else ""
+    prev_join = "LEFT JOIN ps ON ps.product_id = p.id" if compare else ""
+    sql = f"""
+        WITH {", ".join(ctes)}
+        SELECT p.id AS product_id, p.name, p.option_name, p.cost_price, p.sale_price,
+               p.is_active, COALESCE(p.unlimited_stock, 0) AS unlimited_stock,
+               p.brand_id, b.name AS brand_name, b.color AS brand_color,
+               p.category_id, c.name AS category_name, c.color AS category_color,
+               COALESCE(cs.sold_qty, 0) AS sold_qty,
+               COALESCE(cs.service_qty, 0) AS service_qty,
+               COALESCE(cs.revenue, 0) AS revenue,
+               COALESCE(cs.profit, 0) AS profit,
+               COALESCE(st.qty, 0) AS current_qty{prev_select}
+        FROM products p
+        LEFT JOIN brands b ON b.id = p.brand_id
+        LEFT JOIN categories c ON c.id = p.category_id
+        LEFT JOIN cs ON cs.product_id = p.id
+        {prev_join}
+        LEFT JOIN st ON st.product_id = p.id
+        WHERE {" AND ".join(where)}
+    """
+    cur.execute(sql, params)
+    db_rows = cur.fetchall()
+
+    # ---- 제품 단위 계산 ----
+    products = []
+    for r in db_rows:
+        d = dict(r)
+        sold = int(d["sold_qty"] or 0)
+        current = int(d["current_qty"] or 0)
+        if a["hide_zero_sales"] and sold == 0:
+            continue
+        if a["only_zero_stock"] and current > 0:
+            continue
+        cost = int(d["cost_price"] or 0)
+        base = max(sold, 0)
+        expected = base / days * a["target_days"]
+        min_qty = _analysis_round_up(base * a["min_pct"] / 100.0)
+        need = expected + (min_qty if a["apply_min"] else 0)
+        shortage = max(0.0, round(need - current, 6))
+        orderable = bool(d["is_active"]) and not d["unlimited_stock"]
+        recommend = _analysis_round_up(shortage * (1 + a["buffer_pct"] / 100.0)) if (shortage > 0 and orderable) else 0
+        row = {
+            "key": d["product_id"],
+            "name": d["name"],
+            "option_name": d.get("option_name"),
+            "brand": d["brand_name"],
+            "brand_color": d["brand_color"],
+            "category": d["category_name"],
+            "category_color": d["category_color"],
+            "is_active": bool(d["is_active"]),
+            "product_count": 1,
+            "sold_qty": sold,
+            "service_qty": int(d["service_qty"] or 0),
+            "revenue": int(d["revenue"] or 0),
+            "profit": int(d["profit"] or 0),
+            "current_qty": current,
+            "min_qty": min_qty,
+            "low_stock_count": 1 if (min_qty > 0 and current <= min_qty) else 0,
+            "cost_price": cost,
+            "sale_price": int(d["sale_price"] or 0),
+            "recommend_qty": recommend,
+            "recommend_cost": recommend * cost,
+            "prev_sold_qty": int(d["prev_sold_qty"] or 0) if compare else None,
+            "_base_sold": base,
+            "_expected": expected,
+            "_shortage": shortage,
+            "_group_ids": (d["brand_id"], d["category_id"]),
+        }
+        products.append(row)
+
+    # ---- 요약: 줄 수/묶음 단위와 상관없이, 조건에 걸린 전체 제품의 합계 ----
+    summary = {
+        "product_count": len(products),
+        "sold_qty": sum(p["sold_qty"] for p in products),
+        "service_qty": sum(p["service_qty"] for p in products),
+        "revenue": sum(p["revenue"] for p in products),
+        "profit": sum(p["profit"] for p in products),
+        "current_qty": sum(p["current_qty"] for p in products),
+        "recommend_qty": sum(p["recommend_qty"] for p in products),
+        "recommend_cost": sum(p["recommend_cost"] for p in products),
+        "low_stock_count": sum(p["low_stock_count"] for p in products),
+        "prev_sold_qty": sum(p["prev_sold_qty"] for p in products) if compare else None,
+    }
+    summary["margin_rate"] = round(summary["profit"] * 100.0 / summary["revenue"], 1) if summary["revenue"] else None
+    if compare:
+        prev_total = summary["prev_sold_qty"]
+        summary["qty_change_pct"] = round((summary["sold_qty"] - prev_total) * 100.0 / prev_total, 1) if prev_total > 0 else None
+    else:
+        summary["qty_change_pct"] = None
+
+    cur.execute("SELECT value FROM settings WHERE key = %s", ("order_budget",))
+    budget_row = cur.fetchone()
+    try:
+        order_budget = float(budget_row["value"]) if budget_row and budget_row["value"] else 0
+    except (TypeError, ValueError):
+        order_budget = 0
+    summary["order_budget"] = order_budget
+    summary["budget_remaining"] = order_budget - summary["recommend_cost"]
+
+    # ---- 분석 단위(제품/브랜드/카테고리)로 묶기 ----
+    if a["group_by"] == "product":
+        rows = products
+    else:
+        groups = {}
+        for p in products:
+            brand_id, category_id = p["_group_ids"]
+            if a["group_by"] == "brand":
+                gkey, gname, gcolor = brand_id or 0, p["brand"] or "(브랜드 없음)", p["brand_color"]
+            else:
+                gkey, gname, gcolor = category_id or 0, p["category"] or "(미분류)", p["category_color"]
+            g_row = groups.get(gkey)
+            if g_row is None:
+                g_row = groups[gkey] = {
+                    "key": gkey, "name": gname, "option_name": None,
+                    "brand": gname if a["group_by"] == "brand" else None,
+                    "brand_color": gcolor if a["group_by"] == "brand" else None,
+                    "category": gname if a["group_by"] == "category" else None,
+                    "category_color": gcolor if a["group_by"] == "category" else None,
+                    "is_active": True, "product_count": 0,
+                    "sold_qty": 0, "service_qty": 0, "revenue": 0, "profit": 0,
+                    "current_qty": 0, "min_qty": 0, "low_stock_count": 0,
+                    "cost_price": None, "sale_price": None,
+                    "recommend_qty": 0, "recommend_cost": 0,
+                    "prev_sold_qty": 0 if compare else None,
+                    "_base_sold": 0, "_expected": 0.0, "_shortage": 0.0,
+                }
+            g_row["product_count"] += 1
+            for field in ("sold_qty", "service_qty", "revenue", "profit", "current_qty", "min_qty",
+                          "low_stock_count", "recommend_qty", "recommend_cost", "_base_sold",
+                          "_expected", "_shortage"):
+                g_row[field] += p[field]
+            if compare:
+                g_row["prev_sold_qty"] += p["prev_sold_qty"]
+        rows = list(groups.values())
+
+    for row in rows:
+        _analysis_finalize(row, days)
+        row["low_stock"] = row["low_stock_count"] > 0
+
+    # ---- 정렬: 값이 없는 항목은 방향과 상관없이 항상 맨 아래, 동점이면 판매량 -> 이름 순 ----
+    sort_key, reverse = a["sort_key"], a["sort_dir"] == "desc"
+    rows.sort(key=lambda r: (r["name"] or "").lower())
+    rows.sort(key=lambda r: -r["sold_qty"])
+
+    def sort_value(r):
+        if sort_key == "name":
+            return (r["name"] or "").lower()
+        if sort_key == "brand":
+            return ((r["brand"] or "").lower(), (r["name"] or "").lower()) if r["brand"] else None
+        return r.get(sort_key)
+
+    with_value = [r for r in rows if sort_value(r) is not None]
+    without_value = [r for r in rows if sort_value(r) is None]
+    with_value.sort(key=sort_value, reverse=reverse)
+    rows = with_value + without_value
+
+    for row in rows:
+        for internal in ("_base_sold", "_expected", "_shortage", "_group_ids"):
+            row.pop(internal, None)
+
+    return {
+        "period": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
+        "summary": summary,
+        "items": rows,
+    }
+
+
+@app.route("/api/analysis")
+def api_analysis():
+    get_db()
+    cur = g.cursor
+    try:
+        a = parse_analysis_args(request.args)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    try:
+        result = compute_analysis(cur, a)
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 출고 분석 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"출고 분석 중 오류가 발생했습니다: {e}"}), 500
+
+    items = result["items"]
+    total = len(items)
+    if a["limit"] > 0:
+        page_items = items[a["offset"]:a["offset"] + a["limit"]]
+    else:
+        page_items = items
+    summary = result["summary"]
+    summary["matched_count"] = total
+    return jsonify({
+        "period": result["period"],
+        "group_by": a["group_by"],
+        "options": {
+            "target_days": a["target_days"], "buffer_pct": a["buffer_pct"],
+            "min_pct": a["min_pct"], "apply_min": a["apply_min"],
+            "compare_prev": a["compare_prev"],
+        },
+        "summary": summary,
+        "items": page_items,
+        "total": total,
+        "limit": a["limit"],
+        "offset": a["offset"],
+    })
+
+
+# 엑셀(CSV) 내보내기에서 고를 수 있는 열: (키, 제목, 값 꺼내는 함수)
+ANALYSIS_EXPORT_COLUMNS = [
+    ("brand", "브랜드", lambda r: r.get("brand")),
+    ("category", "카테고리", lambda r: r.get("category")),
+    ("sold_qty", "판매수량", lambda r: r["sold_qty"]),
+    ("service_qty", "서비스수량", lambda r: r["service_qty"]),
+    ("revenue", "매출", lambda r: r["revenue"]),
+    ("profit", "순이익", lambda r: r["profit"]),
+    ("margin_rate", "이익률(%)", lambda r: r["margin_rate"]),
+    ("current_qty", "현재재고", lambda r: r["current_qty"]),
+    ("min_qty", "최소재고", lambda r: r["min_qty"]),
+    ("avg_daily", "일평균판매", lambda r: r["avg_daily"]),
+    ("days_to_deplete", "재고소진일수", lambda r: r["days_to_deplete"]),
+    ("turnover", "회전율", lambda r: r["turnover"]),
+    ("turnover_30d", "30일환산회전율", lambda r: r["turnover_30d"]),
+    ("expected_demand", "예상수요", lambda r: r["expected_demand"]),
+    ("shortage", "부족수량", lambda r: r["shortage"]),
+    ("cost_price", "원가", lambda r: r["cost_price"]),
+    ("recommend_qty", "추천발주량", lambda r: r["recommend_qty"]),
+    ("recommend_cost", "추천발주금액", lambda r: r["recommend_cost"]),
+    ("prev_sold_qty", "이전기간판매수량", lambda r: r["prev_sold_qty"]),
+    ("qty_change_pct", "증감률(%)", lambda r: r["qty_change_pct"]),
+]
+
+
+@app.route("/api/export/analysis")
+def api_export_analysis():
+    """출고 분석을 같은 조건 그대로 CSV로 내려준다 (줄 수 제한 없음).
+    cols=열 키를 쉼표로 넘기면 그 열만, 없으면 전체 열을 담는다."""
+    get_db()
+    cur = g.cursor
+    try:
+        a = parse_analysis_args(request.args)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    try:
+        result = compute_analysis(cur, a)
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 출고 분석 내보내기 오류: {e}")
+        return jsonify({"error": f"출고 분석을 내보내는 중 오류가 발생했습니다: {e}"}), 500
+
+    wanted = [c.strip() for c in (request.args.get("cols") or "").split(",") if c.strip()]
+    columns = [c for c in ANALYSIS_EXPORT_COLUMNS if (not wanted or c[0] in wanted)]
+    if not a["compare_prev"]:
+        columns = [c for c in columns if c[0] not in ("prev_sold_qty", "qty_change_pct")]
+    if a["group_by"] != "product":
+        columns = [c for c in columns if c[0] not in ("cost_price",)]
+        # 묶음 보기에서는 제품명 칸이 곧 묶음 이름이라 같은 이름의 브랜드/카테고리 열은 뺀다
+        columns = [c for c in columns if c[0] not in ("brand", "category")]
+
+    name_header = {"product": "제품명", "brand": "브랜드", "category": "카테고리"}[a["group_by"]]
+    header = [name_header] + [c[1] for c in columns]
+    body = []
+    for r in result["items"]:
+        label = r["name"]
+        if a["group_by"] == "product" and r.get("option_name"):
+            label = f"{label} ({r['option_name']})"
+        body.append([label] + [("" if c[2](r) is None else c[2](r)) for c in columns])
+    filename = f"출고분석_{result['period']['start']}_{result['period']['end']}.csv"
+    return csv_download_response(header, body, filename)
 
 
 # ---------------------------------------------------------------------------

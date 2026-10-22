@@ -148,11 +148,8 @@
       </div>
       <div class="nav-group">
         <div class="nav-group-label">분석</div>
-        <a class="nav-item {{ 'active' if active=='performance' else '' }}" href="/performance" data-label="판매 실적"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-chart-bar"></use></svg>판매 실적</a>
+        <a class="nav-item {{ 'active' if active=='analysis' else '' }}" href="/analysis" data-label="출고 분석"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-trending-up"></use></svg>출고 분석</a>
         <a class="nav-item {{ 'active' if active=='statistics' else '' }}" href="/statistics" data-label="매출 통계"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-chart-line"></use></svg>매출 통계</a>
-        <a class="nav-item {{ 'active' if active=='turnover' else '' }}" href="/turnover" data-label="재고회전율"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-refresh"></use></svg>재고회전율</a>
-        <a class="nav-item {{ 'active' if active=='recommend_order' else '' }}" href="/recommend_order" data-label="발주 추천"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-bulb"></use></svg>발주 추천</a>
-        <a class="nav-item {{ 'active' if active=='forecast' else '' }}" href="/forecast" data-label="출고 예측"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-trending-up"></use></svg>출고 예측</a>
         <a class="nav-item {{ 'active' if active=='report_builder' else '' }}" href="/report_builder" data-label="커스텀 리포트"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-file-analytics"></use></svg>커스텀 리포트</a>
       </div>
       <div class="nav-group">
@@ -305,9 +302,9 @@ function filterMobileNavItems(query) {
     <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-transfer"></use></svg>
     <span class="nav-label">입출고</span>
   </a>
-  <a href="/forecast" class="{{ 'active' if active=='forecast' else '' }}">
+  <a href="/analysis" class="{{ 'active' if active=='analysis' else '' }}">
     <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-trending-up"></use></svg>
-    <span class="nav-label">예측</span>
+    <span class="nav-label">분석</span>
   </a>
   <a href="/settings" class="{{ 'active' if active=='settings' else '' }}">
     <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-settings"></use></svg>

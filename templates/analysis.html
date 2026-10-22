@@ -1,0 +1,836 @@
+{% extends "base.html" %}
+{% block content %}
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-trending-up"></use></svg>출고 분석</h1>
+<div class="subtitle">고른 조건(카테고리·브랜드·제품·기간)에서 무엇이 얼마나 나갔고, 얼마나 발주해야 하며, 그 비용이 얼마인지 한 번에 확인합니다. (판매 실적 · 재고회전율 · 발주 추천 · 출고 예측 통합)</div>
+
+<div class="card an-filter">
+  <div class="an-grid">
+    <!-- 매장 / 분석 단위 -->
+    <div class="an-field">
+      <label class="an-label" for="anStore">매장</label>
+      <select id="anStore" onchange="onStoreChange()">
+        <option value="">전체 매장</option>
+      </select>
+    </div>
+    <div class="an-field">
+      <span class="an-label">분석 단위</span>
+      <div class="an-radios" id="anGroupBy">
+        <label><input type="radio" name="anGroup" value="product" checked> 제품</label>
+        <label><input type="radio" name="anGroup" value="brand"> 브랜드</label>
+        <label><input type="radio" name="anGroup" value="category"> 카테고리</label>
+      </div>
+    </div>
+
+    <!-- 카테고리 (복수 선택) -->
+    <div class="an-field">
+      <span class="an-label">카테고리 (복수 선택)</span>
+      <div class="an-multi" id="anCatWrap">
+        <button type="button" class="an-multi-btn" id="anCatBtn" onclick="toggleCatPanel(event)">전체</button>
+        <div class="an-multi-panel" id="anCatPanel"></div>
+      </div>
+    </div>
+
+    <!-- 브랜드 (검색 + 칩) -->
+    <div class="an-field">
+      <span class="an-label">브랜드 <span class="an-hint">(여러 개 선택 · 글자만 남기면 포함 검색)</span></span>
+      <div class="an-chips" id="anBrandChips"></div>
+      <div class="autocomplete-wrap">
+        <input type="text" id="anBrandInput" placeholder="🏷️ 브랜드 검색" autocomplete="off" style="width:100%;">
+        <div class="autocomplete-list" id="anBrandList"></div>
+      </div>
+    </div>
+
+    <!-- 제품 (검색 + 칩) -->
+    <div class="an-field">
+      <span class="an-label">제품명 <span class="an-hint">(여러 개 선택 · 글자만 남기면 포함 검색)</span></span>
+      <div class="an-chips" id="anProductChips"></div>
+      <div class="autocomplete-wrap">
+        <input type="text" id="anProductInput" placeholder="🔍 제품명 검색" autocomplete="off" style="width:100%;">
+        <div class="autocomplete-list" id="anProductList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 기간 -->
+  <div class="an-block">
+    <span class="an-label">기간</span>
+    <div class="an-presets" id="anPresets">
+      <button type="button" data-p="today">오늘</button>
+      <button type="button" data-p="yesterday">어제</button>
+      <button type="button" data-p="7">7일</button>
+      <button type="button" data-p="14">14일</button>
+      <button type="button" data-p="30">30일</button>
+      <button type="button" data-p="60">60일</button>
+      <button type="button" data-p="90">90일</button>
+      <button type="button" data-p="thisMonth">이번달</button>
+      <button type="button" data-p="lastMonth">지난달</button>
+      <button type="button" data-p="thisYear">올해</button>
+    </div>
+    <div class="an-inline">
+      <label>시작 <input type="date" id="anStart" onchange="onDatesChange()"></label>
+      <span>~</span>
+      <label>종료 <input type="date" id="anEnd" onchange="onDatesChange()"></label>
+      <span class="an-or">또는 최근</span>
+      <label><input type="number" id="anRecent" min="1" max="3660" style="width:72px;" onchange="onRecentChange()"> 일</label>
+      <span class="an-hint" id="anPeriodHint"></span>
+    </div>
+  </div>
+
+  <!-- 발주 기준 -->
+  <div class="an-block">
+    <span class="an-label">발주 기준</span>
+    <div class="an-inline">
+      <label>목표 재고일수 <input type="number" id="anTarget" value="14" min="1" max="365" style="width:70px;"> 일</label>
+      <label>여유율 <input type="number" id="anBuffer" value="10" min="0" max="1000" style="width:70px;"> %</label>
+      <label title="최소재고 = 조회 기간 판매(출고)량 × 이 비율. 현재 재고가 이 값 이하이면 ⚠ 로 표시됩니다.">최소재고 <span class="an-hint">출고량의</span> <input type="number" id="anMinPct" value="30" min="0" max="1000" style="width:70px;"> %</label>
+      <label class="an-check"><input type="checkbox" id="anApplyMin"> 최소재고를 발주량에 반영</label>
+    </div>
+  </div>
+
+  <!-- 정렬 / 줄 수 / 옵션 -->
+  <div class="an-block">
+    <div class="an-inline">
+      <label>정렬
+        <select id="anSort">
+          <option value="sold_qty_desc">판매량 많은 순</option>
+          <option value="sold_qty_asc">판매량 적은 순</option>
+          <option value="revenue_desc">매출 높은 순</option>
+          <option value="revenue_asc">매출 낮은 순</option>
+          <option value="profit_desc">순이익 높은 순</option>
+          <option value="profit_asc">순이익 낮은 순</option>
+          <option value="margin_rate_desc">이익률 높은 순</option>
+          <option value="margin_rate_asc">이익률 낮은 순</option>
+          <option value="turnover_desc">회전율 높은 순</option>
+          <option value="turnover_asc">회전율 낮은 순</option>
+          <option value="recommend_qty_desc">추천 발주량 많은 순</option>
+          <option value="recommend_qty_asc">추천 발주량 적은 순</option>
+          <option value="recommend_cost_desc">추천 발주 금액 많은 순</option>
+          <option value="recommend_cost_asc">추천 발주 금액 적은 순</option>
+          <option value="current_qty_desc">현재 재고 많은 순</option>
+          <option value="current_qty_asc">현재 재고 적은 순</option>
+          <option value="days_to_deplete_asc">재고 소진일수 짧은 순</option>
+          <option value="days_to_deplete_desc">재고 소진일수 긴 순</option>
+          <option value="service_qty_desc">서비스 수량 많은 순</option>
+          <option value="qty_change_pct_desc">이전 기간 대비 증가율 순</option>
+          <option value="qty_change_pct_asc">이전 기간 대비 감소율 순</option>
+          <option value="name_asc">제품명 가나다순</option>
+          <option value="brand_asc">브랜드 가나다순</option>
+        </select>
+      </label>
+      <label>조회 줄 수 <input type="number" id="anLimit" value="50" min="1" max="1000" style="width:72px;"></label>
+      <label class="an-check"><input type="checkbox" id="anAll" onchange="onAllToggle()"> 전체 보기</label>
+    </div>
+    <div class="an-inline an-opts">
+      <label class="an-check"><input type="checkbox" id="anHideZero"> 판매 0 제외</label>
+      <label class="an-check"><input type="checkbox" id="anOnlyZeroStock"> 재고 0만</label>
+      <label class="an-check"><input type="checkbox" id="anQuick"> 퀵상품 포함</label>
+      <label class="an-check"><input type="checkbox" id="anCompare" onchange="runQuery(true)"> 이전 기간 비교</label>
+    </div>
+  </div>
+
+  <div class="an-actions">
+    <button type="button" class="primary" id="anRunBtn" onclick="runQuery(true)">🔍 조회</button>
+    <button type="button" onclick="resetFilters()">초기화</button>
+    <button type="button" onclick="exportCsv()">📊 엑셀 다운로드</button>
+    <div class="an-colwrap">
+      <button type="button" onclick="toggleColPanel(event)">🧩 열 표시</button>
+      <div class="an-colpanel" id="anColPanel"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 요약 (조건에 걸린 전체 결과의 합계) -->
+<div class="summary-cards an-summary" id="anSummary">
+  <div class="summary-card"><div class="label">조회 품목</div><div class="value" id="sMatched">-</div></div>
+  <div class="summary-card"><div class="label">판매 수량 <span class="an-sub">(서비스 포함)</span></div><div class="value" id="sSold">-</div></div>
+  <div class="summary-card"><div class="label">매출</div><div class="value" id="sRevenue">-</div></div>
+  <div class="summary-card"><div class="label">순이익 <span class="an-sub" id="sMarginSub"></span></div><div class="value" id="sProfit">-</div></div>
+  <div class="summary-card"><div class="label">추천 발주 수량</div><div class="value" id="sRecQty">-</div></div>
+  <div class="summary-card"><div class="label">추천 발주 금액 <span class="an-sub">(원가)</span></div><div class="value" id="sRecCost">-</div></div>
+  <div class="summary-card"><div class="label">예산 대비</div><div class="value" id="sBudget">-</div></div>
+  <div class="summary-card"><div class="label">최소재고 이하</div><div class="value" id="sLow">-</div></div>
+  <div class="summary-card" id="sPrevCard" style="display:none;"><div class="label">이전 기간 대비</div><div class="value" id="sPrev">-</div></div>
+</div>
+
+<div class="an-note" id="anNote">ℹ️ 재고는 과거 시점이 아닌 <b>조회 시점의 현재 재고</b>입니다. 과거 기간을 조회해도 소진일수·회전율·발주량은 현재 재고로 계산됩니다.</div>
+
+<div class="table-toolbar an-pager-bar">
+  <div class="an-pager-info">
+    <span id="anPeriodText">-</span>
+    <span>|</span>
+    <span>총 <b id="anTotal">0</b>건</span>
+  </div>
+  <div>
+    <button type="button" id="anPrev" class="page-btn" onclick="goPage(-1)">◀ 이전</button>
+    <span id="anPageInfo" class="an-pageinfo">1 / 1</span>
+    <button type="button" id="anNext" class="page-btn" onclick="goPage(1)">다음 ▶</button>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table id="anTable">
+    <thead><tr id="anHead"></tr></thead>
+    <tbody id="anBody">
+      <tr><td colspan="20"><div class="empty"><span class="empty-icon">⏳</span>데이터 로딩 중...</div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+// =====================================================================
+// 출고 분석 (/analysis)
+// 모든 계산은 서버(/api/analysis) 한 곳에서 한다. 이 화면은 조건을 모아 보내고 결과를 보여주기만 한다.
+// =====================================================================
+const PREF_KEY = 'analysis_prefs_v1';
+const COLS_KEY = 'analysis_cols_v1';
+
+let page = 1;
+let lastData = null;
+let lastGroup = 'product';
+const guard = makeSearchGuard();
+const state = {
+  categories: [],            // 전체 카테고리 목록
+  catSelected: new Set(),    // 선택한 카테고리 id (비면 전체)
+  brands: new Map(),         // 선택한 브랜드 칩 id -> name
+  products: new Map(),       // 선택한 제품 칩 id -> name
+};
+
+// ---------- 열 정의 (열 표시 선택) ----------
+// modes: 어느 분석 단위에서 보이는지 / core: 모바일 기본 열 / sort: 머리글 클릭 정렬 키 / compare: 이전 기간 비교 켰을 때만
+const COLS = [
+  { k: 'brand', label: '브랜드', modes: ['product'], def: true, sort: 'brand', asc: true,
+    td: r => r.brand ? `<span class="brand-tag" style="background:${r.brand_color || '#8a8f98'};">${escapeHtml(r.brand)}</span>` : '-' },
+  { k: 'category', label: '카테고리', modes: ['product'], def: true,
+    td: r => r.category ? `<span class="chip" style="background:${r.category_color || '#8a8f98'};">${escapeHtml(r.category)}</span>` : '<span class="an-muted">미분류</span>' },
+  { k: 'sold_qty', label: '판매수량', core: true, def: true, sort: 'sold_qty', num: true,
+    td: r => `<b class="an-strong">${fmt(r.sold_qty)}</b>` },
+  { k: 'service_qty', label: '(서비스)', def: true, sort: 'service_qty', num: true,
+    td: r => r.service_qty ? `<span class="an-muted">(${fmt(r.service_qty)})</span>` : '<span class="an-muted">-</span>' },
+  { k: 'revenue', label: '매출', core: true, def: true, sort: 'revenue', num: true, td: r => fmt(r.revenue) },
+  { k: 'profit', label: '순이익', core: true, def: true, sort: 'profit', num: true,
+    td: r => `<span style="color:${r.profit < 0 ? 'var(--danger)' : 'inherit'};">${fmt(r.profit)}</span>` },
+  { k: 'margin_rate', label: '이익률', def: true, sort: 'margin_rate', num: true,
+    td: r => r.margin_rate === null || r.margin_rate === undefined ? '-' : r.margin_rate + '%' },
+  { k: 'current_qty', label: '현재재고', core: true, def: true, sort: 'current_qty', num: true,
+    td: r => `${fmt(r.current_qty)}${r.low_stock ? ` <span class="an-warn" title="${lowTitle(r)}">⚠</span>` : ''}` },
+  { k: 'min_qty', label: '최소재고', def: true, num: true, td: r => fmt(r.min_qty) },
+  { k: 'avg_daily', label: '일평균', def: true, num: true, td: r => fmt(r.avg_daily) },
+  { k: 'days_to_deplete', label: '소진일수', def: true, sort: 'days_to_deplete', asc: true, num: true,
+    td: r => r.days_to_deplete === null || r.days_to_deplete === undefined ? '-' : fmt(r.days_to_deplete) },
+  { k: 'turnover', label: '회전율', def: true, sort: 'turnover', num: true,
+    td: r => r.turnover === null || r.turnover === undefined ? '-' : fmt(r.turnover) },
+  { k: 'turnover_30d', label: '30일 환산 회전율', def: false, num: true,
+    td: r => r.turnover_30d === null || r.turnover_30d === undefined ? '-' : fmt(r.turnover_30d) },
+  { k: 'recommend_qty', label: '추천발주', core: true, def: true, sort: 'recommend_qty', num: true,
+    td: r => `<b style="color:${r.recommend_qty > 0 ? 'var(--danger)' : 'var(--text-light)'};">${fmt(r.recommend_qty)}</b>` },
+  { k: 'cost_price', label: '원가', modes: ['product'], def: true, num: true, td: r => fmt(r.cost_price) },
+  { k: 'recommend_cost', label: '발주금액', def: true, sort: 'recommend_cost', num: true, td: r => fmt(r.recommend_cost) },
+  { k: 'prev_sold_qty', label: '이전 기간', compare: true, def: true, num: true, td: r => fmt(r.prev_sold_qty) },
+  { k: 'qty_change_pct', label: '증감', compare: true, def: true, sort: 'qty_change_pct', num: true, td: r => changeCell(r) },
+];
+
+function lowTitle(r) {
+  return r.product_count > 1 ? `최소재고 이하 ${r.low_stock_count}개 품목` : `최소재고(${fmt(r.min_qty)}) 이하`;
+}
+
+function changeCell(r) {
+  if (r.prev_sold_qty === null || r.prev_sold_qty === undefined) return '-';
+  if (r.qty_change_pct === null || r.qty_change_pct === undefined) {
+    return r.sold_qty > 0 && r.prev_sold_qty === 0 ? '<span class="an-up">신규</span>' : '<span class="an-muted">-</span>';
+  }
+  const p = r.qty_change_pct;
+  if (p > 0) return `<span class="an-up">▲ ${fmt(p)}%</span>`;
+  if (p < 0) return `<span class="an-down">▼ ${fmt(Math.abs(p))}%</span>`;
+  return '<span class="an-muted">0%</span>';
+}
+
+// 선택한 열 (localStorage). 처음이면 PC는 기본 열 전체, 모바일은 핵심 열만.
+let visibleCols = loadVisibleCols();
+
+function loadVisibleCols() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLS_KEY) || 'null');
+    if (Array.isArray(saved)) return new Set(saved);
+  } catch (e) {}
+  return defaultCols();
+}
+function defaultCols() {
+  const narrow = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+  return new Set(COLS.filter(c => narrow ? c.core || c.compare : c.def).map(c => c.k));
+}
+function saveVisibleCols() {
+  try { localStorage.setItem(COLS_KEY, JSON.stringify([...visibleCols])); } catch (e) {}
+}
+
+function activeCols() {
+  const group = currentGroup();
+  const compare = document.getElementById('anCompare').checked;
+  return COLS.filter(c =>
+    visibleCols.has(c.k) &&
+    (!c.modes || c.modes.includes(group)) &&
+    (!c.compare || compare));
+}
+
+function renderColPanel() {
+  const group = currentGroup();
+  const compare = document.getElementById('anCompare').checked;
+  const panel = document.getElementById('anColPanel');
+  const items = COLS.filter(c => (!c.modes || c.modes.includes(group)) && (!c.compare || compare));
+  panel.innerHTML = `
+    <div class="an-col-quick">
+      <button type="button" onclick="setCols('core')">핵심 열만</button>
+      <button type="button" onclick="setCols('all')">모두 보기</button>
+      <button type="button" onclick="setCols('default')">기본값</button>
+    </div>` +
+    items.map(c => `<label class="an-check"><input type="checkbox" ${visibleCols.has(c.k) ? 'checked' : ''} onchange="onColToggle('${c.k}', this.checked)"> ${escapeHtml(c.label)}</label>`).join('');
+}
+function onColToggle(k, on) {
+  if (on) visibleCols.add(k); else visibleCols.delete(k);
+  saveVisibleCols();
+  renderTableHead();
+  if (lastData) renderTable();
+}
+function setCols(mode) {
+  if (mode === 'core') visibleCols = new Set(COLS.filter(c => c.core || c.compare).map(c => c.k));
+  else if (mode === 'all') visibleCols = new Set(COLS.map(c => c.k));
+  else visibleCols = defaultCols();
+  saveVisibleCols();
+  renderColPanel();
+  renderTableHead();
+  if (lastData) renderTable();
+}
+function toggleColPanel(ev) {
+  ev.stopPropagation();
+  const panel = document.getElementById('anColPanel');
+  renderColPanel();
+  panel.classList.toggle('show');
+}
+
+// ---------- 카테고리 복수 선택 ----------
+function renderCatPanel() {
+  document.getElementById('anCatPanel').innerHTML =
+    state.categories.map(c => `<label class="an-check"><input type="checkbox" value="${c.id}" ${state.catSelected.has(c.id) ? 'checked' : ''} onchange="onCatToggle(${c.id}, this.checked)"> ${escapeHtml(c.name)}</label>`).join('') ||
+    '<div class="an-muted" style="padding:6px;">카테고리가 없습니다.</div>';
+  updateCatBtn();
+}
+function onCatToggle(id, on) {
+  if (on) state.catSelected.add(id); else state.catSelected.delete(id);
+  updateCatBtn();
+}
+function updateCatBtn() {
+  const n = state.catSelected.size;
+  const btn = document.getElementById('anCatBtn');
+  if (n === 0) btn.textContent = '전체';
+  else if (n <= 2) btn.textContent = state.categories.filter(c => state.catSelected.has(c.id)).map(c => c.name).join(', ');
+  else btn.textContent = `${n}개 선택`;
+}
+function toggleCatPanel(ev) {
+  ev.stopPropagation();
+  document.getElementById('anCatPanel').classList.toggle('show');
+}
+
+// ---------- 검색 칩 (브랜드 / 제품) ----------
+function makePicker(cfg) {
+  const input = document.getElementById(cfg.input);
+  const list = document.getElementById(cfg.list);
+  const chips = document.getElementById(cfg.chips);
+  const pickGuard = makeSearchGuard();
+  let timer = null;
+
+  function renderChips() {
+    chips.innerHTML = [...cfg.map.entries()].map(([id, name]) =>
+      `<span class="an-chip">${escapeHtml(name)}<button type="button" aria-label="삭제" data-id="${id}">×</button></span>`).join('');
+  }
+  chips.addEventListener('click', e => {
+    const b = e.target.closest('button[data-id]');
+    if (!b) return;
+    cfg.map.delete(Number(b.dataset.id));
+    renderChips();
+  });
+  list.addEventListener('click', e => {
+    const item = e.target.closest('.autocomplete-item');
+    if (!item) return;
+    cfg.map.set(Number(item.dataset.id), item.dataset.name);
+    input.value = '';
+    list.classList.remove('show');
+    renderChips();
+    input.focus();
+  });
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (!q) { list.classList.remove('show'); return; }
+    timer = setTimeout(async () => {
+      const token = pickGuard.next();
+      try {
+        const rows = await cfg.search(q);
+        if (!pickGuard.isCurrent(token)) return;
+        if (!Array.isArray(rows) || rows.length === 0) { list.classList.remove('show'); return; }
+        list.innerHTML = rows.slice(0, 12).map(r =>
+          `<div class="autocomplete-item" data-id="${r.id}" data-name="${escapeHtml(r.name)}">${escapeHtml(r.name)}${r.sub ? ` <span class="meta">${escapeHtml(r.sub)}</span>` : ''}${cfg.map.has(r.id) ? ' <span class="meta">✓ 선택됨</span>' : ''}</div>`).join('');
+        list.classList.add('show');
+      } catch (e) { console.error('자동완성 오류:', e); }
+    }, 200);
+  });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); list.classList.remove('show'); runQuery(true); }
+  });
+  return { renderChips };
+}
+
+let brandPicker, productPicker;
+
+// ---------- 기간 ----------
+function kstToday() {
+  // 한국시간(UTC+9, 서머타임 없음) 기준 오늘. 구형 기기에서 Intl 로케일 지원이 없어도 동작하도록 직접 계산한다.
+  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+function addDays(ymd, n) {
+  const d = new Date(ymd + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function diffDays(a, b) { // b - a (일)
+  return Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000);
+}
+function presetRange(p) {
+  const today = kstToday();
+  if (p === 'today') return [today, today];
+  if (p === 'yesterday') { const y = addDays(today, -1); return [y, y]; }
+  if (p === 'thisMonth') return [today.slice(0, 8) + '01', today];
+  if (p === 'lastMonth') {
+    const first = today.slice(0, 8) + '01';
+    const lastEnd = addDays(first, -1);
+    return [lastEnd.slice(0, 8) + '01', lastEnd];
+  }
+  if (p === 'thisYear') return [today.slice(0, 4) + '-01-01', today];
+  const n = parseInt(p, 10);
+  return [addDays(today, -(n - 1)), today];
+}
+function setPeriod(start, end) {
+  document.getElementById('anStart').value = start;
+  document.getElementById('anEnd').value = end;
+  syncPeriodUI();
+}
+function pickPreset(p) {
+  const [s, e] = presetRange(p);
+  setPeriod(s, e);
+}
+// 날짜가 바뀌면 "최근 N일"과 프리셋 강조를 맞춘다
+function syncPeriodUI() {
+  const s = document.getElementById('anStart').value;
+  const e = document.getElementById('anEnd').value;
+  const hint = document.getElementById('anPeriodHint');
+  if (!s || !e || s > e) {
+    hint.textContent = s && e ? '⚠ 시작일이 종료일보다 늦습니다' : '';
+    document.querySelectorAll('#anPresets button').forEach(b => b.classList.remove('on'));
+    return;
+  }
+  const n = diffDays(s, e) + 1;
+  document.getElementById('anRecent').value = n;
+  hint.textContent = `총 ${n}일 (종료일 포함, 한국시간 기준)`;
+  document.querySelectorAll('#anPresets button').forEach(b => {
+    const [ps, pe] = presetRange(b.dataset.p);
+    b.classList.toggle('on', ps === s && pe === e);
+  });
+}
+function onDatesChange() { syncPeriodUI(); }
+function onRecentChange() {
+  const n = parseInt(document.getElementById('anRecent').value, 10);
+  if (!n || n < 1) return;
+  const today = kstToday();
+  setPeriod(addDays(today, -(n - 1)), today);
+}
+
+// ---------- 기타 입력 ----------
+function currentGroup() {
+  return (document.querySelector('input[name="anGroup"]:checked') || {}).value || 'product';
+}
+function onAllToggle() {
+  document.getElementById('anLimit').disabled = document.getElementById('anAll').checked;
+}
+function onStoreChange() {
+  const v = document.getElementById('anStore').value;
+  if (v) { try { localStorage.setItem('global_store_id', v); } catch (e) {} }
+}
+
+// ---------- 조건 -> 요청 파라미터 ----------
+function buildParams(forExport) {
+  const p = new URLSearchParams();
+  const store = document.getElementById('anStore').value;
+  if (store) p.set('store_id', store);
+  p.set('group_by', currentGroup());
+  if (state.catSelected.size) p.set('category_ids', [...state.catSelected].join(','));
+  if (state.brands.size) p.set('brand_ids', [...state.brands.keys()].join(','));
+  if (state.products.size) p.set('product_ids', [...state.products.keys()].join(','));
+  const bq = document.getElementById('anBrandInput').value.trim();
+  const pq = document.getElementById('anProductInput').value.trim();
+  if (bq) p.set('brand_q', bq);
+  if (pq) p.set('product_q', pq);
+  p.set('start_date', document.getElementById('anStart').value);
+  p.set('end_date', document.getElementById('anEnd').value);
+  p.set('target_days', document.getElementById('anTarget').value || '14');
+  p.set('buffer_pct', document.getElementById('anBuffer').value || '10');
+  p.set('min_pct', document.getElementById('anMinPct').value || '30');
+  if (document.getElementById('anApplyMin').checked) p.set('apply_min', '1');
+  p.set('sort_by', document.getElementById('anSort').value);
+  if (document.getElementById('anHideZero').checked) p.set('hide_zero_sales', '1');
+  if (document.getElementById('anOnlyZeroStock').checked) p.set('only_zero_stock', '1');
+  if (document.getElementById('anQuick').checked) p.set('include_quick', '1');
+  if (document.getElementById('anCompare').checked) p.set('compare_prev', '1');
+  if (!forExport) {
+    const all = document.getElementById('anAll').checked;
+    const limit = all ? 0 : Math.min(Math.max(parseInt(document.getElementById('anLimit').value, 10) || 50, 1), 1000);
+    p.set('limit', String(limit));
+    p.set('offset', String(all ? 0 : (page - 1) * limit));
+  }
+  return p;
+}
+
+// ---------- 조회 ----------
+async function runQuery(resetPage) {
+  const s = document.getElementById('anStart').value;
+  const e = document.getElementById('anEnd').value;
+  if (!s || !e) { toast('기간을 입력해주세요.', true, '⚠️'); return; }
+  if (s > e) { toast('시작일이 종료일보다 늦습니다.', true, '⚠️'); return; }
+  if (resetPage) page = 1;
+  savePrefs();
+  lastGroup = currentGroup();
+  renderTableHead();
+  const body = document.getElementById('anBody');
+  body.innerHTML = `<tr><td colspan="20"><div class="empty"><span class="empty-icon">⏳</span>데이터 로딩 중...</div></td></tr>`;
+  const btn = document.getElementById('anRunBtn');
+  btn.disabled = true;
+  const token = guard.next();
+  try {
+    const data = await api('/api/analysis?' + buildParams(false).toString());
+    if (!guard.isCurrent(token)) return;
+    if (data.__apiError || !data.summary) {
+      body.innerHTML = `<tr><td colspan="20"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.<div class="empty-hint">${escapeHtml(data.__apiError || '')}</div></div></td></tr>`;
+      clearSummary();
+      return;
+    }
+    lastData = data;
+    renderSummary(data);
+    renderTable();
+  } catch (err) {
+    if (!guard.isCurrent(token)) return;
+    console.error('출고 분석 오류:', err);
+    toast('데이터를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function clearSummary() {
+  ['sMatched', 'sSold', 'sRevenue', 'sProfit', 'sRecQty', 'sRecCost', 'sBudget', 'sLow', 'sPrev'].forEach(id => document.getElementById(id).textContent = '-');
+  document.getElementById('sMarginSub').textContent = '';
+  document.getElementById('anTotal').textContent = '0';
+  document.getElementById('anPageInfo').textContent = '0 / 0';
+}
+
+function renderSummary(data) {
+  const s = data.summary;
+  const unit = data.group_by === 'brand' ? '개 브랜드' : data.group_by === 'category' ? '개 카테고리' : '개';
+  document.getElementById('sMatched').textContent = fmt(s.matched_count) + unit;
+  document.getElementById('sSold').innerHTML = `${fmt(s.sold_qty)}개 <span class="an-sub">(서비스 ${fmt(s.service_qty)}개)</span>`;
+  document.getElementById('sRevenue').textContent = '₩' + fmt(s.revenue);
+  document.getElementById('sProfit').textContent = '₩' + fmt(s.profit);
+  document.getElementById('sMarginSub').textContent = s.margin_rate === null ? '' : `(이익률 ${s.margin_rate}%)`;
+  document.getElementById('sRecQty').textContent = fmt(s.recommend_qty) + '개';
+  document.getElementById('sRecCost').textContent = '₩' + fmt(s.recommend_cost);
+  const bud = document.getElementById('sBudget');
+  if (!s.order_budget) {
+    bud.innerHTML = '<span class="an-muted" style="font-size:14px;">예산 미설정</span>';
+  } else {
+    const rem = s.budget_remaining;
+    bud.innerHTML = `<span style="color:${rem < 0 ? 'var(--danger)' : 'var(--accent)'};">${rem < 0 ? '▼ 초과 ' : '▲ 여유 '}₩${fmt(Math.abs(rem))}</span> <span class="an-sub">(예산 ₩${fmt(s.order_budget)})</span>`;
+  }
+  document.getElementById('sLow').textContent = fmt(s.low_stock_count) + '개';
+  const prevCard = document.getElementById('sPrevCard');
+  if (data.options.compare_prev) {
+    prevCard.style.display = '';
+    const pct = s.qty_change_pct;
+    document.getElementById('sPrev').innerHTML = `${fmt(s.prev_sold_qty)}개 → ${fmt(s.sold_qty)}개 ` +
+      (pct === null ? '' : `<span class="${pct >= 0 ? 'an-up' : 'an-down'}" style="font-size:14px;">${pct >= 0 ? '▲' : '▼'} ${fmt(Math.abs(pct))}%</span>`);
+  } else {
+    prevCard.style.display = 'none';
+  }
+  const per = data.period;
+  document.getElementById('anPeriodText').textContent = `${per.start} ~ ${per.end} (${per.days}일)`;
+}
+
+function renderTableHead() {
+  const cols = activeCols();
+  const [curKey, curDir] = splitSort(document.getElementById('anSort').value);
+  const nameLabel = { product: '제품명', brand: '브랜드', category: '카테고리' }[currentGroup()];
+  let html = `<th>#</th><th class="an-sortable" data-sort="name" data-asc="1">${nameLabel}${arrow('name', curKey, curDir)}</th>`;
+  html += cols.map(c => c.sort
+    ? `<th class="an-sortable an-num" data-sort="${c.sort}" ${c.asc ? 'data-asc="1"' : ''}>${escapeHtml(c.label)}${arrow(c.sort, curKey, curDir)}</th>`
+    : `<th class="${c.num ? 'an-num' : ''}">${escapeHtml(c.label)}</th>`).join('');
+  document.getElementById('anHead').innerHTML = html;
+}
+function arrow(key, curKey, curDir) {
+  if (key !== curKey) return '';
+  return curDir === 'desc' ? ' ▼' : ' ▲';
+}
+function splitSort(v) {
+  const m = v.match(/^(.*)_(asc|desc)$/);
+  return m ? [m[1], m[2]] : [v, 'desc'];
+}
+// 머리글 클릭 -> 같은 열이면 방향 토글, 다른 열이면 기본 방향
+document.addEventListener('click', e => {
+  const th = e.target.closest('#anHead th.an-sortable');
+  if (!th) return;
+  const key = th.dataset.sort;
+  const sel = document.getElementById('anSort');
+  const [curKey, curDir] = splitSort(sel.value);
+  const defDir = th.dataset.asc ? 'asc' : 'desc';
+  const dir = key === curKey ? (curDir === 'desc' ? 'asc' : 'desc') : defDir;
+  const val = `${key}_${dir}`;
+  if (![...sel.options].some(o => o.value === val)) {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = `${th.textContent.replace(/[▲▼]/g, '').trim()} ${dir === 'asc' ? '낮은/적은 순' : '높은/많은 순'}`;
+    sel.appendChild(opt);
+  }
+  sel.value = val;
+  runQuery(true);
+});
+
+function renderTable() {
+  const data = lastData;
+  const body = document.getElementById('anBody');
+  const cols = activeCols();
+  const span = cols.length + 2;
+  const items = data.items || [];
+  const group = data.group_by;
+  const allMode = data.limit === 0;
+  const totalPages = allMode ? 1 : Math.max(1, Math.ceil(data.total / data.limit));
+  if (!allMode && page > totalPages) { page = totalPages; runQuery(false); return; }
+
+  document.getElementById('anTotal').textContent = fmt(data.total);
+  document.getElementById('anPageInfo').textContent = `${page} / ${totalPages}`;
+  document.getElementById('anPrev').disabled = page <= 1;
+  document.getElementById('anNext').disabled = page >= totalPages;
+
+  if (items.length === 0) {
+    body.innerHTML = `<tr><td colspan="${span}"><div class="empty"><span class="empty-icon">📊</span>조건에 맞는 결과가 없습니다.<div class="empty-hint">기간이나 필터를 바꿔보세요.</div></div></td></tr>`;
+    return;
+  }
+  body.innerHTML = items.map((r, i) => {
+    const num = (data.offset || 0) + i + 1;
+    let name = escapeHtml(r.name);
+    if (group === 'product' && r.option_name) name += ` <span class="an-muted">(${escapeHtml(r.option_name)})</span>`;
+    if (group === 'product' && !r.is_active) name += ' <span class="an-tag">단종/비활성</span>';
+    if (group !== 'product') name += ` <span class="an-muted">· ${fmt(r.product_count)}개 제품</span>`;
+    return `<tr class="${r.low_stock ? 'an-low' : ''}">
+      <td><span class="row-number">${num}</span></td>
+      <td class="an-name">${name}</td>
+      ${cols.map(c => `<td class="${c.num ? 'an-num' : ''}">${c.td(r)}</td>`).join('')}
+    </tr>`;
+  }).join('');
+}
+
+function goPage(delta) {
+  const np = page + delta;
+  if (np < 1) return;
+  page = np;
+  runQuery(false);
+}
+
+// ---------- 엑셀(CSV) ----------
+async function exportCsv() {
+  const s = document.getElementById('anStart').value;
+  const e = document.getElementById('anEnd').value;
+  if (!s || !e) { toast('기간을 입력해주세요.', true, '⚠️'); return; }
+  const p = buildParams(true);
+  const keys = activeCols().map(c => c.k);
+  // 화면에서 보이는 열만 파일에 담는다 (열 키는 서버와 같은 이름)
+  p.set('cols', keys.join(','));
+  await downloadFile('/api/export/analysis?' + p.toString(), `출고분석_${s}_${e}.csv`);
+}
+
+// ---------- 저장 / 초기화 ----------
+function savePrefs() {
+  try {
+    localStorage.setItem(PREF_KEY, JSON.stringify({
+      target: document.getElementById('anTarget').value,
+      buffer: document.getElementById('anBuffer').value,
+      minPct: document.getElementById('anMinPct').value,
+      applyMin: document.getElementById('anApplyMin').checked,
+      sort: document.getElementById('anSort').value,
+      limit: document.getElementById('anLimit').value,
+      all: document.getElementById('anAll').checked,
+      group: currentGroup(),
+    }));
+  } catch (e) {}
+}
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
+    if (!p) return;
+    if (p.target) document.getElementById('anTarget').value = p.target;
+    if (p.buffer !== undefined && p.buffer !== '') document.getElementById('anBuffer').value = p.buffer;
+    if (p.minPct !== undefined && p.minPct !== '') document.getElementById('anMinPct').value = p.minPct;
+    document.getElementById('anApplyMin').checked = !!p.applyMin;
+    if (p.sort) {
+      const sel = document.getElementById('anSort');
+      if (![...sel.options].some(o => o.value === p.sort)) {
+        const [k, d] = splitSort(p.sort);
+        const opt = document.createElement('option');
+        opt.value = p.sort; opt.textContent = `${k} (${d === 'asc' ? '오름차순' : '내림차순'})`;
+        sel.appendChild(opt);
+      }
+      sel.value = p.sort;
+    }
+    if (p.limit) document.getElementById('anLimit').value = p.limit;
+    document.getElementById('anAll').checked = !!p.all;
+    onAllToggle();
+    if (p.group) {
+      const r = document.querySelector(`input[name="anGroup"][value="${p.group}"]`);
+      if (r) r.checked = true;
+    }
+  } catch (e) {}
+}
+function resetFilters() {
+  state.catSelected.clear(); renderCatPanel();
+  state.brands.clear(); state.products.clear();
+  brandPicker.renderChips(); productPicker.renderChips();
+  document.getElementById('anBrandInput').value = '';
+  document.getElementById('anProductInput').value = '';
+  document.querySelector('input[name="anGroup"][value="product"]').checked = true;
+  document.getElementById('anTarget').value = 14;
+  document.getElementById('anBuffer').value = 10;
+  document.getElementById('anMinPct').value = 30;
+  document.getElementById('anApplyMin').checked = false;
+  document.getElementById('anSort').value = 'sold_qty_desc';
+  document.getElementById('anLimit').value = 50;
+  document.getElementById('anAll').checked = false; onAllToggle();
+  ['anHideZero', 'anOnlyZeroStock', 'anQuick', 'anCompare'].forEach(id => document.getElementById(id).checked = false);
+  pickPreset('30');
+  runQuery(true);
+}
+
+// ---------- 초기화 ----------
+document.addEventListener('click', e => {
+  if (!e.target.closest('#anCatWrap')) document.getElementById('anCatPanel').classList.remove('show');
+  if (!e.target.closest('.an-colwrap')) document.getElementById('anColPanel').classList.remove('show');
+  if (!e.target.closest('#anBrandInput') && !e.target.closest('#anBrandList')) document.getElementById('anBrandList').classList.remove('show');
+  if (!e.target.closest('#anProductInput') && !e.target.closest('#anProductList')) document.getElementById('anProductList').classList.remove('show');
+});
+document.getElementById('anGroupBy').addEventListener('change', () => runQuery(true));
+document.getElementById('anPresets').addEventListener('click', e => {
+  const b = e.target.closest('button[data-p]');
+  if (b) pickPreset(b.dataset.p);
+});
+document.getElementById('anSort').addEventListener('change', () => runQuery(true));
+['anTarget', 'anBuffer', 'anMinPct', 'anLimit'].forEach(id =>
+  document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') runQuery(true); }));
+
+document.addEventListener('DOMContentLoaded', async function () {
+  brandPicker = makePicker({
+    input: 'anBrandInput', list: 'anBrandList', chips: 'anBrandChips', map: state.brands,
+    search: async q => {
+      const rows = await apiSearch('/api/brands?search=' + encodeURIComponent(q));
+      return (Array.isArray(rows) ? rows : []).map(b => ({ id: b.id, name: b.name, sub: b.category_name || '' }));
+    },
+  });
+  productPicker = makePicker({
+    input: 'anProductInput', list: 'anProductList', chips: 'anProductChips', map: state.products,
+    search: async q => {
+      const rows = await apiSearch('/api/products/search?limit=15&q=' + encodeURIComponent(q));
+      return (Array.isArray(rows) ? rows : []).map(p => ({ id: p.id, name: p.name, sub: p.brand_name || '' }));
+    },
+  });
+
+  loadPrefs();
+  pickPreset('30');
+  renderTableHead();
+
+  try {
+    state.categories = (await api('/api/categories')) || [];
+    if (!Array.isArray(state.categories)) state.categories = [];
+    renderCatPanel();
+  } catch (e) { console.error('카테고리 로드 오류:', e); }
+
+  try {
+    const stores = await api('/api/stores');
+    const sel = document.getElementById('anStore');
+    if (Array.isArray(stores)) {
+      sel.innerHTML = '<option value="">전체 매장</option>' +
+        stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+      const gid = localStorage.getItem('global_store_id');
+      if (gid && stores.some(s => String(s.id) === String(gid))) sel.value = gid;
+    }
+  } catch (e) { console.error('매장 로드 오류:', e); }
+
+  runQuery(true);
+});
+</script>
+
+<style>
+/* 공통 컴포넌트(.card/.chip/.brand-tag/.page-btn/.table-wrap/.summary-card)는 static/style.css 것을 쓴다.
+   여기에는 이 화면에서만 필요한 배치만 둔다. */
+.an-filter { padding: 16px; margin-bottom: 14px; }
+.an-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
+.an-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.an-label { font-size: 12px; color: var(--text-light); font-weight: 600; }
+.an-block { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.an-inline { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; font-size: 13px; }
+.an-inline label { display: inline-flex; align-items: center; gap: 6px; }
+.an-inline input[type="number"], .an-inline input[type="date"], .an-inline select { padding: 6px 8px; font-size: 13px; }
+.an-hint, .an-sub, .an-muted { color: var(--text-light); font-size: 12px; font-weight: 400; }
+.an-or { color: var(--text-light); font-size: 12px; }
+.an-radios { display: flex; gap: 14px; flex-wrap: wrap; padding: 6px 0; font-size: 13px; }
+.an-radios label, .an-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
+.an-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.an-presets button { padding: 5px 11px; font-size: 12px; border-radius: 999px; }
+.an-presets button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.an-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; align-items: center; }
+
+.an-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.an-chips:empty { display: none; }
+.an-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 999px;
+  background: var(--accent-light); color: var(--text); font-size: 12px; border: 1px solid var(--border); }
+.an-chip button { border: none; background: none; cursor: pointer; padding: 0 6px; font-size: 14px; line-height: 1; color: var(--text-light); }
+.an-chip button:hover { color: var(--danger); }
+
+.an-multi { position: relative; }
+.an-multi-btn { width: 100%; text-align: left; padding: 8px 10px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-multi-panel, .an-colpanel { display: none; position: absolute; z-index: 20; background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: var(--shadow); padding: 8px; margin-top: 4px; max-height: 320px; overflow-y: auto; min-width: 200px; }
+.an-multi-panel.show, .an-colpanel.show { display: block; }
+.an-multi-panel label, .an-colpanel label { display: flex; padding: 5px 4px; }
+.an-colwrap { position: relative; }
+.an-colpanel { right: 0; left: auto; min-width: 190px; }
+.an-col-quick { display: flex; gap: 4px; flex-wrap: wrap; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.an-col-quick button { padding: 3px 8px; font-size: 11px; }
+
+.an-summary .summary-card { flex: 1 1 150px; }
+.an-summary .summary-card .value { font-size: 18px; }
+.an-note { font-size: 12px; color: var(--text-light); margin: 0 0 10px; }
+.an-pager-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;
+  position: sticky; top: 0; background: var(--bg); z-index: 5; padding: 6px 0; }
+.an-pager-info { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-light); }
+.an-pageinfo { font-size: 13px; color: var(--text-light); margin: 0 8px; }
+
+#anTable th.an-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+#anTable th.an-sortable:hover { color: var(--accent); }
+#anTable th, #anTable td { white-space: nowrap; }
+#anTable td.an-name { white-space: normal; min-width: 140px; }
+.an-num { text-align: right; }
+.an-strong { font-weight: 700; color: var(--accent); }
+.an-warn { color: #e0a100; font-weight: 700; cursor: help; }
+.an-low td { background: rgba(224, 161, 0, 0.07); }
+.an-up { color: #1a9f55; font-weight: 600; }
+.an-down { color: var(--danger); font-weight: 600; }
+.an-tag { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--danger-light); color: var(--danger); }
+
+@media (max-width: 768px) {
+  .an-grid { grid-template-columns: 1fr; }
+  .an-summary .summary-card { flex: 1 1 calc(50% - 8px); }
+  .an-inline input[type="date"] { width: 140px; }
+}
+</style>
+{% endblock %}
