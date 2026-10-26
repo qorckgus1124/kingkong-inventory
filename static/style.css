@@ -1495,3 +1495,10 @@ body.dark-mode .product-card::after {
   .card:hover, .summary-card:hover, .product-card:hover { transform: none !important; }
   .card::after, .summary-card::after, .product-card::after { display: none; }
 }
+
+/* ============================================================ */
+/* 스크롤바 숨김: 스크롤(터치·휠·드래그)은 그대로 되고, 막대만 보이지 않게 한다. */
+/* 표/차트가 옆으로 넘칠 때 아래에 생기던 스크롤바가 화면을 지저분하게 만들어서 전체에 적용. */
+/* ============================================================ */
+* { scrollbar-width: none; -ms-overflow-style: none; }
+*::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
