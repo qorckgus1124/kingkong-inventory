@@ -3,86 +3,242 @@
 <h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-chart-line"></use></svg>매출 통계</h1>
 <div class="subtitle">일/주/월/년 단위로 매출·이익 추이를 확인하세요.</div>
 
-<div class="tab-row" id="periodTabs" style="display:flex; gap:6px; margin-bottom:16px;">
-  <button data-period="day" onclick="pickPeriod('day')" class="tab-btn active">일별</button>
-  <button data-period="week" onclick="pickPeriod('week')" class="tab-btn">주별</button>
-  <button data-period="month" onclick="pickPeriod('month')" class="tab-btn">월별</button>
-  <button data-period="year" onclick="pickPeriod('year')" class="tab-btn">연도별</button>
+<div class="st-head">
+  <div class="st-seg" id="periodTabs" role="tablist" aria-label="집계 단위">
+    <button type="button" role="tab" data-period="day" onclick="pickPeriod('day')" class="st-seg-btn active">일별</button>
+    <button type="button" role="tab" data-period="week" onclick="pickPeriod('week')" class="st-seg-btn">주별</button>
+    <button type="button" role="tab" data-period="month" onclick="pickPeriod('month')" class="st-seg-btn">월별</button>
+    <button type="button" role="tab" data-period="year" onclick="pickPeriod('year')" class="st-seg-btn">연도별</button>
+  </div>
+  <button type="button" class="st-export" onclick="exportStatistics()">📊 엑셀 다운로드</button>
 </div>
 
-<div class="toolbar">
-  <button onclick="exportStatistics()">📊 엑셀 다운로드</button>
+<!-- 핵심 수치: 선택한 단위 전체의 합계 -->
+<div class="st-kpis" id="stKpis">
+  <div class="st-kpi st-kpi--main">
+    <div class="st-kpi-label">총 순매출</div>
+    <div class="st-kpi-value" id="kRevenue">-</div>
+    <div class="st-kpi-sub" id="kRevenueSub">&nbsp;</div>
+  </div>
+  <div class="st-kpi st-kpi--profit">
+    <div class="st-kpi-label">총 순이익</div>
+    <div class="st-kpi-value" id="kProfit">-</div>
+    <div class="st-kpi-sub" id="kMargin">&nbsp;</div>
+  </div>
+  <div class="st-kpi">
+    <div class="st-kpi-label">총 판매량</div>
+    <div class="st-kpi-value" id="kQty">-</div>
+    <div class="st-kpi-sub">&nbsp;</div>
+  </div>
+  <div class="st-kpi">
+    <div class="st-kpi-label" id="kAvgLabel">평균 매출</div>
+    <div class="st-kpi-value" id="kAvg">-</div>
+    <div class="st-kpi-sub" id="kBest">&nbsp;</div>
+  </div>
 </div>
 
-<div class="card">
-  <div class="chart-wrap" id="chart" style="display:flex; align-items:flex-end; gap:6px; height:220px; margin:20px 0 10px; overflow-x:auto; padding-bottom:4px;"></div>
+<div class="card st-chart-card">
+  <div class="st-chart-head">
+    <div class="st-chart-title" id="chartTitle">매출 · 이익 추이</div>
+    <div class="st-legend">
+      <span><i class="st-dot st-dot--rev"></i>순매출</span>
+      <span><i class="st-dot st-dot--profit"></i>순이익</span>
+      <span><i class="st-dot st-dot--neg"></i>적자</span>
+    </div>
+  </div>
+  <div class="st-chart-scroll" id="chartScroll">
+    <div class="chart-wrap st-chart" id="chart"></div>
+  </div>
 </div>
 
-<table>
-  <thead><tr><th>#</th><th>기간</th><th>판매량</th><th>순매출</th><th>순이익</th></tr></thead>
-  <tbody id="tbody"></tbody>
-</table>
+<div class="table-wrap">
+  <table id="statsTable" class="st-table">
+    <thead>
+      <tr>
+        <th class="st-c">#</th>
+        <th>기간</th>
+        <th class="st-num">판매량</th>
+        <th class="st-num">순매출</th>
+        <th class="st-num">순이익</th>
+        <th class="st-num">이익률</th>
+        <th class="st-num">전 기간 대비</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
 
 <script>
 let currentPeriod = 'day';
+const PERIOD_NAME = { day: '일', week: '주', month: '월', year: '연도' };
 
 function pickPeriod(p) {
   currentPeriod = p;
-  // 🔥 'selected' 대신 'active' 클래스 사용 (CSS에 .tab-btn.active 정의됨)
-  document.querySelectorAll('#periodTabs .tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector(`#periodTabs .tab-btn[data-period="${p}"]`).classList.add('active');
+  document.querySelectorAll('#periodTabs .st-seg-btn').forEach(b => {
+    const on = b.dataset.period === p;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
   load();
 }
 
-async function load() {
-  // 로딩 표시
-  document.getElementById('tbody').innerHTML = '<tr><td colspan="5"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
-  document.getElementById('chart').innerHTML = '<div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div>';
+// ---------- 표시용 변환 ----------
+// 차트 위 숫자는 좁은 칸에 들어가야 하므로 만/억 단위로 줄여서 보여준다. (표에는 전체 숫자를 그대로 둔다)
+function fmtShort(n) {
+  n = Number(n) || 0;
+  const a = Math.abs(n), sign = n < 0 ? '-' : '';
+  if (a >= 100000000) return sign + (a / 100000000).toFixed(a >= 1000000000 ? 0 : 1).replace(/\.0$/, '') + '억';
+  if (a >= 10000) return sign + Math.round(a / 10000).toLocaleString('ko-KR') + '만';
+  return sign + a.toLocaleString('ko-KR');
+}
+// 기간 이름: 차트·표에서 사람이 바로 읽을 수 있게 다듬는다.
+function periodLabel(key, p, short) {
+  const s = String(key || '');
+  if (p === 'day') {
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return s;
+    const wd = '일월화수목금토'[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()];
+    return short ? `${+m[2]}/${+m[3]}` : `${s} (${wd})`;
+  }
+  if (p === 'week') {
+    const m = s.match(/^(\d{4})-(\d{1,2})$/);
+    if (!m) return s;
+    return short ? `${+m[2]}주` : `${m[1]}년 ${+m[2]}주차`;
+  }
+  if (p === 'month') {
+    const m = s.match(/^(\d{4})-(\d{2})$/);
+    if (!m) return s;
+    return short ? `${+m[2]}월` : `${m[1]}년 ${+m[2]}월`;
+  }
+  return short ? s + '년' : s + '년';
+}
+// 차트 아래 보조 라벨(연도 표시): 일/주/월 단위에서 해가 바뀌는 곳을 알아보기 쉽게 한다.
+function yearOf(key) {
+  const m = String(key || '').match(/^(\d{4})/);
+  return m ? m[1] : '';
+}
+function pct(num, den) {
+  if (!den) return null;
+  return Math.round(num / den * 1000) / 10; // 소수 1자리
+}
+function signClass(n) { return n < 0 ? 'st-neg' : ''; }
+function money(n) { return (n < 0 ? '-' : '') + fmt(Math.abs(n)) + '원'; }
 
+// ---------- 불러오기 ----------
+async function load() {
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">⏳</span>로딩 중...</div></td></tr>';
+  document.getElementById('chart').innerHTML = '<div class="empty st-empty"><span class="empty-icon">⏳</span>로딩 중...</div>';
+  const myPeriod = currentPeriod;
   try {
-    const rows = await api('/api/statistics?period=' + currentPeriod);
-    renderChart(rows);
-    renderTable(rows);
+    const rows = await api('/api/statistics?period=' + myPeriod);
+    if (myPeriod !== currentPeriod) return; // 그 사이 다른 단위를 눌렀으면 이전 응답은 버린다
+    const list = Array.isArray(rows) ? rows : [];
+    renderKpis(list);
+    renderChart(list);
+    renderTable(list);
   } catch (e) {
     console.error('통계 로드 오류:', e);
-    document.getElementById('tbody').innerHTML = '<tr><td colspan="5"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
-    document.getElementById('chart').innerHTML = '<div class="empty"><span class="empty-icon">⚠️</span>오류가 발생했습니다.</div>';
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러올 수 없습니다.</div></td></tr>';
+    document.getElementById('chart').innerHTML = '<div class="empty st-empty"><span class="empty-icon">⚠️</span>오류가 발생했습니다.</div>';
   }
+}
+
+function renderKpis(rows) {
+  const name = PERIOD_NAME[currentPeriod];
+  document.getElementById('kAvgLabel').textContent = `${name}평균 매출`;
+  document.getElementById('chartTitle').textContent = `${name}별 매출 · 이익 추이`;
+  if (!rows.length) {
+    ['kRevenue', 'kProfit', 'kQty', 'kAvg'].forEach(id => document.getElementById(id).textContent = '-');
+    ['kRevenueSub', 'kMargin', 'kBest'].forEach(id => document.getElementById(id).innerHTML = '&nbsp;');
+    return;
+  }
+  const rev = rows.reduce((a, r) => a + (r.revenue || 0), 0);
+  const profit = rows.reduce((a, r) => a + (r.profit || 0), 0);
+  const qty = rows.reduce((a, r) => a + (r.sold_qty || 0), 0);
+  const best = rows.reduce((b, r) => (r.revenue || 0) > (b.revenue || 0) ? r : b, rows[0]);
+  const mr = pct(profit, rev);
+
+  document.getElementById('kRevenue').innerHTML = `${fmt(rev)}<span class="st-unit">원</span>`;
+  document.getElementById('kRevenueSub').textContent = `${periodLabel(rows[0].period_key, currentPeriod, false)} ~ ${periodLabel(rows[rows.length - 1].period_key, currentPeriod, false)} · ${rows.length}${currentPeriod === 'year' ? '개 연도' : currentPeriod === 'day' ? '일' : currentPeriod === 'week' ? '주' : '개월'}`;
+  const pEl = document.getElementById('kProfit');
+  pEl.innerHTML = `${profit < 0 ? '-' : ''}${fmt(Math.abs(profit))}<span class="st-unit">원</span>`;
+  pEl.classList.toggle('st-neg', profit < 0);
+  document.getElementById('kMargin').textContent = mr === null ? '이익률 -' : `이익률 ${mr}%`;
+  document.getElementById('kQty').innerHTML = `${fmt(qty)}<span class="st-unit">개</span>`;
+  document.getElementById('kAvg').innerHTML = `${fmt(Math.round(rev / rows.length))}<span class="st-unit">원</span>`;
+  document.getElementById('kBest').textContent = `최고 ${periodLabel(best.period_key, currentPeriod, false)} · ${fmtShort(best.revenue)}원`;
 }
 
 function renderChart(rows) {
   const wrap = document.getElementById('chart');
-  if (!rows || rows.length === 0) {
-    wrap.innerHTML = '<div class="empty"><span class="empty-icon">📊</span>표시할 데이터가 없습니다.</div>';
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="empty st-empty"><span class="empty-icon">📊</span>표시할 데이터가 없습니다.</div>';
     return;
   }
-  const max = Math.max(...rows.map(r => Math.abs(r.revenue)), 1);
+  const H = 190; // 막대가 그려지는 최대 높이(px)
+  const max = Math.max(...rows.map(r => Math.max(Math.abs(r.revenue || 0), Math.abs(r.profit || 0))), 1);
+  let lastYear = '';
   wrap.innerHTML = rows.map(r => {
-    const h = Math.max(Math.round(Math.abs(r.revenue) / max * 180), 2);
+    const rev = r.revenue || 0, pro = r.profit || 0;
+    const hr = Math.max(Math.round(Math.abs(rev) / max * H), rev ? 3 : 0);
+    const hp = Math.max(Math.round(Math.abs(pro) / max * H), pro ? 3 : 0);
+    const y = yearOf(r.period_key);
+    const showYear = currentPeriod !== 'year' && y !== lastYear;
+    lastYear = y;
     return `
-      <div class="chart-bar-col" style="display:flex; flex-direction:column; align-items:center; min-width:36px; height:100%; justify-content:flex-end;" title="${r.period_key}: ${fmt(r.revenue)}원">
-        <div class="chart-bar ${r.revenue < 0 ? 'negative' : ''}" style="width:22px; background:${r.revenue < 0 ? 'var(--danger)' : 'var(--accent)'}; border-radius:var(--radius-pill) var(--radius-pill) 4px 4px; min-height:2px; height:${h}px;"></div>
-        <div class="chart-label" style="font-size:10px; color:var(--text-light); margin-top:6px; writing-mode:vertical-rl; text-orientation:mixed; max-height:60px;">${r.period_key}</div>
-      </div>
-    `;
+      <div class="st-col" title="${periodLabel(r.period_key, currentPeriod, false)}&#10;순매출 ${money(rev)}&#10;순이익 ${money(pro)}&#10;판매량 ${fmt(r.sold_qty)}개">
+        <div class="st-bars" style="height:${H + 22}px;">
+          <div class="st-bar-wrap">
+            <span class="st-val ${rev < 0 ? 'st-neg' : ''}">${fmtShort(rev)}</span>
+            <div class="st-bar st-bar--rev ${rev < 0 ? 'is-neg' : ''}" style="height:${hr}px;"></div>
+          </div>
+          <div class="st-bar-wrap">
+            <span class="st-val st-val--profit ${pro < 0 ? 'st-neg' : ''}">${fmtShort(pro)}</span>
+            <div class="st-bar st-bar--profit ${pro < 0 ? 'is-neg' : ''}" style="height:${hp}px;"></div>
+          </div>
+        </div>
+        <div class="st-xlabel">${periodLabel(r.period_key, currentPeriod, true)}</div>
+        <div class="st-xyear">${showYear ? y : '&nbsp;'}</div>
+      </div>`;
   }).join('');
+  // 최신 데이터가 오른쪽 끝에 있으므로 처음부터 그쪽이 보이게 한다.
+  const sc = document.getElementById('chartScroll');
+  sc.scrollLeft = sc.scrollWidth;
+}
+
+function changeBadge(cur, prev) {
+  if (prev === undefined || prev === null) return '<span class="st-muted">-</span>';
+  if (!prev) return cur > 0 ? '<span class="st-badge st-badge--up">신규</span>' : '<span class="st-muted">-</span>';
+  const p = Math.round((cur - prev) / Math.abs(prev) * 1000) / 10;
+  if (p > 0) return `<span class="st-badge st-badge--up">▲ ${fmt(p)}%</span>`;
+  if (p < 0) return `<span class="st-badge st-badge--down">▼ ${fmt(Math.abs(p))}%</span>`;
+  return '<span class="st-badge">0%</span>';
 }
 
 function renderTable(rows) {
   const tbody = document.getElementById('tbody');
-  if (!rows || rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5"><div class="empty"><span class="empty-icon">📭</span>표시할 데이터가 없습니다.</div></td></tr>';
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">📭</span>표시할 데이터가 없습니다.</div></td></tr>';
     return;
   }
-  tbody.innerHTML = rows.slice().reverse().map((r, idx) => `
-    <tr>
-      <td><span class="row-number">${idx + 1}</span></td>
-      <td>${r.period_key}</td>
-      <td>${fmt(r.sold_qty)}</td>
-      <td>${fmt(r.revenue)}원</td>
-      <td>${fmt(r.profit)}원</td>
-    </tr>
-  `).join('');
+  const maxRev = Math.max(...rows.map(r => r.revenue || 0));
+  // 최신 기간이 위에 오도록 뒤집되, "전 기간"은 원래 순서(과거)에서 구한다.
+  const view = rows.map((r, i) => ({ r, prev: i > 0 ? rows[i - 1] : null })).reverse();
+  tbody.innerHTML = view.map(({ r, prev }, idx) => {
+    const rev = r.revenue || 0, pro = r.profit || 0;
+    const mr = pct(pro, rev);
+    const isBest = rows.length > 1 && rev === maxRev && rev > 0;
+    return `
+    <tr class="${isBest ? 'st-best' : ''}">
+      <td class="st-c"><span class="row-number">${idx + 1}</span></td>
+      <td class="st-period">${periodLabel(r.period_key, currentPeriod, false)}${isBest ? ' <span class="st-tag">최고</span>' : ''}</td>
+      <td class="st-num">${fmt(r.sold_qty)}<span class="st-u">개</span></td>
+      <td class="st-num st-strong">${money(rev)}</td>
+      <td class="st-num st-strong ${signClass(pro)}">${money(pro)}</td>
+      <td class="st-num ${signClass(pro)}">${mr === null ? '-' : mr + '%'}</td>
+      <td class="st-num">${changeBadge(rev, prev ? (prev.revenue || 0) : null)}</td>
+    </tr>`;
+  }).join('');
 }
 
 async function exportStatistics() {
@@ -94,4 +250,99 @@ document.addEventListener('DOMContentLoaded', function() {
   pickPeriod('day');
 });
 </script>
+
+<style>
+/* 공통 색(--accent/--success/--danger/--text...)은 라이트·다크 모드 모두 style.css의 변수를 그대로 쓴다.
+   숫자는 자리가 흔들리지 않도록 tabular-nums, 중요한 값은 크고 진하게, 보조 글자도 12px 아래로 내리지 않는다. */
+.st-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.st-seg { display: inline-flex; padding: 4px; gap: 2px; background: var(--hover-bg); border: 1px solid var(--border); border-radius: 12px; }
+.st-seg .st-seg-btn { border: none; background: transparent; box-shadow: none; transform: none; border-radius: 9px;
+  padding: 9px 20px; font-size: 15px; font-weight: 600; color: var(--text-light); min-height: 40px; }
+.st-seg .st-seg-btn:hover { background: transparent; color: var(--text); transform: none; box-shadow: none; }
+.st-seg .st-seg-btn.active { background: var(--accent); color: #fff; font-weight: 700; box-shadow: 0 1px 4px rgba(var(--accent-rgb), 0.35); }
+.st-export { font-size: 14px; font-weight: 600; padding: 9px 16px; min-height: 40px; }
+
+/* 핵심 수치 카드 */
+.st-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.st-kpi { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-card, 12px); padding: 16px 18px; box-shadow: var(--shadow); min-width: 0; }
+.st-kpi-label { font-size: 14px; font-weight: 600; color: var(--text-light); margin-bottom: 8px; }
+.st-kpi-value { font-size: 26px; font-weight: 800; line-height: 1.15; color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; word-break: keep-all; }
+.st-kpi-value.st-neg { color: var(--danger); }
+.st-unit { font-size: 15px; font-weight: 600; color: var(--text-light); margin-left: 3px; letter-spacing: 0; }
+.st-kpi-sub { font-size: 13px; color: var(--text-light); margin-top: 8px; min-height: 18px; font-variant-numeric: tabular-nums; }
+.st-kpi--main { border-top: 4px solid var(--accent); }
+.st-kpi--main .st-kpi-value { color: var(--accent); }
+.st-kpi--profit { border-top: 4px solid var(--success); }
+.st-kpi--profit .st-kpi-value { color: var(--success); }
+.st-kpi--profit .st-kpi-value.st-neg { color: var(--danger); }
+.st-kpi:hover { transform: none; }
+
+/* 차트 */
+.st-chart-card { padding: 16px 18px 12px; }
+.st-chart-card:hover { transform: none; }
+.st-chart-head { display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.st-chart-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.st-legend { display: flex; gap: 14px; font-size: 13px; font-weight: 600; color: var(--text); }
+.st-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.st-dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.st-dot--rev { background: var(--accent); }
+.st-dot--profit { background: var(--success); }
+.st-dot--neg { background: var(--danger); }
+.st-chart-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 6px; }
+.st-chart { display: flex; align-items: flex-end; gap: 4px; min-width: min-content; margin: 0; padding: 4px 4px 0; }
+.st-chart .st-empty { width: 100%; padding: 40px 20px; }
+.st-col { display: flex; flex-direction: column; align-items: center; flex: 1 0 64px; min-width: 64px; padding: 0 2px; }
+.st-bars { display: flex; align-items: flex-end; justify-content: center; gap: 4px; width: 100%;
+  border-bottom: 2px solid var(--border-strong); }
+.st-bar-wrap { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; flex: 1 1 0; min-width: 0; }
+.st-bar { width: 100%; max-width: 26px; border-radius: 5px 5px 0 0; min-height: 0; }
+.st-bar--rev { background: var(--accent); }
+.st-bar--profit { background: var(--success); }
+.st-bar.is-neg { background: var(--danger); }
+.st-val { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; line-height: 1; }
+.st-val--profit { color: var(--success); }
+.st-val.st-neg { color: var(--danger); }
+.st-xlabel { font-size: 13px; font-weight: 700; color: var(--text); margin-top: 7px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.st-xyear { font-size: 12px; color: var(--text-light); min-height: 16px; font-variant-numeric: tabular-nums; }
+
+/* 표 */
+.st-table { min-width: 680px; font-size: 14px; }
+.st-table thead th { font-size: 13px; font-weight: 700; color: var(--text); background: var(--hover-bg); padding: 12px 14px; cursor: default; border-bottom: 2px solid var(--border-strong); }
+.st-table thead th:hover { color: var(--text); }
+.st-table tbody td { padding: 13px 14px; font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
+.st-table tbody tr:nth-child(even) { background: rgba(127, 127, 127, 0.05); }
+.st-table tbody tr:hover { background: var(--accent-light); transform: none; }
+.st-table .st-c { text-align: center; width: 48px; }
+.st-table .row-number { display: inline-block; width: auto; font-size: 13px; color: var(--text-light); }
+.st-table .st-num { text-align: right; white-space: nowrap; }
+.st-table .st-period { font-weight: 700; white-space: nowrap; }
+.st-table .st-strong { font-weight: 700; font-size: 15px; }
+.st-table .st-neg { color: var(--danger); }
+.st-table .st-u { font-size: 12px; color: var(--text-light); margin-left: 2px; }
+.st-table tr.st-best td { background: var(--accent-light); }
+.st-table tr.st-best td:first-child { box-shadow: inset 4px 0 0 var(--accent); }
+.st-tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; margin-left: 6px; border-radius: 999px; background: var(--accent); color: #fff; vertical-align: 1px; }
+.st-muted { color: var(--text-muted); }
+.st-badge { display: inline-block; min-width: 64px; text-align: center; padding: 3px 9px; border-radius: 999px; font-size: 13px; font-weight: 700; background: var(--hover-bg); color: var(--text-light); }
+.st-badge--up { background: var(--success-light); color: var(--success); }
+.st-badge--down { background: var(--danger-light); color: var(--danger); }
+
+@media (max-width: 900px) {
+  .st-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 768px) {
+  .st-head { gap: 8px; }
+  .st-seg { width: 100%; }
+  .st-seg .st-seg-btn { flex: 1; padding: 10px 6px; }
+  .st-export { width: 100%; }
+  .st-kpi { padding: 14px; }
+  .st-kpi-value { font-size: 21px; }
+  .st-unit { font-size: 13px; }
+  .st-kpi-label { font-size: 13px; }
+  .st-kpi-sub { font-size: 12px; }
+  .st-chart-card { padding: 14px 12px 8px; }
+  .st-table { min-width: 620px; font-size: 14px; }
+  .st-table th, .st-table td { padding: 11px 12px; }
+}
+</style>
 {% endblock %}
