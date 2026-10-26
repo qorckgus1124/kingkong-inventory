@@ -1,18 +1,30 @@
 {% extends "base.html" %}
 {% block content %}
 <h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-cash"></use></svg>판매 등록</h1>
-<div class="subtitle">제품을 클릭해서 장바구니에 담고, 결제수단을 선택해 등록하세요. (탭 이동해도 장바구니가 유지됩니다)</div>
+<div class="subtitle" id="saleSubtitle">제품을 클릭해서 장바구니에 담고, 결제수단을 선택해 등록하세요. (탭 이동해도 장바구니가 유지됩니다)</div>
 
 <!-- 탭 -->
 <div class="tab-row">
   <button class="tab-btn active" data-tab="normal" onclick="switchTab('normal')">일반 판매</button>
   <button class="tab-btn" data-tab="preorder" onclick="switchTab('preorder')">선결제</button>
+  <button class="tab-btn" data-tab="backfill" onclick="switchTab('backfill')">날짜 지정 판매</button>
 </div>
 
 <!-- ============================================================ -->
 <!-- 일반 판매 탭 -->
 <!-- ============================================================ -->
 <div id="tab-normal" class="tab-content">
+  <!-- 📅 날짜 지정 판매 전용 옵션 (이 탭을 열었을 때만 보인다. 화면/장바구니는 일반 판매와 같은 것을 쓰되 저장 공간만 따로 쓴다) -->
+  <div id="backfillBar" style="display:none; margin-bottom:12px; padding:10px 14px; border:1px solid var(--warning); background:var(--warning-light); border-radius:var(--radius-card); align-items:center; gap:14px; flex-wrap:wrap;">
+    <strong style="color:var(--warning);">📅 날짜 지정 판매</strong>
+    <label style="display:flex; align-items:center; gap:6px; font-size:13px;">판매 날짜
+      <input type="date" id="bf_date" style="padding:4px 8px;">
+    </label>
+    <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+      <input type="checkbox" id="bf_apply_stock" checked onchange="onBackfillStockToggle()"> 재고도 함께 차감
+    </label>
+    <span id="bf_hint" style="font-size:12px; color:var(--text-light);"></span>
+  </div>
   <div class="toolbar">
     <select id="f_store" onchange="onStoreChange()">
       <option value="">매장 선택</option>
@@ -59,7 +71,7 @@
           <button id="pay-계좌이체" onclick="selectPayment('계좌이체')">계좌이체</button>
         </div>
         <input type="text" id="f_staff" placeholder="담당자 (선택)" style="width:100%; margin-bottom:8px; padding:8px;">
-        <button class="primary" style="width:100%; padding:12px; font-size:16px;" onclick="checkout()">등록하기</button>
+        <button id="normalCheckoutBtn" class="primary" style="width:100%; padding:12px; font-size:16px;" onclick="checkout()">등록하기</button>
       </div>
       <!-- 중간: 스크롤 영역 -->
       <div class="cart-items-wrap">
@@ -214,17 +226,99 @@ let stores = [];
 let selectedCategory = 'all';
 let payment = null;
 
-const CART_STORAGE_KEY = 'normal_cart';
+let CART_STORAGE_KEY = 'normal_cart';
 let cart = loadCartFromStorage(CART_STORAGE_KEY);
 let normalSearchQuery = '';
-const CART_DISCOUNT_KEY = 'normal_cart_discount';
+let CART_DISCOUNT_KEY = 'normal_cart_discount';
 let cartDiscount = parseInt(localStorage.getItem(CART_DISCOUNT_KEY)) || 0;
 // 🔥 장바구니가 어느 매장 기준으로 담겼는지 기억해서, 실제로 매장을 바꿨을 때만 비운다.
 // (전역 매장 동기화가 change 이벤트를 재발생시키는 것만으로는 장바구니를 비우지 않기 위함)
-const CART_STORE_KEY = 'normal_cart_store_id';
+let CART_STORE_KEY = 'normal_cart_store_id';
 
 // 🔥 퀵 버튼 (재고와 무관하게 담는 상품: 퀵비/공팟 등)
 let quickItems = [];
+
+// 📅 판매 모드: 'normal'(일반 판매) / 'backfill'(날짜 지정 판매)
+// 두 모드는 같은 화면(#tab-normal)을 쓰지만 장바구니·할인·매장 기억값은 따로 저장한다.
+let saleMode = 'normal';
+const SALE_MODE_KEYS = {
+  normal:   { cart: 'normal_cart',   discount: 'normal_cart_discount',   store: 'normal_cart_store_id' },
+  backfill: { cart: 'backfill_cart', discount: 'backfill_cart_discount', store: 'backfill_cart_store_id' },
+};
+
+function ymdLocal(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// 재고 수량 제한을 적용할지 여부.
+// 날짜 지정 판매에서 "재고도 함께 차감"을 끄면 재고를 건드리지 않으므로 재고 0인 제품도 담을 수 있다.
+function stockLimited() {
+  if (saleMode !== 'backfill') return true;
+  const cb = document.getElementById('bf_apply_stock');
+  return !cb || cb.checked;
+}
+
+function updateBackfillHint() {
+  const hint = document.getElementById('bf_hint');
+  if (!hint) return;
+  hint.textContent = stockLimited()
+    ? '선택한 날짜의 매출로 기록되고, 현재 재고도 함께 줄어듭니다.'
+    : '선택한 날짜의 매출로만 기록되고 재고는 그대로입니다. (재고 0인 제품도 담을 수 있어요)';
+}
+
+function onBackfillStockToggle() {
+  updateBackfillHint();
+  // 재고 제한이 달라지므로 제품 목록(재고 0 표시 여부)을 다시 불러온다. 이미 목록이 떠 있을 때만.
+  loadProducts(products.length > 0);
+}
+
+function setSaleMode(mode) {
+  if (mode === saleMode) return;
+  // 지금 모드의 장바구니/할인을 저장해 둔다
+  saveCartToStorage(CART_STORAGE_KEY, cart);
+  localStorage.setItem(CART_DISCOUNT_KEY, String(cartDiscount));
+
+  saleMode = mode;
+  const k = SALE_MODE_KEYS[mode];
+  CART_STORAGE_KEY = k.cart;
+  CART_DISCOUNT_KEY = k.discount;
+  CART_STORE_KEY = k.store;
+  cart = loadCartFromStorage(CART_STORAGE_KEY);
+  cartDiscount = parseInt(localStorage.getItem(CART_DISCOUNT_KEY)) || 0;
+
+  // 다른 모드에 있는 동안 매장이 바뀌었다면 (매장마다 제품/재고가 다르므로) 이 모드의 장바구니는 비운다
+  const curStore = document.getElementById('f_store').value;
+  const savedStore = localStorage.getItem(CART_STORE_KEY);
+  if (savedStore && curStore && savedStore !== curStore) {
+    cart = {};
+    saveCartToStorage(CART_STORAGE_KEY, cart);
+  }
+  if (curStore) localStorage.setItem(CART_STORE_KEY, curStore);
+
+  // 결제수단 선택은 모드마다 다시 고르게 한다 (실수로 이전 선택값이 넘어가는 것을 방지)
+  payment = null;
+  document.querySelectorAll('#tab-normal .pay-btns button').forEach(b => b.classList.remove('selected'));
+
+  const isBackfill = mode === 'backfill';
+  document.getElementById('backfillBar').style.display = isBackfill ? 'flex' : 'none';
+  document.getElementById('normalCheckoutBtn').textContent = isBackfill ? '📅 날짜 지정 판매 등록' : '등록하기';
+  document.getElementById('saleSubtitle').textContent = isBackfill
+    ? '반영하지 못했던 판매를 날짜를 골라 등록하세요. 선택한 날짜의 매출로 기록됩니다.'
+    : '제품을 클릭해서 장바구니에 담고, 결제수단을 선택해 등록하세요. (탭 이동해도 장바구니가 유지됩니다)';
+
+  if (isBackfill) {
+    const dateEl = document.getElementById('bf_date');
+    const today = new Date();
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    dateEl.max = ymdLocal(today);
+    if (!dateEl.value) dateEl.value = ymdLocal(yesterday);
+    updateBackfillHint();
+  }
+
+  renderCart();
+  loadProducts(products.length > 0);
+}
 
 const PRE_CART_STORAGE_KEY = 'pre_cart';
 let preCart = loadCartFromStorage(PRE_CART_STORAGE_KEY);
@@ -413,8 +507,9 @@ async function loadProducts(forceLoad = false) {
     return;
   }
 
-  // 판매할 수 없는(재고 0) 제품은 숨긴다
-  const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc', hide_zero_stock: '1' });
+  // 판매할 수 없는(재고 0) 제품은 숨긴다 (날짜 지정 판매에서 재고를 변경하지 않을 때는 재고 0도 보여준다)
+  const params = new URLSearchParams({ store_id, sort: 'qty', order: 'desc' });
+  if (stockLimited()) params.append('hide_zero_stock', '1');
   if (q) params.append('q', q);
   if (brandQ) params.append('brand_q', brandQ);
   if (excludeQ) params.append('exclude_q', excludeQ);
@@ -523,8 +618,9 @@ function renderGrid() {
     const cat = categories.find(c => c.id === p.category_id);
     const catName = cat ? cat.name : '미분류';
     const catColor = cat ? cat.color : '#8a8f98';
+    const sellable = p.qty > 0 || !stockLimited();
     return `
-      <div class="product-card ${p.qty <= 0 ? 'disabled' : ''}" onclick="${p.qty > 0 ? `addToCart(${p.id})` : ''}">
+      <div class="product-card ${sellable ? '' : 'disabled'}" onclick="${sellable ? `addToCart(${p.id})` : ''}">
         <div class="pname">${escapeHtml(p.name)}</div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
           <div style="display:flex; gap:4px; flex-wrap:wrap;">
@@ -771,7 +867,7 @@ function addToCart(pid) {
   const mergeTarget = findMergeableCartLine(cart, pid);
   const existing = mergeTarget ? mergeTarget[1] : null;
   const currentQty = existing ? existing.qty : 0;
-  if (currentQty + 1 > product.qty) {
+  if (stockLimited() && currentQty + 1 > product.qty) {
     toast(`재고(${product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
     return;
   }
@@ -791,7 +887,7 @@ function changeQty(key, delta) {
   if (!item) return;
   const newQty = item.qty + delta;
   if (newQty <= 0) { delete cart[key]; saveCartToStorage(CART_STORAGE_KEY, cart); renderCart(); return; }
-  if (!item.product.unlimited && newQty > item.product.qty) {
+  if (stockLimited() && !item.product.unlimited && newQty > item.product.qty) {
     toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
     renderCart();
     return;
@@ -806,7 +902,7 @@ function setQty(key, value) {
   if (isNaN(qty) || qty < 1) { renderCart(); return; }
   const item = cart[key];
   if (!item) return;
-  if (!item.product.unlimited && qty > item.product.qty) {
+  if (stockLimited() && !item.product.unlimited && qty > item.product.qty) {
     toast(`재고(${item.product.qty}개)보다 많이 담을 수 없습니다.`, true, '⚠️');
     renderCart();
     return;
@@ -888,7 +984,7 @@ function renderCart() {
     const lineDiscount = isService ? 0 : Math.min(item.discount || 0, basePrice * qty);
     const lineTotal = isService ? 0 : Math.max(basePrice * qty - lineDiscount, 0);
     subtotal += lineTotal;
-    const qtyMax = item.product.unlimited ? 999999 : item.product.qty;
+    const qtyMax = (item.product.unlimited || !stockLimited()) ? 999999 : item.product.qty;
 
     return `
       <div class="cart-item">
@@ -963,6 +1059,20 @@ async function checkout() {
   const subtotal = lineData.reduce((sum, l) => l.isService ? sum : sum + l.lineTotal, 0);
   const discount = Math.min(Math.max(cartDiscount || 0, 0), subtotal);
 
+  // 📅 날짜 지정 판매: 날짜를 확인하고, 실수로 엉뚱한 날짜에 들어가지 않도록 한 번 더 묻는다.
+  const isBackfill = saleMode === 'backfill';
+  let saleDate = null, applyStock = true;
+  if (isBackfill) {
+    saleDate = document.getElementById('bf_date').value;
+    if (!saleDate) { toast('판매 날짜를 선택해주세요.', true, '⚠️'); return; }
+    if (saleDate > ymdLocal(new Date())) { toast('미래 날짜로는 등록할 수 없습니다.', true, '⚠️'); return; }
+    applyStock = document.getElementById('bf_apply_stock').checked;
+    const msg = `${saleDate} 날짜의 매출로 등록합니다.\n\n` +
+      `결제 금액: ${fmt(Math.max(subtotal - discount, 0))}원\n` +
+      `재고: ${applyStock ? '함께 차감' : '변경 안 함'}\n\n계속할까요?`;
+    if (!confirm(msg)) return;
+  }
+
   // ── 전체 할인 분배: Largest Remainder Method ──────────────────────────────
   // 비율 기반 Math.floor → 나머지 원을 소수부 큰 줄부터 1원씩 추가 배분
   // 예) 20,000원 × 3개에 10,000원 할인 → 3334 / 3333 / 3333 (합 10,000원 ✅)
@@ -1002,10 +1112,14 @@ async function checkout() {
     items: items,
     client_uuid: genClientUuid(),
   };
+  if (isBackfill) {
+    payload.sale_date = saleDate;
+    payload.apply_stock = applyStock;
+  }
   try {
     const result = await apiOrQueue('/api/sales', 'POST', payload, '판매 등록');
     if (result && result.error) return; // apiOrQueue가 이미 오류 토스트를 띄웠다
-    toast(result && result.queued ? '오프라인 상태입니다. 온라인이 되면 자동으로 등록됩니다.' : '판매가 등록되었습니다.', false, result && result.queued ? '📴' : '✅');
+    toast(result && result.queued ? '오프라인 상태입니다. 온라인이 되면 자동으로 등록됩니다.' : (isBackfill ? `${saleDate} 날짜로 판매가 등록되었습니다.` : '판매가 등록되었습니다.'), false, result && result.queued ? '📴' : '✅');
     cart = {};
     saveCartToStorage(CART_STORAGE_KEY, cart);
     cartDiscount = 0;
@@ -1522,9 +1636,13 @@ function switchTab(tab) {
     selectedBtn.classList.add('active');
   }
 
-  const content = document.getElementById(`tab-${tab}`);
+  // 날짜 지정 판매 탭은 일반 판매와 같은 화면(#tab-normal)을 쓰고, 모드만 바꾼다.
+  const content = document.getElementById(tab === 'backfill' ? 'tab-normal' : `tab-${tab}`);
   if (content) {
     content.style.display = 'block';
+  }
+  if (tab === 'normal' || tab === 'backfill') {
+    setSaleMode(tab);
   }
 
   if (tab === 'preorder') {

@@ -563,6 +563,12 @@ def init_db():
             ALTER TABLE stock_transactions
             ADD COLUMN IF NOT EXISTS movement_id INTEGER REFERENCES stock_movements(id) ON DELETE SET NULL;
         """)
+        # 📅 날짜 지정 판매에서 "재고 변경 안 함"으로 등록한 거래 표시.
+        # 이 거래는 재고를 줄인 적이 없으므로, 나중에 취소/수정/삭제할 때 재고를 되돌리면 안 된다.
+        cur.execute("""
+            ALTER TABLE stock_transactions
+            ADD COLUMN IF NOT EXISTS no_stock_effect BOOLEAN NOT NULL DEFAULT FALSE;
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS daily_revenue_override (
                 id SERIAL PRIMARY KEY,
@@ -3022,6 +3028,15 @@ def api_transactions_post():
 _DECREASE_TYPES = {"판매출고", "출고", "반품", "폐기", "이동출고", "조정", "입고취소"}
 
 
+def _no_stock_effect(row):
+    """재고 변경 없이 등록된 거래(날짜 지정 판매의 '재고 변경 안 함')인지 확인한다.
+    True면 이 거래를 취소/수정/삭제할 때 재고를 되돌리거나 다시 반영하면 안 된다."""
+    try:
+        return bool(row["no_stock_effect"])
+    except (KeyError, TypeError, IndexError):
+        return False
+
+
 def _reverse_stock_raw(store_id, product_id, ttype, quantity):
     """주어진 거래가 재고에 준 영향을 그대로 되돌린다 (검증 없이 원상복구용)."""
     # _apply_stock_delta와 마찬가지로 선결예약은 애초에 재고를 건드리지 않으므로
@@ -3097,10 +3112,14 @@ def api_transaction_update(tid):
         return jsonify({"error": "결제수단은 현금, 카드, 계좌이체 중에서 선택해주세요."}), 400
 
     try:
-        # 1) 기존 거래가 재고에 미친 영향을 되돌린다.
-        _reverse_stock_raw(original["store_id"], original["product_id"], original["type"], original["quantity"])
-        # 2) 수정된 값으로 재고를 다시 반영한다. 재고 부족 등으로 실패하면 원래 상태로 롤백한다.
-        err = _apply_stock_delta(conn, new_store_id, original["product_id"], new_type, new_quantity)
+        if _no_stock_effect(original):
+            # 재고 변경 없이 등록된 거래: 재고를 건드린 적이 없으므로 되돌리지도, 다시 반영하지도 않는다.
+            err = None
+        else:
+            # 1) 기존 거래가 재고에 미친 영향을 되돌린다.
+            _reverse_stock_raw(original["store_id"], original["product_id"], original["type"], original["quantity"])
+            # 2) 수정된 값으로 재고를 다시 반영한다. 재고 부족 등으로 실패하면 원래 상태로 롤백한다.
+            err = _apply_stock_delta(conn, new_store_id, original["product_id"], new_type, new_quantity)
         if err:
             conn.rollback()
             return jsonify({"error": err}), 400
@@ -3140,19 +3159,21 @@ def api_transaction_cancel(tid):
     reason = data.get("reason") or "취소/반품"
     staff = data.get("staff") or ""
 
-    err = _apply_stock_delta(conn, original["store_id"], original["product_id"], "판매취소", original["quantity"])
-    if err:
-        return jsonify({"error": err}), 400
+    stock_free = _no_stock_effect(original)
+    if not stock_free:
+        err = _apply_stock_delta(conn, original["store_id"], original["product_id"], "판매취소", original["quantity"])
+        if err:
+            return jsonify({"error": err}), 400
 
     try:
         cur.execute(
             """INSERT INTO stock_transactions
             (product_id, store_id, ref_transaction_id, type, quantity, unit_cost, unit_price,
-             payment_method, staff, memo)
-            VALUES (%s, %s, %s, '판매취소', %s, %s, %s, %s, %s, %s)""",
+             payment_method, staff, memo, no_stock_effect)
+            VALUES (%s, %s, %s, '판매취소', %s, %s, %s, %s, %s, %s, %s)""",
             (original["product_id"], original["store_id"], tid, original["quantity"],
              original["unit_cost"], original["unit_price"], original["payment_method"],
-             staff, reason)
+             staff, reason, stock_free)
         )
         conn.commit()
         return jsonify({"ok": True})
@@ -3188,19 +3209,21 @@ def api_transaction_undo(tid):
     store_id = trans["store_id"]
     quantity = trans["quantity"]
 
-    err = _apply_stock_delta(conn, store_id, product_id, reverse_type, quantity)
-    if err:
-        return jsonify({"error": err}), 400
+    stock_free = _no_stock_effect(trans)
+    if not stock_free:
+        err = _apply_stock_delta(conn, store_id, product_id, reverse_type, quantity)
+        if err:
+            return jsonify({"error": err}), 400
 
     try:
         cur.execute(
             """INSERT INTO stock_transactions
             (product_id, store_id, ref_transaction_id, type, quantity, unit_cost, unit_price,
-             payment_method, staff, memo)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+             payment_method, staff, memo, no_stock_effect)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
             (product_id, store_id, tid, reverse_type, quantity,
              trans["unit_cost"], trans["unit_price"],
-             trans["payment_method"], trans["staff"] or "", f"{trans['type']} 취소")
+             trans["payment_method"], trans["staff"] or "", f"{trans['type']} 취소", stock_free)
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
@@ -3269,6 +3292,8 @@ def api_transactions_cancel_batch():
 
         # 타입별 재고 복구 후 삭제
         for row in valid_rows:
+            if _no_stock_effect(row):
+                continue  # 재고 변경 없이 등록된 거래는 재고를 되돌리지 않고 기록만 삭제한다
             if row["type"] == "판매출고":
                 _apply_stock_delta(conn, row["store_id"], row["product_id"], "판매취소", row["quantity"])
             elif row["type"] in ("출고", "반품", "폐기", "이동출고", "조정"):
@@ -3338,8 +3363,12 @@ def api_transactions_batch_status():
                 continue
 
             # 기존 유형이 재고에 준 영향을 되돌린 뒤, 새 유형의 영향을 다시 적용한다.
-            _reverse_stock_raw(original["store_id"], original["product_id"], original["type"], original["quantity"])
-            err = _apply_stock_delta(conn, original["store_id"], original["product_id"], new_type, original["quantity"])
+            # (재고 변경 없이 등록된 거래는 재고를 건드린 적이 없으므로 건너뛴다)
+            if _no_stock_effect(original):
+                err = None
+            else:
+                _reverse_stock_raw(original["store_id"], original["product_id"], original["type"], original["quantity"])
+                err = _apply_stock_delta(conn, original["store_id"], original["product_id"], new_type, original["quantity"])
             if err:
                 conn.rollback()
                 errors.append(f"#{tid}: {err}")
@@ -4648,6 +4677,26 @@ def api_sales():
     items = data.get("items") or []
     client_uuid = data.get("client_uuid") or None
 
+    # 📅 날짜 지정 판매: 반영하지 못했던 과거 판매를 선택한 날짜의 매출로 등록한다.
+    #   - sale_date: 'YYYY-MM-DD'. 오늘 이전이면 그날 낮 12시로 기록하고, 없거나 오늘이면 지금 시각.
+    #   - apply_stock: False면 매출만 기록하고 재고는 변경하지 않는다 (재고 실사로 이미 맞춰둔 경우 등).
+    sale_date_raw = data.get("sale_date")
+    sale_date_raw = sale_date_raw.strip() if isinstance(sale_date_raw, str) else ""
+    sale_date_time = None
+    if sale_date_raw:
+        try:
+            sale_day = datetime.strptime(sale_date_raw, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "판매 날짜 형식이 올바르지 않습니다."}), 400
+        today_kst = now_kst().date()
+        if sale_day > today_kst:
+            return jsonify({"error": "미래 날짜로는 판매를 등록할 수 없습니다."}), 400
+        if sale_day < today_kst:
+            sale_date_time = f"{sale_day.isoformat()} 12:00:00"
+    apply_stock = data.get("apply_stock") is not False
+    if memo is None and sale_date_raw:
+        memo = "날짜 지정 판매" + ("" if apply_stock else " (재고 미반영)")
+
     # 오프라인 큐(apiOrQueue)에서 재전송된 결제 건이 이미 처리된 적이 있으면, 재고를
     # 다시 차감하고 매출을 중복으로 남기는 대신 앞서 생성된 결과를 그대로 돌려준다.
     # (/api/transactions 의 client_uuid 중복방지와 동일한 원리)
@@ -4678,6 +4727,8 @@ def api_sales():
         qty_by_product[pid] = qty_by_product.get(pid, 0) + qty
 
     for pid, total_qty in qty_by_product.items():
+        if not apply_stock:
+            break  # 재고를 변경하지 않는 등록이므로 재고 부족 검사도 필요 없다
         cur.execute("SELECT unlimited_stock FROM products WHERE id=%s", (pid,))
         prod_flag = cur.fetchone()
         # 재고 무관(퀵 버튼) 상품은 재고 체크를 건너뛴다.
@@ -4705,7 +4756,7 @@ def api_sales():
             conn.rollback()
             return jsonify({"error": f"상품(#{pid})을 찾을 수 없습니다. 목록을 새로고침한 뒤 다시 시도해주세요."}), 400
         # 재고 무관(퀵 버튼) 상품은 재고 차감도 하지 않는다.
-        if not (product and product.get("unlimited_stock")):
+        if apply_stock and not (product and product.get("unlimited_stock")):
             # ⚠️ 버그 수정: 이 반환값을 확인하지 않으면, 동시에 들어온 다른 결제 건이
             # 앞서 재고를 먼저 차감해버린 경쟁 상태(race condition) 등으로 실제 차감이
             # 실패했을 때도 재고는 그대로인 채 매출만 정상 처리된 것처럼 남아 재고
@@ -4729,10 +4780,11 @@ def api_sales():
 
         cur.execute(
             """INSERT INTO stock_transactions
-            (product_id, store_id, type, quantity, unit_cost, unit_price, payment_method, staff, memo)
-            VALUES (%s, %s, '판매출고', %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (product_id, store_id, type, quantity, unit_cost, unit_price, payment_method, staff, memo,
+             date_time, no_stock_effect)
+            VALUES (%s, %s, '판매출고', %s, %s, %s, %s, %s, %s, COALESCE(%s, CURRENT_TIMESTAMP), %s) RETURNING id""",
             (pid, store_id, qty, product["cost_price"], unit_price,
-             payment_method, staff, memo)
+             payment_method, staff, memo, sale_date_time, not apply_stock)
         )
         new_id = cur.fetchone()["id"]
         created_ids.append(new_id)
@@ -5931,6 +5983,7 @@ def api_inventory_snapshot():
                    END) AS future_delta
         FROM stock_transactions
         WHERE store_id = ANY(%s) AND product_id = ANY(%s) AND date_time > %s
+          AND NOT COALESCE(no_stock_effect, FALSE)
         GROUP BY store_id, product_id
     """, (store_ids, product_ids, target_dt))
     future_delta_map = {(r["store_id"], r["product_id"]): (r["future_delta"] or 0) for r in cur.fetchall()}
