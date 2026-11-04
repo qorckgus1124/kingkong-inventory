@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block content_class %}content--wide{% endblock %}
 {% block content %}
 <h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-trending-up"></use></svg>출고 분석</h1>
 <div class="subtitle">고른 조건(카테고리·브랜드·제품·기간)에서 무엇이 얼마나 나갔고, 얼마나 발주해야 하며, 그 비용이 얼마인지 한 번에 확인합니다. (판매 실적 · 재고회전율 · 발주 추천 · 출고 예측 통합)</div>
@@ -782,6 +783,8 @@ document.addEventListener('DOMContentLoaded', async function () {
 </script>
 
 <style>
+/* 화면 폭 전체 사용: 공통 .content 의 max-width(1200px) 제한을 이 화면에서만 푼다. */
+.content.content--wide { max-width: none; }
 /* 공통 컴포넌트(.card/.chip/.brand-tag/.page-btn/.table-wrap/.summary-card)는 static/style.css 것을 쓴다.
    여기에는 이 화면에서만 필요한 배치와 가독성 보정을 둔다.
    원칙: 글자는 12px 아래로 내리지 않고, 값은 크고 진하게, 숫자는 자릿수가 맞게(tabular-nums), 색은 의미(증가/감소/부족)에만 쓴다. */
