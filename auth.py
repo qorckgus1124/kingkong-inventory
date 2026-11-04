@@ -5,8 +5,11 @@
 - 매장당 계정 1개(role='store') + 어드민(role='admin').
 - 비밀번호는 해시로만 저장한다. 어드민이 직접 정했거나 "초기화"로 발급한 비밀번호는
   그 순간 화면에 한 번 보여준다(저장된 해시에서 원문을 되살릴 수는 없다).
-- 사이트 전체를 잠그는 전역 가드는 두지 않았다(내부 사용 전제).
-  로그인이 필요한 곳은 이 파일이 만든 화면/API(/my-stock, /account, /admin/*)뿐이다.
+- 로그인하지 않으면 로그인 화면으로 보낸다(전역 가드, 아래 require_login_everywhere).
+- 어드민: 모든 매장의 모든 기능/데이터.
+- 매장 계정: 대시보드의 기능은 모두 쓸 수 있지만, 서버가 모든 요청을 자기 매장으로 고정한다
+  (store_id를 다른 값으로 보내도 무시하고 자기 매장으로 바꾼다 → 다른 매장 조회/변경 불가).
+  매장 목록·고객·메모 같은 곳도 자기 매장 몫만 돌려준다. 자세한 규칙은 _enforce_store_scope 참고.
 - 로그인 실패 잠금, 비밀번호 규칙은 두지 않았다(요청 사항).
 
 app.py 쪽 연결은 두 줄이다:
@@ -29,7 +32,7 @@ _get_db = None
 
 # 최초 기본값. 환경변수(ADMIN_USERNAME / ADMIN_INITIAL_PASSWORD)가 있으면 그쪽이 우선한다.
 DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "kingkong1234"
+DEFAULT_ADMIN_PASSWORD = "1234"
 
 # 매장 계정 초기 세팅: (매장 이름, 아이디). 비밀번호는 모두 아래 값으로 시작한다.
 STORE_ACCOUNT_SEED = [
@@ -39,6 +42,11 @@ STORE_ACCOUNT_SEED = [
     ("신사점", "kingkongblack"),
 ]
 STORE_ACCOUNT_INITIAL_PASSWORD = "1234"
+
+# 이미 만들어진 어드민 계정의 비밀번호를 1234로 한 번만 되돌리는 표시(auth_seed_done.name).
+# 한 번 적용된 뒤에는 어드민이 비밀번호를 바꿔도 다시 덮어쓰지 않는다.
+ADMIN_PASSWORD_RESET_FLAG = "admin_password_1234_v1"
+ADMIN_RESET_PASSWORD = "1234"
 
 USERNAME_RE = re.compile(r"^\S{1,50}$")
 
@@ -103,9 +111,29 @@ def ensure_schema():
                 print(f"🔐 어드민 계정을 만들었습니다. 아이디: {username}")
 
         _seed_store_accounts(conn, cur)
+        _reset_admin_password_once(conn, cur)
     except Exception as e:
         conn.rollback()
         print(f"❌ users 테이블 준비 오류: {e}")
+
+
+def _reset_admin_password_once(conn, cur):
+    """어드민 계정(들)의 비밀번호를 1234로 바꾼다. 딱 한 번만 실행한다.
+    (기본값만 바꾸면 이미 만들어진 계정에는 적용되지 않기 때문에 별도로 한 번 덮어쓴다.)
+    비밀번호가 바뀌면 기존 어드민 로그인은 풀리므로 1234로 다시 로그인해야 한다."""
+    cur.execute("CREATE TABLE IF NOT EXISTS auth_seed_done (name TEXT PRIMARY KEY, done_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    # 동시에 뜬 워커 중 한쪽만 진행하도록 먼저 표시를 남긴다.
+    cur.execute("INSERT INTO auth_seed_done (name) VALUES (%s) ON CONFLICT DO NOTHING", (ADMIN_PASSWORD_RESET_FLAG,))
+    if cur.rowcount == 0:
+        conn.commit()
+        return
+    cur.execute(
+        "UPDATE users SET password_hash = %s, must_change_pw = 0 WHERE role = 'admin'",
+        (generate_password_hash(ADMIN_RESET_PASSWORD),),
+    )
+    changed = cur.rowcount
+    conn.commit()
+    print(f"🔐 어드민 비밀번호를 1234로 설정했습니다 (계정 {changed}개)")
 
 
 def _seed_store_accounts(conn, cur):
@@ -244,7 +272,8 @@ def _safe_next(target):
 
 
 def _home_for(role):
-    return "/dashboard" if role == "admin" else "/my-stock"
+    # 어드민/매장 계정 모두 로그인하면 대시보드로 간다.
+    return "/dashboard"
 
 
 def _json():
@@ -253,6 +282,224 @@ def _json():
 
 def _fail(message, status=400):
     return jsonify({"error": message}), status
+
+
+# ---------------------------------------------------------------------------
+# 매장 계정의 범위 제한 (서버에서 강제한다 - 화면을 숨기는 것만으로는 막히지 않는다)
+# ---------------------------------------------------------------------------
+#
+# 매장 계정이 할 수 있는 것: 대시보드/판매/재고/분석 등 메뉴의 기능 전부 (자기 매장 데이터로).
+# 막는 것:
+#   1) 다른 매장의 조회·변경 - 모든 /api/ 요청의 store_id(쿼리, JSON, 폼)를 자기 매장으로 덮어쓴다.
+#      id로 가리키는 항목(거래, 선결제, 출근 기록, 이동, 고객)은 자기 매장 것인지 확인한다.
+#   2) 전체 매장에 영향을 주는 관리 기능 - 설정, 백업, API 키, 공유 링크, 계정 관리,
+#      매장 추가/삭제, 제품 삭제·병합(모든 매장의 기록이 같이 지워진다)
+#   3) 인수인계 메모는 전역 설정이 아니라 매장별로 따로 저장한다.
+# 재고 이동은 "내 매장 → 다른 매장" 방향만 가능하다(도착 매장은 이름만 보인다).
+
+_STORE_SELF_PATHS = {"/account", "/my-stock", "/logout"}
+_STORE_SELF_PREFIXES = ("/api/account", "/api/my/")
+_STORE_BLOCKED_PAGES = {"/settings"}
+_STORE_BLOCKED_PAGE_PREFIXES = ("/admin/", "/maintenance/")
+_STORE_BLOCKED_API_PREFIXES = (
+    "/api/admin/", "/api/backup", "/api/api_keys", "/api/webhook_logs",
+    "/api/share_links", "/api/maintenance/", "/api/products/duplicates", "/api/products/merge",
+)
+
+# id로 가리키는 항목: (경로 패턴, 그 항목이 속한 매장을 알려주는 쿼리)
+_OWNED_BY_ID = (
+    (re.compile(r"^/api/transactions/(\d+)(?:/(?:cancel|undo))?$"),
+     "SELECT store_id FROM stock_transactions WHERE id = %s"),
+    (re.compile(r"^/api/pre_orders/(\d+)(?:/(?:confirm|cancel|cancel_any))?$"),
+     "SELECT store_id FROM pre_orders WHERE id = %s"),
+    (re.compile(r"^/api/attendance/(\d+)$"),
+     "SELECT store_id FROM attendance WHERE id = %s"),
+    # 이동 취소는 출발 매장(= 이동을 시킨 매장)만 할 수 있다.
+    (re.compile(r"^/api/transfer/(\d+)/cancel$"),
+     "SELECT from_store_id AS store_id FROM stock_movements WHERE id = %s"),
+)
+# 선택한 여러 항목(JSON {"ids": [...]})을 한 번에 처리하는 곳
+_OWNED_BATCH = {
+    "/api/transactions/cancel_batch":
+        "SELECT 1 FROM stock_transactions WHERE id = ANY(%s) AND store_id IS DISTINCT FROM %s LIMIT 1",
+    "/api/transactions/batch_status":
+        "SELECT 1 FROM stock_transactions WHERE id = ANY(%s) AND store_id IS DISTINCT FROM %s LIMIT 1",
+    "/api/movements/cancel_batch":
+        "SELECT 1 FROM stock_movements WHERE id = ANY(%s) AND from_store_id IS DISTINCT FROM %s LIMIT 1",
+}
+
+
+def store_scope_id():
+    """지금 요청의 사용자가 매장 계정이면 그 매장 id(연결된 매장이 없으면 0),
+    어드민이거나 로그인하지 않았으면 None. app.py가 '자기 매장 것만' 돌려줄 때 쓴다."""
+    try:
+        user = _load_user()
+    except Exception:
+        return None
+    if user and user["role"] == "store":
+        return user.get("store_id") or 0
+    return None
+
+
+def _scope_deny(message, is_api, redirect_to="/dashboard"):
+    if is_api:
+        return jsonify({"error": message}), 403
+    return redirect(redirect_to)
+
+
+def _enforce_store_scope(user):
+    """매장 계정의 요청을 검사한다. 막아야 하면 응답을, 통과면 None을 돌려준다."""
+    path = request.path
+    if path in _STORE_SELF_PATHS or path.startswith(_STORE_SELF_PREFIXES):
+        return None
+    is_api = path.startswith("/api/")
+    sid = user.get("store_id")
+    if not sid:
+        return _scope_deny("연결된 매장이 없습니다. 어드민에게 문의하세요.", is_api, "/my-stock")
+
+    if (path in _STORE_BLOCKED_PAGES or path.startswith(_STORE_BLOCKED_PAGE_PREFIXES)
+            or path.startswith(_STORE_BLOCKED_API_PREFIXES)):
+        return _scope_deny("어드민만 사용할 수 있습니다.", is_api)
+    if not is_api:
+        return None
+    return _enforce_store_api(sid, path, request.method)
+
+
+def _enforce_store_api(sid, path, method):
+    # --- 전체 매장에 영향을 주는 동작은 어드민만 ---
+    if method == "DELETE" and re.fullmatch(r"/api/products/\d+", path):
+        return _fail("제품 삭제는 어드민만 할 수 있습니다. (모든 매장의 입출고 기록이 함께 지워집니다)", 403)
+    if path == "/api/stores" and method != "GET":
+        return _fail("매장 추가는 어드민만 할 수 있습니다.", 403)
+    m = re.fullmatch(r"/api/stores/(\d+)", path)
+    if m:
+        if method == "DELETE":
+            return _fail("매장 삭제는 어드민만 할 수 있습니다.", 403)
+        if int(m.group(1)) != sid:
+            return _fail("다른 매장 정보는 볼 수 없습니다.", 403)
+
+    # --- 설정: 인수인계 메모만, 매장별로 따로 ---
+    if path == "/api/settings":
+        return _store_settings(sid, method)
+
+    # --- 주소 안에 매장 번호가 들어 있는 곳 ---
+    m = re.fullmatch(r"/api/export/([^/]+)/products", path)
+    if m and m.group(1) != str(sid):
+        return _fail("다른 매장 정보는 내보낼 수 없습니다.", 403)
+
+    # --- id로 가리키는 항목이 내 매장 것인지 ---
+    denied = _check_store_ownership(sid, path, method)
+    if denied is not None:
+        return denied
+
+    # --- 마지막으로, 요청에 실린 매장 값을 모두 내 매장으로 덮어쓴다 ---
+    return _force_store_params(sid, path, method)
+
+
+def _store_settings(sid, method):
+    """매장 계정이 쓰는 설정은 인수인계 메모뿐이고, 그 메모는 매장마다 따로 저장한다."""
+    conn, cur = _db()
+    key = f"handover_memo_store_{sid}"
+    if method == "GET":
+        cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+        row = cur.fetchone()
+        return jsonify({"handover_memo": (row["value"] if row else "") or ""})
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict) or not data or set(data) - {"handover_memo"}:
+        return _fail("매장 계정은 인수인계 메모만 저장할 수 있습니다.", 403)
+    try:
+        cur.execute(
+            "INSERT INTO settings (key, value) VALUES (%s, %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (key, str(data.get("handover_memo") or "")),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        return _fail(f"저장 실패: {e}", 500)
+    return jsonify({"ok": True})
+
+
+def _check_store_ownership(sid, path, method):
+    for pattern, query in _OWNED_BY_ID:
+        m = pattern.match(path)
+        if m:
+            _, cur = _db()
+            cur.execute(query, (int(m.group(1)),))
+            row = cur.fetchone()
+            # 없는 항목이면 해당 화면의 "찾을 수 없음" 응답에 맡긴다.
+            if row is not None and row["store_id"] != sid:
+                return _fail("다른 매장의 기록은 건드릴 수 없습니다.", 403)
+            return None
+
+    query = _OWNED_BATCH.get(path)
+    if query and method == "POST":
+        data = request.get_json(force=True, silent=True)
+        ids = data.get("ids") if isinstance(data, dict) else None
+        try:
+            ids = [int(i) for i in (ids or [])]
+        except (TypeError, ValueError):
+            return None  # 잘못된 값은 해당 화면의 검증이 처리한다.
+        if ids:
+            _, cur = _db()
+            cur.execute(query, (ids, sid))
+            if cur.fetchone() is not None:
+                return _fail("다른 매장의 기록이 섞여 있어 처리할 수 없습니다.", 403)
+        return None
+
+    # 고객은 주문(선결제)을 통해서만 매장과 연결된다.
+    m = re.fullmatch(r"/api/customers/(\d+)", path)
+    if m:
+        cid = int(m.group(1))
+        _, cur = _db()
+        cur.execute(
+            """SELECT EXISTS (SELECT 1 FROM pre_orders WHERE customer_id = %s AND store_id = %s) AS mine,
+                      EXISTS (SELECT 1 FROM pre_orders WHERE customer_id = %s AND store_id <> %s) AS other""",
+            (cid, sid, cid, sid),
+        )
+        row = cur.fetchone()
+        if not row["mine"]:
+            return _fail("우리 매장 고객이 아닙니다.", 403)
+        if method == "DELETE" and row["other"]:
+            return _fail("다른 매장에서도 주문한 고객이라 삭제할 수 없습니다.", 403)
+    return None
+
+
+def _force_store_params(sid, path, method):
+    """쿼리스트링·JSON·폼에 들어 있는 store_id를 전부 내 매장으로 바꾼다.
+    (값이 아예 없는 요청도 '전체 매장'이 아니라 내 매장으로 처리되게 채워 넣는다.)"""
+    args = request.args.copy()
+    args["store_id"] = str(sid)
+    request.args = args
+
+    if method in ("GET", "HEAD"):
+        return None
+
+    if request.mimetype in ("multipart/form-data", "application/x-www-form-urlencoded"):
+        form = request.form.copy()
+        form["store_id"] = str(sid)
+        request.form = form
+        return None
+
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return None
+    data["store_id"] = sid
+    filters = data.get("filters")
+    if isinstance(filters, dict):          # 커스텀 리포트
+        filters["store_id"] = sid
+    if path == "/api/transfer":
+        # 출발은 항상 내 매장. 도착이 내 매장이면 이동이 아니다.
+        data["from_store_id"] = sid
+        try:
+            data["to_store_id"] = int(data.get("to_store_id"))
+        except (TypeError, ValueError):
+            pass
+        if data.get("to_store_id") == sid:
+            return _fail("출발 매장과 도착 매장이 같습니다.")
+    # 요청 본문을 다시 읽는 쪽(get_json)이 바뀐 값을 보도록 캐시를 갈아 끼운다.
+    request._cached_json = (data, data)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -283,20 +530,27 @@ def init_auth(app, get_db):
         path = request.path
         if request.method == "OPTIONS" or path in _OPEN_PATHS or path.startswith(_OPEN_PREFIXES):
             return None
-        if _load_user():
-            return None
-        return _need_login()
+        user = _load_user()
+        if not user:
+            return _need_login()
+        if user["role"] == "store":
+            return _enforce_store_scope(user)
+        return None
 
     @app.context_processor
     def inject_current_user():
         # 화면(사이드바)용. 세션에 든 값만 쓰므로 DB를 건드리지 않는다.
         if not session.get("uid"):
             return {"current_user": None, "is_store_user": False}
+        # before_request에서 이미 DB로 확인한 사용자(g._auth_user)가 있으면 그 값을 쓴다
+        # (예전에 로그인해 둔 세션에는 store_id가 들어 있지 않기 때문).
+        db_user = g.get("_auth_user") or {}
         cu = {
             "username": session.get("username"),
             "role": session.get("role"),
             "name": session.get("name"),
-            "store_name": session.get("store_name"),
+            "store_name": db_user.get("store_name") or session.get("store_name"),
+            "store_id": db_user.get("store_id"),
         }
         return {"current_user": cu, "is_store_user": cu["role"] == "store"}
 
@@ -338,6 +592,18 @@ def init_auth(app, get_db):
     def logout():
         session.clear()
         return redirect("/login")
+
+    # ----- 재고 이동의 도착 매장 목록 (이름만) ---------------------------------
+    @app.route("/api/transfer_targets")
+    @login_required
+    def api_transfer_targets():
+        user = g.user
+        _, cur = _db()
+        cur.execute("SELECT id, name FROM stores ORDER BY id")
+        rows = [dict(r) for r in cur.fetchall()]
+        if user["role"] == "store":
+            rows = [r for r in rows if r["id"] != user["store_id"]]
+        return jsonify(rows)
 
     # ----- 매장용 재고 조회 (읽기 전용) ---------------------------------------
 

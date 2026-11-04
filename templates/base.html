@@ -49,6 +49,14 @@
 <script src="/static/immersive.js?v={{ asset_version }}" defer></script>
 </head>
 <body data-page="{{ active }}">
+<script>
+  // 매장 계정이면 true. (화면에서 다른 매장 선택지를 감추는 용도 - 실제 차단은 서버가 한다)
+  window.IS_STORE_USER = {{ 'true' if is_store_user else 'false' }};
+  {% if is_store_user and current_user.store_id %}
+  // 브라우저에 다른 매장이 기억돼 있어도(예: 어드민이 같은 브라우저를 썼을 때) 내 매장으로 고정한다.
+  try { localStorage.setItem('global_store_id', '{{ current_user.store_id }}'); } catch (e) {}
+  {% endif %}
+</script>
 {% include '_icons3d.html' %}
 <style>
 /* ---- 로그인 사용자 박스 / 매장 계정 전용 화면 ---- */
@@ -60,13 +68,8 @@
 .user-login-link { display: block; padding: 8px 12px; margin-bottom: 8px; }
 .sm-nav { display: none; }
 {% if is_store_user %}
-.store-selector, .nav-search, #sidebarNav, .mobile-bottom-nav, .mobile-nav-overlay, .floating-panel { display: none !important; }
-@media (max-width: 768px) {
-  .sm-nav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; justify-content: space-around;
-            padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--card-bg); border-top: 1px solid var(--border); }
-  .sm-nav a { color: var(--text); font-weight: 700; font-size: 14px; text-decoration: none; padding: 6px 14px; }
-  .sm-nav a.active { color: var(--accent); }
-}
+/* 매장 계정은 자기 매장으로 고정되어 있으므로 매장 드롭다운은 잠가서 보여만 준다. */
+#globalStoreSelect { pointer-events: none; opacity: .85; appearance: none; -webkit-appearance: none; }
 {% endif %}
 </style>
 <script>
@@ -112,7 +115,7 @@
     <div class="brand"><span class="brand-mark"><svg class="i3d" aria-hidden="true"><use href="#i3d-box"></use></svg></span>재고·판매관리</div>
     <div class="store-selector" style="padding: 0 2px; margin-bottom: 8px; flex-shrink: 0;">
       <!-- 매장 목록을 서버에서 미리 넣어둔다 (열자마자 바로 보이고, 요청 한 번이 줄어든다) -->
-      <select id="globalStoreSelect" style="width:100%; padding:7px 12px; border-radius:var(--radius-pill); border:1px solid var(--glass-border); background:var(--input-bg); color:var(--text); font-size:13px; cursor:pointer;">
+      <select id="globalStoreSelect" {% if is_store_user %}disabled title="내 매장으로 고정되어 있습니다"{% endif %} style="width:100%; padding:7px 12px; border-radius:var(--radius-pill); border:1px solid var(--glass-border); background:var(--input-bg); color:var(--text); font-size:13px; cursor:pointer;">
         <option value="">매장 선택</option>
         {% for s in global_stores %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
       </select>
@@ -176,7 +179,7 @@
         <a class="nav-item {{ 'active' if active=='stores' else '' }}" href="/stores" data-label="매장 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-building-store"></use></svg>매장 관리</a>
         <a class="nav-item {{ 'active' if active=='suppliers' else '' }}" href="/suppliers" data-label="거래처 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-handshake"></use></svg>거래처 관리</a>
         <a class="nav-item {{ 'active' if active=='customers' else '' }}" href="/customers" data-label="고객 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-users"></use></svg>고객 관리</a>
-        <a class="nav-item {{ 'active' if active=='settings' else '' }}" href="/settings" data-label="설정"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-settings"></use></svg>설정</a>
+        {% if not is_store_user %}<a class="nav-item {{ 'active' if active=='settings' else '' }}" href="/settings" data-label="설정"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-settings"></use></svg>설정</a>{% endif %}
         {% if current_user and current_user.role == 'admin' %}
         <a class="nav-item {{ 'active' if active=='my_stock' else '' }}" href="/my-stock" data-label="매장 재고 조회"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-package"></use></svg>매장 재고 조회</a>
         <a class="nav-item {{ 'active' if active=='admin_users' else '' }}" href="/admin/users" data-label="계정 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-settings"></use></svg>계정 관리</a>
@@ -321,13 +324,6 @@ function filterMobileNavItems(query) {
   <button class="pwa-install-close" onclick="pwaDismissBanner()">✕</button>
 </div>
 
-{% if is_store_user %}
-<nav class="sm-nav">
-  <a href="/my-stock" class="{{ 'active' if active=='my_stock' else '' }}">내 재고</a>
-  <a href="/account" class="{{ 'active' if active=='account' else '' }}">내 정보</a>
-  <a href="/logout">로그아웃</a>
-</nav>
-{% endif %}
 <nav class="mobile-bottom-nav">
   <a href="/dashboard" class="{{ 'active' if active=='dashboard' else '' }}">
     <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-layout-dashboard"></use></svg>
@@ -349,10 +345,17 @@ function filterMobileNavItems(query) {
     <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-trending-up"></use></svg>
     <span class="nav-label">분석</span>
   </a>
+  {% if is_store_user %}
+  <a href="/account" class="{{ 'active' if active=='account' else '' }}">
+    <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-users"></use></svg>
+    <span class="nav-label">내 정보</span>
+  </a>
+  {% else %}
   <a href="/settings" class="{{ 'active' if active=='settings' else '' }}">
     <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-settings"></use></svg>
     <span class="nav-label">설정</span>
   </a>
+  {% endif %}
   <a href="javascript:void(0)" class="mobile-nav-more-btn" onclick="openMobileNavMenu()" aria-haspopup="true" aria-expanded="false" aria-controls="mobileNavOverlay">
     <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-grid-dots"></use></svg>
     <span class="nav-label">메뉴</span>

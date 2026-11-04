@@ -14,6 +14,7 @@
 <!-- 🏬 매장 관리 탭 -->
 <!-- ============================================================ -->
 <div id="tab-stores" class="tab-content">
+  {% if not is_store_user %}
   <div class="card">
     <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr;">
       <div class="form-field"><label>매장명 *</label><input type="text" id="newStoreName" placeholder="예: 홍대점"></div>
@@ -28,6 +29,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
 
   <div id="storeList"></div>
 
@@ -264,7 +266,7 @@ function renderStoreList() {
         </div>
         <div style="display:flex; gap:6px;">
           <button onclick="openEditStoreModal(${s.id})" style="padding:4px 12px;">✏️ 수정</button>
-          <button class="danger" onclick="deleteStore(${s.id})" style="padding:4px 12px;">삭제</button>
+          ${window.IS_STORE_USER ? '' : `<button class="danger" onclick="deleteStore(${s.id})" style="padding:4px 12px;">삭제</button>`}
         </div>
       </div>
       <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:16px; font-size:13px; color:var(--text);">
@@ -335,7 +337,17 @@ function populateStoreSelects() {
   const movementStoreSel = document.getElementById('movementStoreFilter');
   const opts = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
   fromSel.innerHTML = '<option value="">매장 선택</option>' + opts;
-  toSel.innerHTML = '<option value="">매장 선택</option>' + opts;
+  // 도착 매장: 매장 계정은 다른 매장의 이름만 받아온다 (내 매장 → 다른 매장 방향만 가능)
+  if (window.IS_STORE_USER) {
+    toSel.innerHTML = '<option value="">매장 선택</option>';
+    api('/api/transfer_targets').then(list => {
+      toSel.innerHTML = '<option value="">매장 선택</option>' +
+        list.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+      if (list.length) toSel.value = list[0].id;
+    }).catch(() => {});
+  } else {
+    toSel.innerHTML = '<option value="">매장 선택</option>' + opts;
+  }
   movementStoreSel.innerHTML = '<option value="">전체 매장</option>' + opts;
   
   // 🔥 전역 매장 ID 적용

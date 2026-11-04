@@ -1491,7 +1491,12 @@ def inject_global_stores():
     try:
         get_db()
         cur = g.cursor
-        cur.execute("SELECT id, name FROM stores ORDER BY id")
+        scope = auth.store_scope_id()
+        if scope is not None:
+            # 매장 계정은 자기 매장만 보인다 (다른 매장으로 바꿀 수 없다)
+            cur.execute("SELECT id, name FROM stores WHERE id = %s", (scope,))
+        else:
+            cur.execute("SELECT id, name FROM stores ORDER BY id")
         return {"global_stores": [dict(r) for r in cur.fetchall()]}
     except Exception as e:
         # 목록을 못 가져와도 화면은 정상 표시되어야 한다 (브라우저가 다시 요청해서 채운다)
@@ -1946,7 +1951,11 @@ def api_stores():
     cur = g.cursor
     if request.method == "GET":
         try:
-            cur.execute("SELECT * FROM stores ORDER BY id")
+            scope = auth.store_scope_id()
+            if scope is not None:
+                cur.execute("SELECT * FROM stores WHERE id = %s", (scope,))
+            else:
+                cur.execute("SELECT * FROM stores ORDER BY id")
             rows = cur.fetchall()
             result = []
             for r in rows:
@@ -4903,6 +4912,7 @@ def api_performance():
         end_date = request.args.get("end_date")
         sort = request.args.get("sort", "qty")
         order = request.args.get("order", "desc")
+        store_id = request.args.get("store_id")
 
         sql = """
         SELECT
@@ -4937,6 +4947,9 @@ def api_performance():
         if end_date:
             sql += " AND date(t.date_time) <= date(%s)"
             params.append(end_date)
+        if store_id:
+            sql += " AND t.store_id = %s"
+            params.append(store_id)
         sql += " GROUP BY p.id, p.name, b.name, b.color, c.name, c.color HAVING SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END) != 0"
 
         sort_col = "profit" if sort == "profit" else ("revenue" if sort == "revenue" else "sold_qty")
@@ -4965,6 +4978,11 @@ def api_statistics():
             period = "day"
         start_date = request.args.get("start_date")
         end_date = request.args.get("end_date")
+        # 매장을 지정하면(매장 계정은 항상 자기 매장) 그 매장 것만 집계한다. 없으면 전체 매장.
+        try:
+            stat_store_id = int(request.args.get("store_id")) if request.args.get("store_id") else None
+        except (TypeError, ValueError):
+            stat_store_id = None
         if not end_date:
             end_date = now_kst().strftime("%Y-%m-%d")
         if not start_date:
@@ -4996,17 +5014,19 @@ def api_statistics():
         rows = []
         if start_d <= past_end:
             try:
-                ensure_daily_rollup(start_d, past_end)
-                cur.execute(
-                    f"""SELECT to_char(sale_date, '{fmt}') as period_key,
+                ensure_daily_rollup(start_d, past_end, stat_store_id)
+                roll_sql = f"""SELECT to_char(sale_date, '{fmt}') as period_key,
                                COALESCE(SUM(qty), 0) as sold_qty,
                                COALESCE(SUM(revenue), 0) as revenue,
                                COALESCE(SUM(profit), 0) as profit
                         FROM daily_sales_rollup
-                        WHERE sale_date >= %s AND sale_date <= %s
-                        GROUP BY period_key ORDER BY period_key ASC""",
-                    (start_d, past_end),
-                )
+                        WHERE sale_date >= %s AND sale_date <= %s"""
+                roll_params = [start_d, past_end]
+                if stat_store_id:
+                    roll_sql += " AND store_id = %s"
+                    roll_params.append(stat_store_id)
+                roll_sql += " GROUP BY period_key ORDER BY period_key ASC"
+                cur.execute(roll_sql, roll_params)
                 rows = [dict(r) for r in cur.fetchall()]
             except Exception as e:
                 rollback_quietly()
@@ -5015,21 +5035,23 @@ def api_statistics():
 
         if not rows and start_d <= past_end:
             # 집계표를 쓸 수 없을 때를 위한 예비 경로 (예전과 동일한 직접 계산)
-            cur.execute(
-                f"""
+            fb_sql = f"""
                 SELECT to_char(date_time, '{fmt}') as period_key,
                        {SALES_QTY_SQL} as sold_qty, {SALES_REVENUE_SQL} as revenue, {SALES_PROFIT_SQL} as profit
                 FROM stock_transactions t
                 WHERE t.type IN %s AND date(t.date_time) >= date(%s) AND date(t.date_time) <= date(%s)
-                GROUP BY period_key ORDER BY period_key ASC
-                """,
-                (SALES_TYPES, start_d, past_end),
-            )
+                """
+            fb_params = [SALES_TYPES, start_d, past_end]
+            if stat_store_id:
+                fb_sql += " AND t.store_id = %s"
+                fb_params.append(stat_store_id)
+            fb_sql += " GROUP BY period_key ORDER BY period_key ASC"
+            cur.execute(fb_sql, fb_params)
             rows = [dict(r) for r in cur.fetchall()]
 
         # 오늘이 조회 범위에 들어있으면 실시간 값을 같은 기간 칸에 더한다 (실시간 반영)
         if start_d <= today_date <= end_d:
-            live = compute_sales_totals(single_date=today_date)
+            live = compute_sales_totals(stat_store_id, single_date=today_date)
             cur.execute(f"SELECT to_char(%s::date, '{fmt}') as period_key", (today_date,))
             today_key = cur.fetchone()["period_key"]
             merged = False
@@ -5704,21 +5726,30 @@ def api_customers():
         search = normalize_search(request.args.get("search", ""))
         vip_only = request.args.get("vip_only") == "1"
 
-        sql = """
+        # 매장 계정은 자기 매장에서 주문한 고객만, 주문 집계도 자기 매장 몫만 본다.
+        scope = auth.store_scope_id()
+        join_extra = ""
+        params = []
+        if scope is not None:
+            join_extra = " AND po.store_id = %s"
+            params.append(scope)
+        sql = f"""
             SELECT c.id, c.name, c.phone, c.address, c.memo, c.is_vip, c.created_at,
                    COUNT(po.id) as order_count,
                    COALESCE(SUM(po.total_amount), 0) as total_spent,
                    MAX(po.created_at) as last_order_at
             FROM customers c
-            LEFT JOIN pre_orders po ON po.customer_id = c.id
+            LEFT JOIN pre_orders po ON po.customer_id = c.id{join_extra}
         """
         where = []
-        params = []
         if vip_only:
             where.append("c.is_vip = 1")
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " GROUP BY c.id ORDER BY c.is_vip DESC, MAX(po.created_at) DESC NULLS LAST, c.id DESC"
+        sql += " GROUP BY c.id"
+        if scope is not None:
+            sql += " HAVING COUNT(po.id) > 0"
+        sql += " ORDER BY c.is_vip DESC, MAX(po.created_at) DESC NULLS LAST, c.id DESC"
         cur.execute(sql, params)
         rows = [dict(r) for r in cur.fetchall()]
 
@@ -5776,6 +5807,8 @@ def api_customer_detail(customer_id):
             return jsonify({"error": "수정 중 오류가 발생했습니다."}), 500
 
     # GET: 상세 - 구매 이력 + 카테고리별 재구매 주기 예측
+    # (매장 계정은 자기 매장 주문만 보인다)
+    detail_scope = auth.store_scope_id()
     try:
         cur.execute("SELECT * FROM customers WHERE id = %s", (customer_id,))
         customer = cur.fetchone()
@@ -5791,10 +5824,10 @@ def api_customer_detail(customer_id):
             JOIN pre_order_items poi ON poi.pre_order_id = po.id
             JOIN products p ON p.id = poi.product_id
             LEFT JOIN categories c ON c.id = p.category_id
-            WHERE po.customer_id = %s
+            WHERE po.customer_id = %s""" + (" AND po.store_id = %s" if detail_scope is not None else "") + """
             GROUP BY po.id
             ORDER BY po.created_at DESC
-        """, (customer_id,))
+        """, (customer_id,) + ((detail_scope,) if detail_scope is not None else ()))
         orders = [dict(r) for r in cur.fetchall()]
         customer["orders"] = orders
 
@@ -5805,10 +5838,10 @@ def api_customer_detail(customer_id):
             JOIN pre_order_items poi ON poi.pre_order_id = po.id
             JOIN products p ON p.id = poi.product_id
             LEFT JOIN categories c ON c.id = p.category_id
-            WHERE po.customer_id = %s AND c.name IS NOT NULL
+            WHERE po.customer_id = %s AND c.name IS NOT NULL""" + (" AND po.store_id = %s" if detail_scope is not None else "") + """
             GROUP BY c.name, po.created_at::date
             ORDER BY c.name, po.created_at::date
-        """, (customer_id,))
+        """, (customer_id,) + ((detail_scope,) if detail_scope is not None else ()))
         by_category = defaultdict(list)
         for r in cur.fetchall():
             by_category[r["category_name"]].append(r["order_date"])
@@ -6883,6 +6916,7 @@ def api_export_transactions():
 def api_export_performance():
     start_date = request.args.get("start_date")
     end_date = request.args.get("end_date")
+    store_id = request.args.get("store_id")
     conn = get_db()
     cur = g.cursor
     sql = """
@@ -6905,6 +6939,9 @@ def api_export_performance():
     if end_date:
         sql += " AND date(t.date_time) <= date(%s)"
         params.append(end_date)
+    if store_id:
+        sql += " AND t.store_id = %s"
+        params.append(store_id)
     sql += """ GROUP BY p.id, p.name, c.name
         HAVING SUM(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity
                         WHEN t.type = '판매취소' THEN -t.quantity ELSE 0 END) != 0
@@ -6949,6 +6986,7 @@ def api_export_statistics():
         "year": "YYYY"
     }
     fmt = fmt_map[period]
+    store_id = request.args.get("store_id")
     conn = get_db()
     cur = g.cursor
     sql = f"""
@@ -6963,11 +7001,17 @@ def api_export_statistics():
         WHERE t.type IN ('판매출고', '판매취소', '선결예약')
           AND date(t.date_time) >= date(%s)
           AND date(t.date_time) <= date(%s)
+    """
+    stat_params = [start_date, end_date]
+    if store_id:
+        sql += " AND t.store_id = %s"
+        stat_params.append(store_id)
+    sql += """
         GROUP BY period_key
         ORDER BY period_key ASC
     """
     try:
-        cur.execute(sql, (start_date, end_date))
+        cur.execute(sql, stat_params)
         rows = cur.fetchall()
     except Exception as e:
         rollback_quietly()
@@ -8029,8 +8073,10 @@ def api_category_trend():
             last_month_start = today.replace(month=today.month-1, day=1)
         last_month_end = last_month_start.replace(day=28)
 
+        trend_store_id = request.args.get("store_id")
+
         def get_quantity(start_date, end_date):
-            cur.execute("""
+            trend_sql = """
                 SELECT
                     c.name as category_name,
                     COALESCE(SUM(CASE WHEN t.type='판매출고' THEN t.quantity ELSE 0 END), 0) as qty
@@ -8041,8 +8087,13 @@ def api_category_trend():
                   AND date(t.date_time) >= date(%s)
                   AND date(t.date_time) <= date(%s)
                   AND c.name IN ('일회용', '기기', '액상')
-                GROUP BY c.id
-            """, (start_date, end_date))
+            """
+            trend_params = [start_date, end_date]
+            if trend_store_id:
+                trend_sql += " AND t.store_id = %s"
+                trend_params.append(trend_store_id)
+            trend_sql += " GROUP BY c.id"
+            cur.execute(trend_sql, trend_params)
             rows = cur.fetchall()
             return {r["category_name"]: r["qty"] for r in rows}
 

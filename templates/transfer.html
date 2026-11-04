@@ -252,7 +252,14 @@ async function loadStores() {
     }
     const opts = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
     fromSel.innerHTML = opts;
-    toSel.innerHTML = opts;
+    // 도착 매장: 매장 계정은 내 매장을 뺀 다른 매장의 이름만 받아온다. (내 매장 → 다른 매장 방향만 가능)
+    let toStores = stores;
+    if (window.IS_STORE_USER) {
+      try { toStores = await api('/api/transfer_targets'); } catch (e) { toStores = []; }
+    }
+    toSel.innerHTML = toStores.length
+      ? toStores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')
+      : '<option value="">이동할 매장 없음</option>';
     
     // 🔥 전역 매장 ID 적용 (출발 매장)
     const globalStoreId = localStorage.getItem('global_store_id');
@@ -277,6 +284,10 @@ async function loadStores() {
       localStorage.setItem('global_store_id', stores[0].id);
     }
     
+    if (window.IS_STORE_USER) {
+      fromSel.value = stores[0].id;
+      if (toStores.length) toSel.value = toStores[0].id;
+    }
     currentFromStore = fromSel.value;
     document.getElementById('transferProductGrid').innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>제품명을 검색하거나 \'전체 보기\'를 클릭하세요.</div>';
   } catch (e) {
