@@ -872,8 +872,13 @@ def load_brand_mapping_from_csv():
 
 
 # ===== Render(gunicorn)에서도 DB 초기화가 실행되도록 =====
+# ===== 로그인/계정 (auth.py) =====
+import auth
+auth.init_auth(app, get_db)
+
 with app.app_context():
     init_db()
+    auth.ensure_schema()
 # ========================================================
 
 

@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block content_class %}content--wide{% endblock %}
+{% block content %}
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-settings"></use></svg>계정 관리</h1>
+<div class="subtitle">매장당 계정은 1개입니다. 비밀번호는 해시로만 저장되어, 직접 정하거나 초기화한 직후 이 화면에서만 확인할 수 있습니다.</div>
+
+<div class="card au-issued" id="auIssued" style="display:none;">
+  <div class="au-issued-title">🔑 방금 설정된 로그인 정보 <span class="au-hint">(이 화면을 벗어나면 다시 볼 수 없습니다)</span></div>
+  <div class="au-issued-body">아이디 <b id="auIdText"></b> &nbsp;/&nbsp; 비밀번호 <b id="auPwText"></b></div>
+  <div class="au-issued-actions">
+    <button type="button" onclick="copyIssued()">복사</button>
+    <button type="button" onclick="document.getElementById('auIssued').style.display='none'">닫기</button>
+  </div>
+</div>
+
+<div class="au-toolbar">
+  <button type="button" class="primary" onclick="openCreate()">➕ 계정 만들기</button>
+</div>
+
+<div class="table-wrap">
+  <table id="auTable">
+    <thead>
+      <tr><th>구분 / 매장</th><th>아이디</th><th>이름</th><th>전화번호</th><th>이메일</th><th>상태</th><th>마지막 로그인</th><th>관리</th></tr>
+    </thead>
+    <tbody id="auBody"><tr><td colspan="8"><div class="empty"><span class="empty-icon">⏳</span>불러오는 중...</div></td></tr></tbody>
+  </table>
+</div>
+
+<dialog id="auDialog" class="au-dialog">
+  <form method="dialog" onsubmit="return false;">
+    <h3 id="auDlgTitle">계정 만들기</h3>
+    <label class="au-field" id="auRoleWrap"><span>구분</span>
+      <select id="fRole" onchange="syncRole()"><option value="store">매장 계정</option><option value="admin">어드민</option></select>
+    </label>
+    <label class="au-field" id="auStoreWrap"><span>매장</span><select id="fStore"></select></label>
+    <label class="au-field"><span>아이디</span><input type="text" id="fUsername" autocomplete="off" autocapitalize="none"></label>
+    <label class="au-field"><span id="fPwLabel">비밀번호</span><input type="text" id="fPassword" autocomplete="off" placeholder="비워두면 6자리 임시 비밀번호를 자동 발급"></label>
+    <label class="au-check"><input type="checkbox" id="fMust" checked> 첫 로그인 때 비밀번호 변경 화면 띄우기</label>
+    <label class="au-field"><span>이름</span><input type="text" id="fName" maxlength="50"></label>
+    <label class="au-field"><span>전화번호</span><input type="text" id="fPhone" maxlength="30"></label>
+    <label class="au-field"><span>이메일</span><input type="text" id="fEmail" maxlength="100"></label>
+    <div class="au-err" id="auDlgErr"></div>
+    <div class="au-dlg-actions">
+      <button type="button" onclick="document.getElementById('auDialog').close()">취소</button>
+      <button type="button" class="primary" onclick="submitDialog()">저장</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let users = [];
+let stores = [];
+let editing = null; // null = 새로 만들기, 아니면 수정 중인 계정
+
+async function api(url, method, body) {
+  const res = await fetch(url, {
+    method: method || 'GET', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { location.href = '/login?next=/admin/users'; throw new Error('login'); }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || '처리하지 못했습니다.');
+  return json;
+}
+
+function showIssued(username, password) {
+  $('auIdText').textContent = username;
+  $('auPwText').textContent = password;
+  $('auIssued').style.display = '';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function copyIssued() {
+  const text = '아이디: ' + $('auIdText').textContent + '\n비밀번호: ' + $('auPwText').textContent;
+  if (navigator.clipboard) navigator.clipboard.writeText(text);
+}
+
+async function load() {
+  try {
+    [users, stores] = await Promise.all([api('/api/admin/users'), api('/api/stores')]);
+  } catch (e) {
+    $('auBody').innerHTML = '<tr><td colspan="8"><div class="empty">' + esc(e.message) + '</div></td></tr>';
+    return;
+  }
+  render();
+}
+
+function render() {
+  if (!users.length) {
+    $('auBody').innerHTML = '<tr><td colspan="8"><div class="empty">계정이 없습니다.</div></td></tr>';
+    return;
+  }
+  $('auBody').innerHTML = users.map((u) => {
+    const who = u.role === 'admin' ? '어드민' : (u.store_name || '(매장 없음)');
+    const state = !u.is_active ? '<span class="au-tag off">중지</span>' : (u.must_change_pw ? '<span class="au-tag warn">임시 비번</span>' : '<span class="au-tag on">사용</span>');
+    return '<tr>' +
+      '<td><b>' + esc(who) + '</b></td>' +
+      '<td>' + esc(u.username) + (u.is_me ? ' <span class="au-hint">(나)</span>' : '') + '</td>' +
+      '<td>' + esc(u.display_name) + '</td>' +
+      '<td>' + esc(u.phone) + '</td>' +
+      '<td>' + esc(u.email) + '</td>' +
+      '<td>' + state + '</td>' +
+      '<td>' + esc(u.last_login_at || '-') + '</td>' +
+      '<td class="au-actions">' +
+        '<button type="button" onclick="openEdit(' + u.id + ')">수정</button>' +
+        '<button type="button" onclick="resetPw(' + u.id + ')">초기화</button>' +
+        (u.is_me ? '' : '<button type="button" onclick="toggleActive(' + u.id + ')">' + (u.is_active ? '중지' : '사용') + '</button>') +
+        (u.is_me ? '' : '<button type="button" class="au-del" onclick="removeUser(' + u.id + ')">삭제</button>') +
+      '</td></tr>';
+  }).join('');
+}
+
+function fillStores(selectedId) {
+  const taken = new Set(users.filter((u) => u.role === 'store' && u.store_id && (!editing || u.id !== editing.id)).map((u) => u.store_id));
+  $('fStore').innerHTML = stores.map((s) =>
+    '<option value="' + s.id + '"' + (taken.has(s.id) ? ' disabled' : '') + '>' + esc(s.name) + (taken.has(s.id) ? ' (계정 있음)' : '') + '</option>'
+  ).join('');
+  if (selectedId) $('fStore').value = selectedId;
+  else {
+    const free = stores.find((s) => !taken.has(s.id));
+    if (free) $('fStore').value = free.id;
+  }
+}
+
+function syncRole() {
+  $('auStoreWrap').style.display = $('fRole').value === 'store' ? '' : 'none';
+}
+
+function openCreate() {
+  editing = null;
+  $('auDlgTitle').textContent = '계정 만들기';
+  $('auRoleWrap').style.display = '';
+  $('fRole').value = 'store';
+  fillStores(null);
+  syncRole();
+  $('fUsername').value = ''; $('fPassword').value = ''; $('fName').value = ''; $('fPhone').value = ''; $('fEmail').value = '';
+  $('fMust').checked = true;
+  $('fPwLabel').textContent = '비밀번호';
+  $('fPassword').placeholder = '비워두면 6자리 임시 비밀번호를 자동 발급';
+  $('auDlgErr').textContent = '';
+  $('auDialog').showModal();
+}
+
+function openEdit(id) {
+  editing = users.find((u) => u.id === id);
+  if (!editing) return;
+  $('auDlgTitle').textContent = '계정 수정 · ' + editing.username;
+  $('auRoleWrap').style.display = 'none';
+  $('fRole').value = editing.role;
+  fillStores(editing.store_id);
+  $('auStoreWrap').style.display = editing.role === 'store' ? '' : 'none';
+  $('fUsername').value = editing.username;
+  $('fPassword').value = '';
+  $('fName').value = editing.display_name || '';
+  $('fPhone').value = editing.phone || '';
+  $('fEmail').value = editing.email || '';
+  $('fMust').checked = false;
+  $('fPwLabel').textContent = '새 비밀번호 (직접 설정)';
+  $('fPassword').placeholder = '바꾸지 않으려면 비워두세요';
+  $('auDlgErr').textContent = '';
+  $('auDialog').showModal();
+}
+
+async function submitDialog() {
+  $('auDlgErr').textContent = '';
+  try {
+    if (!editing) {
+      const r = await api('/api/admin/users', 'POST', {
+        role: $('fRole').value, store_id: $('fStore').value, username: $('fUsername').value.trim(),
+        password: $('fPassword').value, must_change_pw: $('fMust').checked,
+        display_name: $('fName').value, phone: $('fPhone').value, email: $('fEmail').value,
+      });
+      $('auDialog').close();
+      showIssued(r.username, r.password);
+    } else {
+      const body = {
+        username: $('fUsername').value.trim(), display_name: $('fName').value,
+        phone: $('fPhone').value, email: $('fEmail').value,
+      };
+      if (editing.role === 'store') body.store_id = $('fStore').value;
+      if ($('fPassword').value) { body.password = $('fPassword').value; body.must_change_pw = $('fMust').checked; }
+      const r = await api('/api/admin/users/' + editing.id, 'PUT', body);
+      $('auDialog').close();
+      if (r.password) showIssued(body.username, r.password);
+    }
+    await load();
+  } catch (e) {
+    $('auDlgErr').textContent = e.message;
+  }
+}
+
+async function resetPw(id) {
+  const u = users.find((x) => x.id === id);
+  if (!confirm('"' + u.username + '" 계정의 비밀번호를 초기화할까요?\n6자리 임시 비밀번호가 발급되고, 이전 비밀번호는 더 이상 쓸 수 없습니다.')) return;
+  try {
+    const r = await api('/api/admin/users/' + id + '/reset', 'POST');
+    showIssued(r.username, r.password);
+    await load();
+  } catch (e) { alert(e.message); }
+}
+
+async function toggleActive(id) {
+  const u = users.find((x) => x.id === id);
+  try {
+    await api('/api/admin/users/' + id, 'PUT', { is_active: !u.is_active });
+    await load();
+  } catch (e) { alert(e.message); }
+}
+
+async function removeUser(id) {
+  const u = users.find((x) => x.id === id);
+  if (!confirm('"' + u.username + '" 계정을 삭제할까요? 되돌릴 수 없습니다.')) return;
+  try {
+    await api('/api/admin/users/' + id, 'DELETE');
+    await load();
+  } catch (e) { alert(e.message); }
+}
+
+load();
+</script>
+
+<style>
+.au-toolbar { margin: 0 0 14px; }
+.au-issued { padding: 16px 18px; margin-bottom: 14px; border-left: 4px solid var(--accent); }
+.au-issued:hover { transform: none; }
+.au-issued-title { font-weight: 800; margin-bottom: 8px; }
+.au-issued-body { font-size: 17px; margin-bottom: 10px; }
+.au-issued-body b { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--accent-light); padding: 2px 8px; border-radius: 6px; }
+.au-issued-actions { display: flex; gap: 8px; }
+.au-hint { font-size: 12px; color: var(--text-light); font-weight: 400; }
+#auTable td { white-space: nowrap; font-size: 14px; }
+.au-actions { display: flex; gap: 6px; }
+.au-actions button { padding: 6px 10px; font-size: 13px; }
+.au-del { color: #d64545; }
+.au-tag { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.au-tag.on { background: rgba(31, 157, 85, 0.14); color: #1f9d55; }
+.au-tag.warn { background: rgba(214, 121, 31, 0.16); color: #d6791f; }
+.au-tag.off { background: rgba(127, 127, 127, 0.18); color: var(--text-light); }
+.au-dialog { border: 1px solid var(--border); border-radius: 14px; padding: 22px; width: min(440px, 92vw); background: var(--card-bg); color: var(--text); }
+.au-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.au-dialog h3 { margin: 0 0 14px; }
+.au-field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+.au-field input, .au-field select { width: 100%; box-sizing: border-box; padding: 9px 11px; font-size: 15px; font-weight: 400; }
+.au-check { display: flex; align-items: center; gap: 6px; font-size: 14px; margin: -2px 0 12px; }
+.au-err { color: #d64545; font-size: 14px; min-height: 18px; margin-bottom: 8px; }
+.au-dlg-actions { display: flex; justify-content: flex-end; gap: 8px; }
+</style>
+{% endblock %}

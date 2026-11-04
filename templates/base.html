@@ -50,6 +50,25 @@
 </head>
 <body data-page="{{ active }}">
 {% include '_icons3d.html' %}
+<style>
+/* ---- 로그인 사용자 박스 / 매장 계정 전용 화면 ---- */
+.user-box { padding: 10px 12px; margin-bottom: 8px; border-radius: 12px; border: 1px solid var(--glass-border, var(--border)); font-size: 13px; line-height: 1.4; }
+.user-box-name { font-weight: 800; font-size: 14px; color: var(--text); word-break: break-all; }
+.user-box-sub { color: var(--text-light); margin-bottom: 6px; }
+.user-box-links { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.user-box-links a, .user-login-link { color: var(--accent); font-weight: 700; text-decoration: none; }
+.user-login-link { display: block; padding: 8px 12px; margin-bottom: 8px; }
+.sm-nav { display: none; }
+{% if is_store_user %}
+.store-selector, .nav-search, #sidebarNav, .mobile-bottom-nav, .mobile-nav-overlay, .floating-panel { display: none !important; }
+@media (max-width: 768px) {
+  .sm-nav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; justify-content: space-around;
+            padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--card-bg); border-top: 1px solid var(--border); }
+  .sm-nav a { color: var(--text); font-weight: 700; font-size: 14px; text-decoration: none; padding: 6px 14px; }
+  .sm-nav a.active { color: var(--accent); }
+}
+{% endif %}
+</style>
 <script>
   // 주소창/상태바 색을 현재 테마에 맞춘다. (HYPER-DAY / HYPER-NIGHT)
   function syncThemeColorMeta() {
@@ -158,9 +177,26 @@
         <a class="nav-item {{ 'active' if active=='suppliers' else '' }}" href="/suppliers" data-label="거래처 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-handshake"></use></svg>거래처 관리</a>
         <a class="nav-item {{ 'active' if active=='customers' else '' }}" href="/customers" data-label="고객 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-users"></use></svg>고객 관리</a>
         <a class="nav-item {{ 'active' if active=='settings' else '' }}" href="/settings" data-label="설정"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-settings"></use></svg>설정</a>
+        {% if current_user and current_user.role == 'admin' %}
+        <a class="nav-item {{ 'active' if active=='my_stock' else '' }}" href="/my-stock" data-label="매장 재고 조회"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-package"></use></svg>매장 재고 조회</a>
+        <a class="nav-item {{ 'active' if active=='admin_users' else '' }}" href="/admin/users" data-label="계정 관리"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-settings"></use></svg>계정 관리</a>
+        {% endif %}
       </div>
     </nav>
     <div class="sidebar-footer">
+      {% if current_user %}
+      <div class="user-box">
+        <div class="user-box-name">{{ current_user.name or current_user.username }}</div>
+        <div class="user-box-sub">{{ '어드민' if current_user.role == 'admin' else (current_user.store_name or '매장 계정') }}</div>
+        <div class="user-box-links">
+          {% if is_store_user %}<a href="/my-stock">내 재고</a>{% endif %}
+          <a href="/account">내 정보</a>
+          <a href="/logout">로그아웃</a>
+        </div>
+      </div>
+      {% else %}
+      <a class="user-login-link" href="/login?next={{ request.path|urlencode }}">🔑 로그인</a>
+      {% endif %}
       <button class="theme-toggle theme-toggle-btn" onclick="toggleTheme()"><svg class="i3d" aria-hidden="true"><use href="#i3d-moon"></use></svg> 다크 모드</button>
     </div>
   </aside>
@@ -285,6 +321,13 @@ function filterMobileNavItems(query) {
   <button class="pwa-install-close" onclick="pwaDismissBanner()">✕</button>
 </div>
 
+{% if is_store_user %}
+<nav class="sm-nav">
+  <a href="/my-stock" class="{{ 'active' if active=='my_stock' else '' }}">내 재고</a>
+  <a href="/account" class="{{ 'active' if active=='account' else '' }}">내 정보</a>
+  <a href="/logout">로그아웃</a>
+</nav>
+{% endif %}
 <nav class="mobile-bottom-nav">
   <a href="/dashboard" class="{{ 'active' if active=='dashboard' else '' }}">
     <svg class="i3d nav-icon" aria-hidden="true"><use href="#i3d-layout-dashboard"></use></svg>

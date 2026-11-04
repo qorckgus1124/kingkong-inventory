@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block content %}
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-settings"></use></svg>내 정보</h1>
+<div class="subtitle" id="acSub">아이디와 비밀번호, 연락처를 바꿀 수 있습니다.</div>
+
+{% if first %}
+<div class="ac-banner">🔑 임시 비밀번호로 로그인하셨습니다. 아래에서 새 비밀번호를 정해 주세요. (임시 비밀번호와 같은 값을 써도 됩니다)</div>
+{% endif %}
+
+<div class="ac-grid">
+  <div class="card ac-card" id="acPwCard">
+    <h3>비밀번호 변경</h3>
+    <label class="ac-field"><span>현재 비밀번호</span><input type="password" id="pwCur" autocomplete="current-password"></label>
+    <label class="ac-field"><span>새 비밀번호</span><input type="password" id="pwNew" autocomplete="new-password"></label>
+    <button type="button" class="primary" onclick="changePassword()">비밀번호 변경</button>
+    <div class="ac-msg" id="pwMsg"></div>
+  </div>
+
+  <div class="card ac-card">
+    <h3>아이디 변경</h3>
+    <div class="ac-now">현재 아이디: <b id="acUsername">-</b></div>
+    <label class="ac-field"><span>새 아이디</span><input type="text" id="unNew" autocomplete="off" autocapitalize="none"></label>
+    <label class="ac-field"><span>현재 비밀번호 확인</span><input type="password" id="unPw" autocomplete="current-password"></label>
+    <button type="button" class="primary" onclick="changeUsername()">아이디 변경</button>
+    <div class="ac-msg" id="unMsg"></div>
+  </div>
+
+  <div class="card ac-card">
+    <h3>개인 정보</h3>
+    <div class="ac-now" id="acWho"></div>
+    <label class="ac-field"><span>이름</span><input type="text" id="pfName" maxlength="50"></label>
+    <label class="ac-field"><span>전화번호</span><input type="tel" id="pfPhone" maxlength="30"></label>
+    <label class="ac-field"><span>이메일</span><input type="email" id="pfEmail" maxlength="100"></label>
+    <button type="button" class="primary" onclick="saveProfile()">저장</button>
+    <div class="ac-msg" id="pfMsg"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function say(id, text, ok) {
+  const el = $(id);
+  el.textContent = text;
+  el.className = 'ac-msg ' + (ok ? 'ok' : 'err');
+}
+
+async function api(url, method, body) {
+  const res = await fetch(url, {
+    method, credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { location.href = '/login?next=/account'; throw new Error('login'); }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || '처리하지 못했습니다.');
+  return json;
+}
+
+async function loadAccount() {
+  const me = await api('/api/account', 'GET');
+  $('acUsername').textContent = me.username;
+  $('pfName').value = me.display_name;
+  $('pfPhone').value = me.phone;
+  $('pfEmail').value = me.email;
+  $('acWho').textContent = me.role === 'admin' ? '어드민 계정' : (me.store_name ? me.store_name + ' 매장 계정' : '매장 계정');
+}
+
+async function changePassword() {
+  try {
+    await api('/api/account/password', 'POST', { current_password: $('pwCur').value, new_password: $('pwNew').value });
+    say('pwMsg', '비밀번호를 변경했습니다.', true);
+    $('pwCur').value = ''; $('pwNew').value = '';
+    const banner = document.querySelector('.ac-banner');
+    if (banner) banner.remove();
+  } catch (e) { say('pwMsg', e.message, false); }
+}
+
+async function changeUsername() {
+  try {
+    const r = await api('/api/account/username', 'POST', { new_username: $('unNew').value, current_password: $('unPw').value });
+    say('unMsg', '아이디를 "' + r.username + '"(으)로 변경했습니다.', true);
+    $('acUsername').textContent = r.username;
+    $('unNew').value = ''; $('unPw').value = '';
+  } catch (e) { say('unMsg', e.message, false); }
+}
+
+async function saveProfile() {
+  try {
+    await api('/api/account/profile', 'PUT', { display_name: $('pfName').value, phone: $('pfPhone').value, email: $('pfEmail').value });
+    say('pfMsg', '저장했습니다.', true);
+  } catch (e) { say('pfMsg', e.message, false); }
+}
+
+loadAccount();
+</script>
+
+<style>
+.ac-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 16px; align-items: start; max-width: 1100px; }
+.ac-card { padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.ac-card:hover { transform: none; }
+.ac-card h3 { margin: 0; font-size: 17px; }
+.ac-field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 700; color: var(--text); }
+.ac-field input { width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 15px; font-weight: 400; }
+.ac-now { font-size: 14px; color: var(--text-light); }
+.ac-msg { font-size: 14px; min-height: 18px; }
+.ac-msg.ok { color: #1f9d55; }
+.ac-msg.err { color: #d64545; }
+.ac-banner { font-size: 14px; line-height: 1.5; background: var(--accent-light); border-left: 4px solid var(--accent); border-radius: 6px; padding: 12px 14px; margin: 0 0 16px; max-width: 1100px; }
+</style>
+{% endblock %}
