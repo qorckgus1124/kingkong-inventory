@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block content %}
+<link rel="stylesheet" href="/static/admin_reports.css">
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-building-store"></use></svg>매장 리포트</h1>
+<div class="subtitle">전체 매장을 한 화면에서 비교합니다. 매장 카드를 누르면 해당 매장의 상세 리포트로 이동합니다. (어드민 전용)</div>
+
+<div id="arCapture">
+  <div class="ar-toolbar">
+    <div id="periodBar" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"></div>
+    <span class="spacer"></span>
+    <button class="ar-btn" onclick="exportCsv()">CSV 내려받기</button>
+    <button class="ar-btn" onclick="window.print()">인쇄 / PDF</button>
+    <button class="ar-btn" onclick="AR.saveImage('arCapture','store_report_overview.png')">이미지 저장</button>
+  </div>
+  <div id="arPeriodLabel" class="ar-notes" style="margin:-6px 0 14px;"></div>
+
+  <div id="arBody"><div class="ar-loading">불러오는 중...</div></div>
+</div>
+
+<div class="card ar-card no-print" style="margin-top:16px;">
+  <h3>이상 징후 기준값 <span class="hint">알림은 이 화면에만 표시됩니다</span></h3>
+  <div class="ar-sub">
+    <label>매출 급락: 최근 7일 평균 대비 <input type="number" id="thDrop" min="1" max="100" style="width:70px"> % 이상 하락</label>
+    <label>취소 과다: 평균의 <input type="number" id="thCancel" min="1" max="50" style="width:60px"> 배 이상</label>
+    <label>실사 차이: 7일 합계 <input type="number" id="thStock" min="1" style="width:80px"> 개 이상</label>
+    <button class="ar-btn primary" onclick="saveThresholds()">저장</button>
+    <span id="thMsg" class="ar-notes"></span>
+  </div>
+</div>
+
+<div class="card ar-card no-print">
+  <h3>데이터 일관성 점검 <span class="hint">리포트 기준과 기존 매출 통계/금일 보고 기준의 같은 날 숫자 비교</span></h3>
+  <div class="ar-sub">
+    <input type="date" id="chkDate">
+    <button class="ar-btn" onclick="loadCheck()">점검</button>
+  </div>
+  <div id="chkBody"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="/static/admin_reports.js"></script>
+<script>
+let DATA = null;
+const periodSuffix = () => AR.periodString();
+
+function storeCard(s) {
+  return `<a class="ar-store" href="/admin/reports/${s.store_id}?${periodSuffix()}">
+    <div class="top"><span class="name">${AR.esc(s.store)}</span><span class="rank">매출 ${s.rank}위</span></div>
+    <div class="rev">${AR.won(s.revenue)}</div>
+    <div>${AR.delta(s.revenue_change)} <span class="ar-notes">지난 기간 대비</span></div>
+    <dl>
+      <dt>순이익</dt><dd>${AR.won(s.profit)} ${AR.delta(s.profit_change)}</dd>
+      <dt>이익률</dt><dd>${AR.pct(s.margin)}</dd>
+      <dt>판매수량</dt><dd>${AR.num(s.qty)}개</dd>
+      <dt>객단가</dt><dd>${AR.won(s.aov)}</dd>
+      <dt>재고 금액</dt><dd>${AR.won(s.stock_value)}</dd>
+      <dt>재고 부족 품목</dt><dd>${s.low_stock_items > 0 ? `<span class="badge badge-warning">${s.low_stock_items}개</span>` : '<span class="badge badge-success">없음</span>'}</dd>
+    </dl></a>`;
+}
+
+function render(d) {
+  const p = d.period;
+  document.getElementById('arPeriodLabel').textContent =
+    `조회 ${p.start} ~ ${p.end} (${p.days}일) · 비교 ${p.prev_start} ~ ${p.prev_end}`;
+  const t = d.total;
+  const alerts = d.anomalies.length
+    ? d.anomalies.map(a => `<div class="ar-alert ${a.severity}"><b>${AR.esc(a.store)}</b><span>${AR.esc(a.message)}</span></div>`).join('')
+    : '<div class="ar-empty">감지된 이상 징후가 없습니다.</div>';
+  const imb = d.imbalance.length ? AR.table([
+    { label: '제품', key: 'product' },
+    { label: '부족 매장', key: 'to_store' },
+    { label: '재고', key: 'to_qty', num: true },
+    { label: '소진 예상일', get: r => r.to_days_to_deplete == null ? '-' : r.to_days_to_deplete + '일', num: true },
+    { label: '여유 매장', key: 'from_store' },
+    { label: '여유 재고', key: 'from_qty', num: true },
+    { label: '이동 추천', get: r => `<b>${r.suggest_qty}개</b>`, html: true, num: true },
+    { label: '', get: r => `<a class="ar-btn" href="/transfer">재고 이동</a>`, html: true },
+  ], d.imbalance) : '<div class="ar-empty">매장 간 재고 불균형이 없습니다.</div>';
+
+  document.getElementById('arBody').innerHTML = `
+    <div class="ar-kpis">
+      <div class="ar-kpi"><div class="l">전체 매출</div><div class="v">${AR.won(t.revenue)}</div><div class="s">${AR.delta(t.revenue_change)} 지난 기간 대비</div></div>
+      <div class="ar-kpi"><div class="l">전체 순이익</div><div class="v">${AR.won(t.profit)}</div><div class="s">이익률 ${AR.pct(t.margin)}</div></div>
+      <div class="ar-kpi"><div class="l">판매수량</div><div class="v">${AR.num(t.qty)}개</div></div>
+      <div class="ar-kpi"><div class="l">결제 건수</div><div class="v">${AR.num(t.orders)}건</div></div>
+    </div>
+    <div class="card ar-card"><h3>이상 징후 알림</h3>${alerts}</div>
+    <div class="ar-stores">${d.stores.map(storeCard).join('')}</div>
+    <div class="ar-grid3">
+      <div class="card ar-card"><h3>일별 매출 추이 <span class="hint">매장 겹쳐보기</span></h3><div class="ar-chart tall"><canvas id="chTrend"></canvas></div></div>
+      <div class="card ar-card"><h3>매출 비중</h3><div class="ar-chart tall"><canvas id="chShare"></canvas></div></div>
+    </div>
+    <div class="card ar-card"><h3>매출 순위</h3><div class="ar-chart"><canvas id="chRank"></canvas></div></div>
+    <div class="card ar-card"><h3>매장 간 재고 불균형 <span class="hint">한쪽은 부족, 다른 쪽은 잉여 (최근 30일 판매 속도 기준)</span></h3>${imb}</div>`;
+
+  const labels = d.trend.labels;
+  const fmtDay = x => x.slice(5);
+  AR.chart('chTrend', { type: 'line', data: { labels: labels.map(fmtDay), datasets: d.trend.series.map((s, i) => ({
+    label: s.store, data: s.revenue, borderColor: AR.palette[i % 6], backgroundColor: AR.palette[i % 6],
+    borderDash: AR.dashes[i % 6], tension: .25, pointRadius: labels.length > 31 ? 0 : 2, borderWidth: 2 })) },
+    options: { scales: { y: { ticks: { callback: v => AR.short(v) } } }, plugins: { tooltip: { callbacks: { label: c => `${c.dataset.label}: ${AR.won(c.parsed.y)}` } } } } });
+  const ranked = [...d.stores].sort((a, b) => b.revenue - a.revenue);
+  AR.chart('chShare', { type: 'doughnut', data: { labels: ranked.map(s => s.store), datasets: [{ data: ranked.map(s => s.revenue), backgroundColor: ranked.map((s, i) => AR.palette[i % 6]) }] },
+    options: { plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: c => `${c.label}: ${AR.won(c.parsed)}` } } } } });
+  AR.chart('chRank', { type: 'bar', data: { labels: ranked.map(s => s.store), datasets: [
+    { label: '매출', data: ranked.map(s => s.revenue), backgroundColor: AR.palette[0] },
+    { label: '순이익', data: ranked.map(s => s.profit), backgroundColor: AR.palette[1] }] },
+    options: { indexAxis: 'y', scales: { x: { ticks: { callback: v => AR.short(v) } } } } });
+
+  const th = d.thresholds;
+  document.getElementById('thDrop').value = th.report_revenue_drop_pct;
+  document.getElementById('thCancel').value = th.report_cancel_multiplier;
+  document.getElementById('thStock').value = th.report_stocktake_diff_units;
+}
+
+async function load() {
+  const body = document.getElementById('arBody');
+  body.innerHTML = '<div class="ar-loading">불러오는 중...</div>';
+  try {
+    DATA = await AR.api('/api/admin/reports/overview', AR.periodQuery());
+    render(DATA);
+  } catch (e) {
+    body.innerHTML = `<div class="ar-error">${AR.esc(e.message)}</div>`;
+  }
+}
+
+function exportCsv() {
+  location.href = '/api/admin/reports/overview?format=csv&' + AR.periodString();
+}
+
+async function saveThresholds() {
+  const msg = document.getElementById('thMsg');
+  try {
+    const res = await fetch('/api/admin/reports/thresholds', { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        report_revenue_drop_pct: document.getElementById('thDrop').value,
+        report_cancel_multiplier: document.getElementById('thCancel').value,
+        report_stocktake_diff_units: document.getElementById('thStock').value }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '저장하지 못했습니다.');
+    msg.textContent = '저장했습니다.';
+    load();
+  } catch (e) { msg.textContent = e.message; }
+}
+
+async function loadCheck() {
+  const box = document.getElementById('chkBody');
+  box.innerHTML = '<div class="ar-loading">점검 중...</div>';
+  try {
+    const d = await AR.api('/api/admin/reports/consistency', { date: document.getElementById('chkDate').value });
+    box.innerHTML = AR.table([
+      { label: '매장', key: 'store' },
+      { label: '리포트 매출', get: r => AR.won(r.report_revenue), num: true },
+      { label: '기존 기준 매출', get: r => AR.won(r.legacy_revenue), num: true },
+      { label: '차이', get: r => AR.won(r.diff_revenue), num: true },
+      { label: '집계표(지난 날짜)', get: r => r.rollup_revenue == null ? '-' : AR.won(r.rollup_revenue), num: true },
+      { label: '수동 보정 매출', get: r => r.override_amount == null ? '-' : AR.won(r.override_amount), num: true },
+      { label: '제외된 거래(사유별 매출)', get: r => Object.keys(r.excluded).length ? Object.entries(r.excluded).map(([k, v]) => `${AR.esc(k)} ${AR.won(v)}`).join(' / ') : '-', html: true },
+      { label: '판정', get: r => r.diff_revenue === 0 && r.diff_qty === 0 ? '<span class="badge badge-success">일치</span>' : (r.explained ? '<span class="badge badge-warning">제외 규칙 차이</span>' : '<span class="badge badge-danger">확인 필요</span>'), html: true },
+    ], d.stores) + `<div class="ar-notes">${AR.esc(d.note)}</div>`;
+  } catch (e) { box.innerHTML = `<div class="ar-error">${AR.esc(e.message)}</div>`; }
+}
+
+document.getElementById('chkDate').value = AR.today();
+AR.renderPeriodBar(document.getElementById('periodBar'), load);
+load();
+</script>
+{% endblock %}

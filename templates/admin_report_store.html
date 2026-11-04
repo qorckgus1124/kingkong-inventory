@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block content %}
+<link rel="stylesheet" href="/static/admin_reports.css">
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-building-store"></use></svg>{{ store.name }} 리포트</h1>
+<div class="subtitle"><a href="/admin/reports" id="backLink">← 전체 매장 비교</a> · 탭을 열 때만 데이터를 불러옵니다. (어드민 전용)</div>
+
+<div id="arCapture">
+  <div class="ar-toolbar">
+    <select id="storeSwitch" class="ar-btn" onchange="switchStore(this.value)">
+      {% for s in stores %}<option value="{{ s.id }}" {{ 'selected' if s.id == store.id else '' }}>{{ s.name }}</option>{% endfor %}
+    </select>
+    <div id="periodBar" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"></div>
+    <span class="spacer"></span>
+    <button class="ar-btn" id="btnCsv" onclick="exportCsv()">CSV 내려받기</button>
+    <button class="ar-btn" onclick="window.print()">인쇄 / PDF</button>
+    <button class="ar-btn" onclick="AR.saveImage('arCapture','store_{{ store.id }}_report.png')">이미지 저장</button>
+  </div>
+  <div id="arPeriodLabel" class="ar-notes" style="margin:-6px 0 12px;"></div>
+
+  <div class="ar-tabs" id="tabs" role="tablist"></div>
+  <div id="tabBody"><div class="ar-loading">불러오는 중...</div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="/static/admin_reports.js"></script>
+<script>
+const STORE_ID = {{ store.id }};
+const TABS = [
+  ['summary', '요약'], ['sales', '매출·추이'], ['bestsellers', '베스트셀러'], ['turnover', '회전율'],
+  ['stock', '재고'], ['needs', '필요한 것'], ['ops', '운영'], ['customers', '고객'],
+];
+const EXPORTABLE = new Set(['sales', 'bestsellers', 'turnover', 'stock', 'needs', 'ops', 'customers']);
+// 탭별 보조 옵션 (탭을 바꿔도 유지)
+const opt = { gran: 'day', metric: 'qty', group_by: 'product', sort_by: 'sold', status: '', target_days: 14, bsView: 'products' };
+let current = (location.hash || '#summary').slice(1);
+if (!TABS.some(t => t[0] === current)) current = 'summary';
+let seq = 0;
+
+function tabParams(tab) {
+  const p = AR.periodQuery();
+  if (tab === 'sales') p.granularity = opt.gran;
+  if (tab === 'bestsellers') { p.metric = opt.metric; p.top = 15; }
+  if (tab === 'turnover') { p.group_by = opt.group_by; p.sort_by = opt.sort_by; }
+  if (tab === 'stock') p.status = opt.status;
+  if (tab === 'needs') p.target_days = opt.target_days;
+  return p;
+}
+
+function drawTabs() {
+  document.getElementById('tabs').innerHTML = TABS.map(([k, l]) =>
+    `<button role="tab" class="${k === current ? 'active' : ''}" onclick="openTab('${k}')">${l}</button>`).join('');
+  document.getElementById('btnCsv').style.display = EXPORTABLE.has(current) ? '' : 'none';
+}
+function openTab(k) { current = k; location.hash = k; drawTabs(); load(); }
+function switchStore(id) { location.href = '/admin/reports/' + id + '?' + AR.periodString() + '#' + current; }
+function exportCsv() {
+  const q = new URLSearchParams(tabParams(current)); q.set('format', 'csv');
+  location.href = `/api/admin/reports/store/${STORE_ID}/${current}?` + q;
+}
+document.getElementById('backLink').addEventListener('click', e => {
+  e.preventDefault(); location.href = '/admin/reports?' + AR.periodString();
+});
+
+const kpi = (l, v, s) => `<div class="ar-kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s || ''}</div></div>`;
+const selectHtml = (id, val, options, fn) =>
+  `<select id="${id}" onchange="${fn}(this.value)">` + options.map(([k, l]) => `<option value="${k}" ${String(val) === String(k) ? 'selected' : ''}>${l}</option>`).join('') + '</select>';
+const bar = (v, max) => `<div class="ar-bar"><i style="width:${max > 0 ? Math.max(0, Math.min(100, v * 100 / max)) : 0}%"></i></div>`;
+
+// ---------------- 탭 렌더러 ----------------
+const R = {};
+
+R.summary = d => {
+  const m = d.metrics, pv = m.prev;
+  const cmp = c => `<div class="card ar-card"><h3>${c.label_a} vs ${c.label_b}</h3>` + AR.table([
+    { label: '지표', key: 'k' }, { label: c.label_a, key: 'a', num: true }, { label: c.label_b, key: 'b', num: true }, { label: '증감', key: 'c', num: true, html: true }],
+    [{ k: '매출', a: AR.won(c.a.revenue), b: AR.won(c.b.revenue), c: AR.delta(c.revenue_change) },
+     { k: '순이익', a: AR.won(c.a.profit), b: AR.won(c.b.profit), c: AR.delta(c.profit_change) },
+     { k: '판매수량', a: AR.num(c.a.qty) + '개', b: AR.num(c.b.qty) + '개', c: AR.delta(c.a.qty && c.b.qty ? Math.round((c.a.qty - c.b.qty) * 1000 / c.b.qty) / 10 : null) }]) + '</div>';
+  return `<div class="ar-kpis">
+    ${kpi('매출', AR.won(m.revenue), AR.delta(m.revenue_change) + ' 지난 기간 ' + AR.short(pv.revenue))}
+    ${kpi('이익', AR.won(m.profit), AR.delta(m.profit_change) + ' 지난 기간 ' + AR.short(pv.profit))}
+    ${kpi('이익률', AR.pct(m.margin), '지난 기간 ' + AR.pct(pv.margin))}
+    ${kpi('판매수량', AR.num(m.qty) + '개', AR.delta(m.qty_change))}
+    ${kpi('객단가', AR.won(m.aov), '지난 기간 ' + AR.won(pv.aov))}
+    ${kpi('결제 건수', AR.num(m.orders) + '건', AR.delta(m.orders_change))}
+  </div><div class="ar-grid2">${cmp(d.week)}${cmp(d.month)}</div>
+  <div class="ar-notes">결제 건수는 같은 매장·유형·분 단위 시각의 거래를 1건으로 묶어 셉니다. 객단가 = 매출 ÷ 결제 건수.</div>`;
+};
+
+R.sales = d => {
+  const heatMax = Math.max(1, ...d.heatmap.grid.flat());
+  const dows = d.heatmap.dow_labels;
+  let heat = '<div class="ar-heat"><span></span>' + Array.from({ length: 24 }, (_, h) => `<span class="h">${h}</span>`).join('');
+  d.heatmap.grid.forEach((row, i) => {
+    heat += `<span class="d">${dows[i]}</span>` + row.map((v, h) =>
+      `<span class="c" title="${dows[i]}요일 ${h}시 · ${AR.won(v)}" style="${v > 0 ? `background:rgba(59,111,224,${(0.12 + 0.88 * v / heatMax).toFixed(2)})` : ''}"></span>`).join('');
+  });
+  heat += '</div>';
+  const pay = AR.table([
+    { label: '결제수단', key: 'method' }, { label: '매출', get: r => AR.won(r.revenue), num: true },
+    { label: '비율', get: r => AR.pct(r.share), num: true },
+    { label: '이익', get: r => AR.won(r.profit), num: true },
+    { label: '카드 원가 반영 이익', get: r => AR.won(r.profit_card_adj), num: true },
+    { label: '차이', get: r => r.card_cost_effect ? AR.won(r.card_cost_effect) : '-', num: true }], d.payments);
+  return `<div class="ar-sub">단위 ${selectHtml('gran', opt.gran, [['day', '일'], ['week', '주'], ['month', '월']], 'setGran')}</div>
+    <div class="card ar-card"><h3>매출·이익 추이</h3><div class="ar-chart tall"><canvas id="chSales"></canvas></div></div>
+    <div class="card ar-card"><h3>요일·시간대별 매출 <span class="hint">진할수록 매출이 큼</span></h3>${heat}</div>
+    <div class="ar-grid2">
+      <div class="card ar-card"><h3>결제수단 비율</h3><div class="ar-chart"><canvas id="chPay"></canvas></div></div>
+      <div class="card ar-card"><h3>선결제 비중</h3><div class="ar-kpi" style="border:0;box-shadow:none;padding:0"><div class="v">${AR.pct(d.prepaid.share)}</div><div class="s">선결제(예약) 매출 ${AR.won(d.prepaid.revenue)}</div></div>
+        <div class="ar-notes">선결제는 예약이 기록된 시점의 매출로 집계합니다.</div></div>
+    </div>
+    <div class="card ar-card"><h3>결제수단별 이익 차이 <span class="hint">카드 결제는 제품의 카드 원가를 반영</span></h3>${pay}</div>`;
+};
+R.sales.after = d => {
+  AR.chart('chSales', { type: 'bar', data: { labels: d.trend.map(x => x.date.slice(opt.gran === 'month' ? 0 : 5, opt.gran === 'month' ? 7 : 10)), datasets: [
+    { type: 'bar', label: '매출', data: d.trend.map(x => x.revenue), backgroundColor: AR.palette[1], order: 2 },
+    { type: 'line', label: '이익', data: d.trend.map(x => x.profit), borderColor: AR.palette[0], backgroundColor: AR.palette[0], tension: .25, order: 1 }] },
+    options: { scales: { y: { ticks: { callback: v => AR.short(v) } } } } });
+  AR.chart('chPay', { type: 'doughnut', data: { labels: d.payments.map(x => x.method), datasets: [{ data: d.payments.map(x => x.revenue), backgroundColor: d.payments.map((x, i) => AR.palette[i % 6]) }] },
+    options: { plugins: { legend: { position: 'bottom' } } } });
+};
+function setGran(v) { opt.gran = v; load(); }
+
+R.bestsellers = d => {
+  const max = Math.max(1, ...d.products.map(p => p[opt.metric]));
+  const label = { qty: '수량', revenue: '매출', profit: '이익' }[opt.metric];
+  const prodTable = AR.table([
+    { label: '순위', key: 'rank', num: true }, { label: '제품', key: 'name' }, { label: '브랜드', key: 'brand' },
+    { label: '수량', get: r => AR.num(r.qty), num: true }, { label: '매출', get: r => AR.won(r.revenue), num: true },
+    { label: '이익', get: r => AR.won(r.profit), num: true }, { label: '이익률', get: r => AR.pct(r.margin), num: true },
+    { label: label + ' 비중', get: r => bar(r[opt.metric], max), html: true }], d.products, { empty: '이 기간 판매가 없습니다.' });
+  const grp = rows => AR.table([{ label: '이름', key: 'name' }, { label: '수량', get: r => AR.num(r.qty), num: true },
+    { label: '매출', get: r => AR.won(r.revenue), num: true }, { label: '이익', get: r => AR.won(r.profit), num: true },
+    { label: '이익률', get: r => AR.pct(r.margin), num: true }], rows);
+  const unsold = AR.table([{ label: '제품', key: 'name' }, { label: '브랜드', key: 'brand' },
+    { label: '재고', get: r => AR.num(r.qty), num: true }, { label: '묶인 재고 금액', get: r => AR.won(r.value), num: true }], d.unsold,
+    { empty: '재고가 있는데 안 팔린 제품이 없습니다.' });
+  return `<div class="ar-sub">기준 ${selectHtml('metric', opt.metric, [['qty', '수량'], ['revenue', '매출'], ['profit', '이익']], 'setMetric')}
+    <span class="ar-notes">매출만 보면 착시가 있어 이익 기준으로도 확인하세요. 전체 ${d.all_count}개 제품 중 상위 ${d.products.length}개.</span></div>
+    <div class="card ar-card"><h3>잘 나가는 제품 TOP</h3>${prodTable}</div>
+    <div class="ar-grid2"><div class="card ar-card"><h3>브랜드별 순위</h3>${grp(d.brands)}</div>
+    <div class="card ar-card"><h3>카테고리별 순위</h3>${grp(d.categories)}</div></div>
+    <div class="card ar-card"><h3>맛(제품명에서 브랜드 제외) 순위 <span class="hint">제품명 기준 자동 추출</span></h3>${grp(d.flavors)}</div>
+    <div class="card ar-card"><h3>안 팔리는 제품 <span class="hint">재고는 있으나 기간 내 판매 0</span></h3>${unsold}</div>`;
+};
+function setMetric(v) { opt.metric = v; load(); }
+
+R.turnover = d => {
+  const rows = d.rows.map(r => Object.assign({}, r, {
+    dd: r.days_to_deplete == null ? '-' : r.days_to_deplete + '일',
+    ddHtml: r.days_to_deplete == null ? '-' : `<span class="badge ${r.days_to_deplete <= 7 ? 'badge-danger' : r.days_to_deplete <= 14 ? 'badge-warning' : 'badge-success'}">${r.days_to_deplete}일</span>`,
+  }));
+  return `<div class="ar-sub">기준 ${selectHtml('gb', opt.group_by, [['product', '제품별'], ['brand', '브랜드별'], ['category', '카테고리별']], 'setGroupBy')}
+    정렬 ${selectHtml('sb', opt.sort_by, [['sold', '판매수량 많은 순'], ['turnover', '회전 횟수 높은 순'], ['days_to_deplete', '소진 임박 순']], 'setSortBy')}
+    <span class="ar-notes">회전 횟수 = 기간 판매수량 ÷ 현재고 · 소진 예상일 = 현재고 ÷ 일평균 판매 · 중앙값 ${d.median_turnover == null ? '-' : d.median_turnover}회</span></div>
+    <div class="card ar-card">${AR.table([
+      { label: '항목', key: 'label' }, { label: '브랜드', key: 'brand' },
+      { label: '현재고', get: r => AR.num(r.qty), num: true }, { label: '판매수량', get: r => AR.num(r.sold), num: true },
+      { label: '일평균', key: 'avg_daily', num: true }, { label: '회전 횟수', get: r => r.turnover == null ? '-' : r.turnover, num: true },
+      { label: '소진 예상일', get: r => r.ddHtml, html: true, num: true }, { label: '재고 금액', get: r => AR.won(r.stock_value), num: true },
+      { label: '판단', get: r => r.tag ? `<span class="ar-tag">${AR.esc(r.tag)}</span>` : '', html: true }], rows)}
+    ${d.total_rows > rows.length ? `<div class="ar-notes">${d.total_rows}개 중 ${rows.length}개만 표시합니다.</div>` : ''}</div>`;
+};
+function setGroupBy(v) { opt.group_by = v; load(); }
+function setSortBy(v) { opt.sort_by = v; load(); }
+
+R.stock = d => {
+  const s = d.summary, c = s.counts;
+  const filters = [['', '전체'], ['품절', '품절'], ['부족', '부족'], ['과다', '과다'], ['부진', '부진'], ['정상', '정상']];
+  return `<div class="ar-kpis">
+    ${kpi('재고 금액(원가)', AR.won(s.value), `판매가 기준 ${AR.short(s.retail_value)}원`)}
+    ${kpi('재고 수량', AR.num(s.qty) + '개', s.items + '개 품목')}
+    ${kpi('품절 / 부족', `${c['품절']} / ${c['부족']}`, '개 품목')}
+    ${kpi('과다 / 부진 재고', AR.won(s.stale_value), `과다 ${c['과다']} · 부진 ${c['부진']}개`)}
+  </div>
+  <div class="ar-sub">상태 ${selectHtml('st', opt.status, filters, 'setStatus')}<span class="ar-notes">상태는 최소수량·30일 판매 속도 기준입니다. 부족=최소수량 이하 또는 7일 내 소진, 과다=90일 초과분, 부진=30일 판매 0.</span></div>
+  <div class="card ar-card">${AR.table([
+    { label: '제품', key: 'name' }, { label: '브랜드', key: 'brand' }, { label: '재고', get: r => AR.num(r.qty), num: true },
+    { label: '최소수량', key: 'min_qty', num: true }, { label: '원가', get: r => AR.won(r.cost), num: true },
+    { label: '재고 금액', get: r => AR.won(r.value), num: true }, { label: '30일 판매', key: 'sold_30d', num: true },
+    { label: '소진 예상일', get: r => r.days_to_deplete == null ? '-' : r.days_to_deplete + '일', num: true },
+    { label: '상태', get: r => AR.statusBadge(r.status), html: true }], d.rows)}
+    ${d.total_rows > d.rows.length ? `<div class="ar-notes">${d.total_rows}개 중 ${d.rows.length}개만 표시합니다. 전체는 CSV로 받을 수 있습니다.</div>` : ''}</div>`;
+};
+function setStatus(v) { opt.status = v; load(); }
+
+R.needs = d => {
+  const reorder = AR.table([
+    { label: '우선순위', get: (r) => r.flag ? `<span class="badge badge-danger">${AR.esc(r.flag)}</span>` : (r.bestseller ? '<span class="badge badge-warning">베스트셀러</span>' : ''), html: true },
+    { label: '제품', key: 'name' }, { label: '브랜드', key: 'brand' }, { label: '재고', get: r => AR.num(r.qty), num: true },
+    { label: '30일 판매', key: 'sold_30d', num: true },
+    { label: '소진 예상일', get: r => r.days_to_deplete == null ? '-' : r.days_to_deplete + '일', num: true },
+    { label: '추천 발주', get: r => `<b>${AR.num(r.recommend_qty)}개</b>`, html: true, num: true },
+    { label: '예상 금액', get: r => AR.won(r.recommend_cost), num: true }], d.reorder, { empty: '발주가 필요한 제품이 없습니다.' });
+  const tr = AR.table([{ label: '제품', key: 'name' }, { label: '보낼 매장', key: 'from_store' },
+    { label: '그 매장 재고', key: 'from_qty', num: true }, { label: '여유분', key: 'surplus', num: true },
+    { label: '이동 추천', get: r => `<b>${r.suggest_qty}개</b>`, html: true, num: true },
+    { label: '', get: r => '<a class="ar-btn" href="/transfer">재고 이동</a>', html: true }], d.transfers,
+    { empty: '다른 매장에서 옮겨올 수 있는 제품이 없습니다.' });
+  const dead = AR.table([{ label: '제품', key: 'name' }, { label: '브랜드', key: 'brand' }, { label: '재고', key: 'qty', num: true },
+    { label: '묶인 금액', get: r => AR.won(r.value), num: true }, { label: '제안', key: 'action' }], d.dead_stock,
+    { empty: '부진 재고가 없습니다.' });
+  return `<div class="ar-sub">목표 재고일수 ${selectHtml('td', opt.target_days, [[7, '7일'], [14, '14일'], [21, '21일'], [30, '30일']], 'setTarget')}
+    <span class="ar-notes">잘 팔리는 제품(상위 20%)이 소진 7일 이내면 가장 먼저 표시됩니다.</span></div>
+    <div class="card ar-card"><h3>발주 필요 목록</h3>${reorder}</div>
+    <div class="card ar-card"><h3>타 매장 이동 추천</h3>${tr}</div>
+    <div class="card ar-card"><h3>부진 재고 처리 제안</h3>${dead}</div>`;
+};
+function setTarget(v) { opt.target_days = v; load(); }
+
+R.ops = d => {
+  const staff = AR.table([{ label: '담당자', key: 'staff' }, { label: '결제 건수', key: 'orders', num: true },
+    { label: '판매수량', get: r => AR.num(r.qty), num: true }, { label: '매출', get: r => AR.won(r.revenue), num: true },
+    { label: '이익', get: r => AR.won(r.profit), num: true }, { label: '취소', key: 'cancels', num: true },
+    { label: '취소율', get: r => AR.pct(r.cancel_rate), num: true }], d.staff, { empty: '판매 기록이 없습니다.' });
+  const att = AR.table([{ label: '담당자', key: 'staff' }, { label: '출근 일수', key: 'days', num: true },
+    { label: '총 근무시간', get: r => r.hours + '시간', num: true },
+    { label: '평균', get: r => r.avg_hours == null ? '-' : r.avg_hours + '시간', num: true },
+    { label: '퇴근 미기록', get: r => r.missing_checkout ? `<span class="badge badge-warning">${r.missing_checkout}일</span>` : '-', html: true, num: true }],
+    d.attendance, { empty: '근태 기록이 없습니다.' });
+  const can = AR.table([{ label: '일시', key: 'date_time' }, { label: '제품', key: 'product' }, { label: '수량', key: 'quantity', num: true },
+    { label: '금액', get: r => AR.won(r.amount), num: true }, { label: '담당자', key: 'staff' }, { label: '메모', key: 'memo' }], d.cancels,
+    { empty: '취소 내역이 없습니다.' });
+  const st = d.stocktake;
+  const stt = AR.table([{ label: '일시', key: 'date_time' }, { label: '제품', key: 'product' },
+    { label: '전산', key: 'before', num: true }, { label: '실제', key: 'after', num: true },
+    { label: '차이', get: r => r.diff > 0 ? '+' + r.diff : r.diff, num: true },
+    { label: '금액', get: r => AR.won(r.diff_value), num: true }, { label: '담당자', key: 'staff' }], st.rows,
+    { empty: '재고 실사 조정 내역이 없습니다.' });
+  return `<div class="card ar-card"><h3>담당자별 판매</h3>${staff}</div>
+    <div class="card ar-card"><h3>근태</h3>${att}</div>
+    <div class="card ar-card"><h3>취소 내역 <span class="hint">최근 100건</span></h3>${can}</div>
+    <div class="card ar-card"><h3>재고 실사 차이 <span class="hint">${st.count}건 · 절대 ${st.abs_units}개 · 차이 금액 ${AR.won(st.net_value)}</span></h3>${stt}</div>
+    <div class="ar-notes">${d.notes.map(AR.esc).join('<br>')}</div>`;
+};
+
+R.customers = d => {
+  const s = d.summary;
+  return `<div class="ar-kpis">
+    ${kpi('기간 내 고객', AR.num(s.customers) + '명', `비회원 주문 ${s.anonymous_orders}건 별도`)}
+    ${kpi('신규', AR.num(s.new) + '명', AR.pct(s.new_share))}
+    ${kpi('단골(재방문)', AR.num(s.returning) + '명', AR.pct(s.returning_share))}
+    ${kpi('재구매율', AR.pct(s.repeat_rate), '기간 내 2회 이상 또는 이전 주문 있음')}
+    ${kpi('VIP', AR.num(s.vip_customers) + '명', `주문 금액 ${AR.won(s.vip_spend)} · 전체 VIP ${s.vip_total_all_stores}명`)}
+  </div>
+  <div class="card ar-card"><h3>상위 고객</h3>${AR.table([{ label: '고객', key: 'name' }, { label: '연락처', key: 'phone' },
+    { label: '구분', key: 'type' }, { label: '주문 수', key: 'orders', num: true }, { label: '금액', get: r => AR.won(r.spend), num: true },
+    { label: 'VIP', get: r => r.vip ? '<span class="badge badge-accent">VIP</span>' : '', html: true }], d.top_customers,
+    { empty: '이 기간 선결제 주문 고객이 없습니다.' })}</div>
+  <div class="ar-notes">${d.notes.map(AR.esc).join('<br>')}</div>`;
+};
+
+// ---------------- 로딩 ----------------
+async function load() {
+  const my = ++seq;
+  const body = document.getElementById('tabBody');
+  body.innerHTML = '<div class="ar-loading">불러오는 중...</div>';
+  try {
+    const d = await AR.api(`/api/admin/reports/store/${STORE_ID}/${current}`, tabParams(current));
+    if (my !== seq) return; // 그 사이 다른 탭을 눌렀다면 버린다
+    if (d.period) document.getElementById('arPeriodLabel').textContent = `조회 ${d.period.start} ~ ${d.period.end} (${d.period.days}일)`;
+    else document.getElementById('arPeriodLabel').textContent = '재고·필요한 것은 현재 재고와 최근 30일 판매 기준입니다.';
+    body.innerHTML = R[current](d);
+    if (R[current].after) R[current].after(d);
+  } catch (e) {
+    if (my === seq) body.innerHTML = `<div class="ar-error">${AR.esc(e.message)}</div>`;
+  }
+}
+
+AR.renderPeriodBar(document.getElementById('periodBar'), load);
+drawTabs();
+load();
+</script>
+{% endblock %}

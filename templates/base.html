@@ -173,6 +173,7 @@
         <a class="nav-item {{ 'active' if active=='analysis' else '' }}" href="/analysis" data-label="출고 분석"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-trending-up"></use></svg>출고 분석</a>
         <a class="nav-item {{ 'active' if active=='statistics' else '' }}" href="/statistics" data-label="매출 통계"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-chart-line"></use></svg>매출 통계</a>
         <a class="nav-item {{ 'active' if active=='report_builder' else '' }}" href="/report_builder" data-label="커스텀 리포트"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-file-analytics"></use></svg>커스텀 리포트</a>
+        {% if not is_store_user %}<a class="nav-item {{ 'active' if active=='admin_reports' else '' }}" href="/admin/reports" data-label="매장 리포트"><svg class="i3d nav-ic" aria-hidden="true"><use href="#i3d-building-store"></use></svg>매장 리포트</a>{% endif %}
       </div>
       <div class="nav-group">
         <div class="nav-group-label">관리</div>

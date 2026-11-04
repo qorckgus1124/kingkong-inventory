@@ -889,6 +889,10 @@ auth.init_auth(app, get_db)
 with app.app_context():
     init_db()
     auth.ensure_schema()
+
+# ===== 어드민 전용 매장 리포트 (/admin/reports) =====
+import admin_reports
+admin_reports.init_admin_reports(app, get_db, now_kst, lambda: rollback_quietly())  # rollback_quietly는 아래에서 정의되므로 호출 시점에 찾는다
 # ========================================================
 
 

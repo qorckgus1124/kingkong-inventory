@@ -1,0 +1,79 @@
+/* 어드민 매장 리포트 - 블루 포인트 1색, 상태 배지 */
+.ar-toolbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 16px; }
+.ar-toolbar .spacer { flex: 1; }
+.ar-seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; background: var(--card-bg); }
+.ar-seg button { border: 0; background: transparent; padding: 7px 14px; font-size: 13px; color: var(--text-light); cursor: pointer; font-weight: 600; }
+.ar-seg button + button { border-left: 1px solid var(--border); }
+.ar-seg button.active { background: var(--accent); color: #fff; }
+.ar-custom { display: none; gap: 6px; align-items: center; font-size: 13px; }
+.ar-custom input { padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--input-bg); color: var(--text); }
+.ar-btn { padding: 7px 14px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--card-bg); color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; }
+.ar-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ar-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ar-btn.primary:hover { background: var(--accent-hover); color: #fff; }
+
+.ar-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.ar-kpi { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 14px 16px; box-shadow: var(--shadow); }
+.ar-kpi .l { font-size: 12px; color: var(--text-light); margin-bottom: 6px; }
+.ar-kpi .v { font-size: 20px; font-weight: 700; }
+.ar-kpi .s { font-size: 12px; margin-top: 4px; color: var(--text-light); }
+
+.ar-delta { font-size: 12px; font-weight: 600; }
+.ar-delta.up { color: var(--success); }
+.ar-delta.down { color: var(--danger); }
+.ar-delta.flat { color: var(--text-muted); }
+
+.ar-stores { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 16px; }
+.ar-store { display: block; text-decoration: none; color: inherit; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 16px; box-shadow: var(--shadow); transition: border-color var(--transition), transform var(--transition); }
+.ar-store:hover { border-color: var(--accent); transform: translateY(-2px); }
+.ar-store .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.ar-store .name { font-size: 16px; font-weight: 700; }
+.ar-store .rank { font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-light); border-radius: 10px; padding: 2px 9px; }
+.ar-store .rev { font-size: 22px; font-weight: 800; }
+.ar-store dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin: 12px 0 0; font-size: 13px; }
+.ar-store dt { color: var(--text-light); }
+.ar-store dd { margin: 0; text-align: right; font-weight: 600; }
+
+.ar-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.ar-grid3 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+@media (max-width: 860px) { .ar-grid2, .ar-grid3 { grid-template-columns: 1fr; } }
+.ar-card h3 { margin: 0 0 12px; font-size: 15px; }
+.ar-card .hint { font-size: 12px; color: var(--text-light); font-weight: 400; margin-left: 6px; }
+.ar-chart { position: relative; height: 260px; }
+.ar-chart.tall { height: 320px; }
+
+.ar-alert { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius); margin-bottom: 8px; font-size: 13px; border: 1px solid var(--border); }
+.ar-alert.danger { background: var(--danger-light); border-color: transparent; }
+.ar-alert.warning { background: var(--warning-light); border-color: transparent; }
+.ar-alert b { white-space: nowrap; }
+.ar-empty { padding: 22px; text-align: center; color: var(--text-light); font-size: 13px; }
+.ar-error { padding: 14px; border-radius: var(--radius); background: var(--danger-light); color: var(--danger); font-size: 13px; }
+.ar-loading { padding: 30px; text-align: center; color: var(--text-light); }
+
+.ar-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ar-table th, .ar-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.ar-table th { font-size: 12px; color: var(--text-light); font-weight: 600; background: var(--hover-bg); }
+.ar-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.ar-tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 2px solid var(--border); margin-bottom: 16px; }
+.ar-tabs button { border: 0; background: none; padding: 10px 16px; font-size: 14px; font-weight: 600; color: var(--text-light); cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; white-space: nowrap; }
+.ar-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.ar-sub { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; font-size: 13px; }
+.ar-sub select { padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--input-bg); color: var(--text); }
+
+.ar-heat { display: grid; grid-template-columns: 34px repeat(24, 1fr); gap: 2px; font-size: 10px; }
+.ar-heat .c { height: 22px; border-radius: 3px; background: var(--hover-bg); }
+.ar-heat .h, .ar-heat .d { color: var(--text-light); text-align: center; line-height: 22px; }
+.ar-bar { height: 8px; border-radius: 4px; background: var(--hover-bg); overflow: hidden; min-width: 80px; }
+.ar-bar > i { display: block; height: 100%; background: var(--accent); }
+.ar-tag { font-size: 11px; font-weight: 600; color: var(--accent); background: var(--accent-light); padding: 2px 8px; border-radius: 10px; }
+.ar-notes { font-size: 12px; color: var(--text-light); margin-top: 10px; }
+
+@media print {
+  .sidebar, #sidebar, .topbar, .mobile-nav, .ar-toolbar .ar-btn, .ar-tabs, .ar-sub, .no-print { display: none !important; }
+  .content { margin: 0 !important; padding: 0 !important; max-width: none !important; }
+  .card, .ar-kpi, .ar-store { box-shadow: none !important; break-inside: avoid; }
+  .ar-chart { height: 220px; }
+  body { background: #fff !important; }
+}
+.ar-btn { text-decoration: none; display: inline-block; }
