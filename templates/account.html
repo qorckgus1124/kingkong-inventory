@@ -69,10 +69,11 @@ async function loadAccount() {
 async function changePassword() {
   try {
     await api('/api/account/password', 'POST', { current_password: $('pwCur').value, new_password: $('pwNew').value });
-    say('pwMsg', '비밀번호를 변경했습니다.', true);
+    say('pwMsg', '비밀번호를 변경했습니다. 보안을 위해 모든 기기에서 로그아웃되어 다시 로그인해야 합니다.', true);
     $('pwCur').value = ''; $('pwNew').value = '';
     const banner = document.querySelector('.ac-banner');
     if (banner) banner.remove();
+    setTimeout(() => { location.href = '/login'; }, 1800);
   } catch (e) { say('pwMsg', e.message, false); }
 }
 

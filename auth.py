@@ -13,6 +13,7 @@ app.py 쪽 연결은 두 줄이다:
     auth.init_auth(app, get_db)      # 라우트 등록
     auth.ensure_schema()             # users 테이블 + 최초 어드민 계정
 """
+import hashlib
 import os
 import re
 import secrets
@@ -154,9 +155,15 @@ def _seed_store_accounts(conn, cur):
 # 세션 / 데코레이터
 # ---------------------------------------------------------------------------
 
+def _pw_fp(password_hash):
+    """비밀번호 해시의 지문. 세션에 넣어 두었다가 비교한다 → 비밀번호가 바뀌면 이전 로그인은 모두 무효."""
+    return hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()[:20]
+
+
 def _start_session(row):
     session.clear()
     session.permanent = True
+    session["pwf"] = _pw_fp(row["password_hash"])
     session["uid"] = row["id"]
     session["username"] = row["username"]
     session["role"] = row["role"]
@@ -179,7 +186,8 @@ def _load_user():
             (uid,),
         )
         row = cur.fetchone()
-        if row and row["is_active"]:
+        # 중지/삭제된 계정, 또는 로그인한 뒤 비밀번호가 바뀐 계정이면 로그인 풀림
+        if row and row["is_active"] and session.get("pwf") == _pw_fp(row["password_hash"]):
             user = dict(row)
         else:
             session.clear()
@@ -255,13 +263,29 @@ def init_auth(app, get_db):
     global _get_db
     _get_db = get_db
 
-    app.permanent_session_lifetime = timedelta(days=30)
+    # 한 번 로그인한 브라우저는 사실상 계속 유지(10년, 요청할 때마다 연장). 브라우저/컴퓨터를 껐다 켜도 유지된다.
+    # 풀리는 경우: 비밀번호 변경·초기화, 계정 중지/삭제, 로그아웃 버튼, 쿠키 삭제.
+    app.permanent_session_lifetime = timedelta(days=3650)
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         # Render(HTTPS)에서만 Secure. 로컬 http 개발에서는 끈다.
         SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),
     )
+
+    # 로그인 없이 열 수 있는 곳: 로그인/로그아웃, 정적 파일, 서비스워커·매니페스트,
+    # API 키로 보호되는 /api/webhook/*, 토큰으로 여는 공유 링크 /share/*
+    _OPEN_PATHS = {"/login", "/logout", "/sw.js", "/manifest.json", "/favicon.ico"}
+    _OPEN_PREFIXES = ("/static/", "/api/webhook/", "/share/")
+
+    @app.before_request
+    def require_login_everywhere():
+        path = request.path
+        if request.method == "OPTIONS" or path in _OPEN_PATHS or path.startswith(_OPEN_PREFIXES):
+            return None
+        if _load_user():
+            return None
+        return _need_login()
 
     @app.context_processor
     def inject_current_user():
@@ -492,7 +516,9 @@ def init_auth(app, get_db):
         except Exception as e:
             conn.rollback()
             return _fail(f"저장 실패: {e}", 500)
-        return jsonify({"ok": True})
+        # 비밀번호를 바꾸면 이 기기를 포함한 모든 기기에서 다시 로그인해야 한다.
+        session.clear()
+        return jsonify({"ok": True, "relogin": True})
 
     @app.route("/api/account/username", methods=["POST"])
     @login_required
