@@ -378,6 +378,13 @@ def compute_anomalies(stores, th):
     cancels = defaultdict(dict)
     for r in cancel_rows:
         cancels[r["store_id"]][r["d"]] = int(r["c"])
+    edits = defaultdict(dict)
+    try:
+        for r in _q("SELECT store_id, date(edited_at) AS d, COUNT(*) AS c FROM tx_edit_log "
+                    "WHERE edited_at >= %s AND edited_at < %s GROUP BY 1, 2", [d0, d1]):
+            edits[r["store_id"]][r["d"]] = int(r["c"])
+    except Exception:
+        _rollback()
     s0, s1 = _dt_range(today - timedelta(days=6), today)
     st_rows = _q(
         "SELECT store_id, COUNT(*) AS n, COALESCE(SUM(ABS(COALESCE(after_qty,0) - COALESCE(before_qty,0))),0) AS diff "
@@ -401,6 +408,12 @@ def compute_anomalies(stores, th):
         if y_c >= 3 and y_c >= max(c_avg, 0.5) * th["report_cancel_multiplier"]:
             alerts.append({"store_id": sid, "store": name, "kind": "cancel_spike", "severity": "warning",
                            "message": f"{yday.strftime('%m/%d')} 판매취소 {y_c}건 (최근 7일 평균 {round(c_avg, 1)}건)"})
+        ee = edits.get(sid, {})
+        y_e = ee.get(yday, 0)
+        e_avg = sum(ee.get(d, 0) for d in prior_days) / 7.0
+        if y_e >= 3 and y_e >= max(e_avg, 0.5) * th["report_cancel_multiplier"]:
+            alerts.append({"store_id": sid, "store": name, "kind": "edit_spike", "severity": "warning",
+                           "message": f"{yday.strftime('%m/%d')} 거래 수정 {y_e}건 (최근 7일 평균 {round(e_avg, 1)}건)"})
         st = stocktake.get(sid)
         if st and int(st["diff"]) >= th["report_stocktake_diff_units"]:
             alerts.append({"store_id": sid, "store": name, "kind": "stocktake_diff", "severity": "warning",
@@ -822,7 +835,7 @@ def section_needs(store, p, args):
             transfers.append({"product_id": item["product_id"], "name": item["name"],
                               "from_store_id": d["store_id"], "from_store": names[d["store_id"]],
                               "from_qty": d["qty"], "surplus": surplus,
-                              "suggest_qty": int(min(surplus, item["recommend_qty"]))})
+                              "to_store_id": sid, "suggest_qty": int(min(surplus, item["recommend_qty"]))})
 
     # 부진 재고 처리 제안: 30일간 판매가 없는 재고 (재고 금액 큰 순)
     dead = []
@@ -848,6 +861,14 @@ def _hours(check_in, check_out):
     if mins < 0:
         mins += 24 * 60  # 자정을 넘긴 근무
     return round(mins / 60.0, 1)
+
+
+_FIELD_LABELS = {"type": "유형", "store_id": "매장", "quantity": "수량", "unit_cost": "원가", "unit_price": "판매가",
+                 "payment_method": "결제수단", "staff": "담당자", "memo": "메모", "date_time": "일시"}
+
+
+def _field_labels(csv):
+    return ", ".join(_FIELD_LABELS.get(x, x) for x in (csv or "").split(",") if x)
 
 
 def section_ops(store, p, args):
@@ -904,14 +925,30 @@ def section_ops(store, p, args):
         st_rows.append({"date_time": r["date_time"].strftime("%Y-%m-%d %H:%M"), "product": r["product"],
                         "before": r["before_qty"], "after": r["after_qty"], "diff": diff,
                         "diff_value": diff * int(r["cost"] or 0), "staff": r["staff"]})
+    # 거래 수정 이력 (tx_edit_log: 이 기능 배포 이후의 수정부터 기록됨)
+    edits = {"available": True, "count": 0, "rows": []}
+    try:
+        e_rows = _q(
+            "SELECT l.edited_at, pr.name AS product, l.edited_by, l.changed_fields, l.transaction_id "
+            "FROM tx_edit_log l LEFT JOIN products pr ON pr.id = l.product_id "
+            "WHERE l.store_id = %s AND l.edited_at >= %s AND l.edited_at < %s "
+            "ORDER BY l.edited_at DESC LIMIT 100", [sid, d0, d1])
+        e_cnt = _q("SELECT COUNT(*) AS c FROM tx_edit_log WHERE store_id = %s AND edited_at >= %s AND edited_at < %s",
+                   [sid, d0, d1])
+        edits["count"] = int(e_cnt[0]["c"]) if e_cnt else 0
+        edits["rows"] = [{"edited_at": r["edited_at"].strftime("%Y-%m-%d %H:%M"), "product": r["product"] or "-",
+                          "by": r["edited_by"] or "-", "fields": _field_labels(r["changed_fields"]),
+                          "transaction_id": r["transaction_id"]} for r in e_rows]
+    except Exception:
+        _rollback()
+        edits = {"available": False, "count": 0, "rows": []}
     return {
-        "period": _period_json(p), "staff": staff, "attendance": attendance, "cancels": cancels,
+        "period": _period_json(p), "staff": staff, "attendance": attendance, "cancels": cancels, "edits": edits,
         "stocktake": {"rows": st_rows,
                       "count": len(st_rows),
                       "abs_units": sum(abs(r["diff"]) for r in st_rows),
                       "net_value": sum(r["diff_value"] for r in st_rows)},
-        # 거래 수정은 현재 DB에 이력이 남지 않아(같은 행을 덮어씀) 집계할 수 없다.
-        "notes": ["거래 수정 내역은 이력이 저장되지 않아 취소 건수만 집계합니다."],
+        "notes": ["거래 수정 내역은 수정 이력 기능이 적용된 이후부터 집계됩니다. 그 이전 수정은 DB에 남아 있지 않습니다."],
     }
 
 
@@ -1165,6 +1202,53 @@ def api_thresholds():
     g.db.commit()
     _CACHE.clear()
     return jsonify(load_thresholds())
+
+
+_SHARE_SALT = "admin-report-share"
+_SHARE_MAX_AGE = 7 * 24 * 3600
+
+
+def _share_serializer():
+    from flask import current_app
+    from itsdangerous import URLSafeTimedSerializer
+    return URLSafeTimedSerializer(current_app.secret_key, salt=_SHARE_SALT)
+
+
+def _valid_share_path(path):
+    # 리포트 화면 경로만 허용한다 (다른 주소로 보내는 열린 리다이렉트 방지)
+    return (isinstance(path, str) and len(path) <= 500 and (path == "/admin/reports" or path.startswith(("/admin/reports/", "/admin/reports?")))
+            and not path.startswith("//") and "\\" not in path and "\n" not in path and "\r" not in path)
+
+
+@bp.route("/api/admin/reports/share", methods=["POST"])
+@auth.admin_required
+@_guard
+def api_share_create():
+    body = request.get_json(silent=True) or {}
+    path = body.get("path") or ""
+    if not _valid_share_path(path):
+        return _json_error(ValueError("공유할 수 없는 경로입니다."))
+    token = _share_serializer().dumps({"p": path})
+    return jsonify({"url": request.host_url.rstrip("/") + "/admin/reports/s/" + token,
+                    "expires_days": _SHARE_MAX_AGE // 86400})
+
+
+@bp.route("/admin/reports/s/<token>")
+@auth.admin_required
+def page_share_open(token):
+    """공유 링크: 로그인한 어드민만 열 수 있다. 토큰은 화면 위치(매장/탭/기간)만 담고 데이터는 담지 않는다."""
+    from flask import redirect
+    from itsdangerous import BadSignature, SignatureExpired
+    try:
+        data = _share_serializer().loads(token, max_age=_SHARE_MAX_AGE)
+    except SignatureExpired:
+        return "공유 링크가 만료되었습니다. 새 링크를 만들어 주세요.", 410
+    except BadSignature:
+        return "올바르지 않은 공유 링크입니다.", 400
+    path = data.get("p") if isinstance(data, dict) else None
+    if not _valid_share_path(path):
+        return "올바르지 않은 공유 링크입니다.", 400
+    return redirect(path)
 
 
 @bp.route("/api/admin/reports/consistency")

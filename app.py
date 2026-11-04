@@ -741,6 +741,20 @@ def init_db():
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_created ON webhook_logs(created_at);")
 
+        # 거래 수정 이력 (어드민 매장 리포트의 '수정 건수' 집계용). 이 테이블이 생긴 이후의 수정부터 기록된다.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tx_edit_log (
+                id SERIAL PRIMARY KEY,
+                transaction_id INTEGER,
+                store_id INTEGER,
+                product_id INTEGER,
+                edited_by TEXT,
+                changed_fields TEXT,
+                edited_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'Asia/Seoul')
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tx_edit_log_store_at ON tx_edit_log(store_id, edited_at);")
+
         # ---------------------------------------------------------------
         # 일별 매출 집계표 (성능)
         # ---------------------------------------------------------------
@@ -821,6 +835,8 @@ def create_indexes():
         "CREATE INDEX IF NOT EXISTS idx_stock_product_qty ON store_stock(product_id, qty);",
         # 출고 분석(/analysis): 유형 + 기간으로 거래를 좁혀 읽는다.
         "CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON stock_transactions(type, date_time);",
+        # 매장 리포트: 매장 + 기간 집계
+        "CREATE INDEX IF NOT EXISTS idx_transactions_store_date ON stock_transactions(store_id, date_time);",
     ]
     for stmt in statements:
         try:
@@ -3141,6 +3157,33 @@ def _reverse_stock_raw(store_id, product_id, ttype, quantity):
     cur.execute("UPDATE store_stock SET qty = qty - (%s) WHERE store_id=%s AND product_id=%s", (sign * quantity, store_id, product_id))
 
 
+def _log_tx_edit(original, changes):
+    """거래 수정 이력을 남긴다. 실패해도 수정 자체는 막지 않는다(SAVEPOINT로 격리)."""
+    if not changes:
+        return
+    cur = g.cursor
+    try:
+        user = g.get("_auth_user") or getattr(g, "user", None)
+        who = None
+        if user is not None:
+            try:
+                who = user["display_name"] or user["username"]
+            except (KeyError, TypeError, IndexError):
+                who = None
+        cur.execute("SAVEPOINT tx_edit_log_sp")
+        cur.execute(
+            "INSERT INTO tx_edit_log (transaction_id, store_id, product_id, edited_by, changed_fields) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (original["id"], original["store_id"], original["product_id"], who, ",".join(changes)))
+        cur.execute("RELEASE SAVEPOINT tx_edit_log_sp")
+    except Exception as e:
+        print(f"⚠️ 거래 수정 이력 기록 실패: {e}")
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT tx_edit_log_sp")
+        except Exception:
+            pass
+
+
 @app.route("/api/transactions/<int:tid>", methods=["PUT", "PATCH"])
 def api_transaction_update(tid):
     conn = get_db()
@@ -3174,6 +3217,8 @@ def api_transaction_update(tid):
                 "UPDATE stock_transactions SET payment_method=%s WHERE id=%s",
                 (payment_method, tid)
             )
+            if (original["payment_method"] or None) != (payment_method or None):
+                _log_tx_edit(original, ["payment_method"])
             conn.commit()
             return jsonify({"ok": True, "payment_method": payment_method})
         except Exception as e:
@@ -3224,6 +3269,18 @@ def api_transaction_update(tid):
             (new_type, new_store_id, new_quantity, new_unit_cost, new_unit_price,
              new_payment_method, new_staff, new_memo, new_date_time, tid)
         )
+        _changed = []
+        for _k, _new in (("type", new_type), ("store_id", new_store_id), ("quantity", new_quantity),
+                         ("unit_cost", new_unit_cost), ("unit_price", new_unit_price),
+                         ("payment_method", new_payment_method), ("staff", new_staff),
+                         ("memo", new_memo), ("date_time", new_date_time)):
+            _old = original[_k]
+            if _k == "date_time":
+                if str(_old)[:16] != str(_new).replace("T", " ")[:16]:
+                    _changed.append(_k)
+            elif str(_old if _old is not None else "") != str(_new if _new is not None else ""):
+                _changed.append(_k)
+        _log_tx_edit(original, _changed)
         conn.commit()
         return jsonify({"ok": True})
     except Exception as e:

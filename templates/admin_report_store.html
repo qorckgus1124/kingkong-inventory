@@ -12,6 +12,7 @@
     <div id="periodBar" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"></div>
     <span class="spacer"></span>
     <button class="ar-btn" id="btnCsv" onclick="exportCsv()">CSV 내려받기</button>
+    <button class="ar-btn" onclick="AR.shareLink()">링크 복사</button>
     <button class="ar-btn" onclick="window.print()">인쇄 / PDF</button>
     <button class="ar-btn" onclick="AR.saveImage('arCapture','store_{{ store.id }}_report.png')">이미지 저장</button>
   </div>
@@ -197,7 +198,7 @@ R.needs = d => {
   const tr = AR.table([{ label: '제품', key: 'name' }, { label: '보낼 매장', key: 'from_store' },
     { label: '그 매장 재고', key: 'from_qty', num: true }, { label: '여유분', key: 'surplus', num: true },
     { label: '이동 추천', get: r => `<b>${r.suggest_qty}개</b>`, html: true, num: true },
-    { label: '', get: r => '<a class="ar-btn" href="/transfer">재고 이동</a>', html: true }], d.transfers,
+    { label: '', get: r => `<a class="ar-btn" href="${AR.esc(AR.transferUrl(r))}">재고 이동</a>`, html: true }], d.transfers,
     { empty: '다른 매장에서 옮겨올 수 있는 제품이 없습니다.' });
   const dead = AR.table([{ label: '제품', key: 'name' }, { label: '브랜드', key: 'brand' }, { label: '재고', key: 'qty', num: true },
     { label: '묶인 금액', get: r => AR.won(r.value), num: true }, { label: '제안', key: 'action' }], d.dead_stock,
@@ -223,6 +224,10 @@ R.ops = d => {
   const can = AR.table([{ label: '일시', key: 'date_time' }, { label: '제품', key: 'product' }, { label: '수량', key: 'quantity', num: true },
     { label: '금액', get: r => AR.won(r.amount), num: true }, { label: '담당자', key: 'staff' }, { label: '메모', key: 'memo' }], d.cancels,
     { empty: '취소 내역이 없습니다.' });
+  const ed = d.edits || { available: false, count: 0, rows: [] };
+  const edt = ed.available ? AR.table([{ label: '일시', key: 'edited_at' }, { label: '제품', key: 'product' },
+    { label: '바뀐 항목', key: 'fields' }, { label: '수정자', key: 'by' }], ed.rows,
+    { empty: '기록된 수정 내역이 없습니다.' }) : '<div class="ar-empty">수정 이력을 불러오지 못했습니다.</div>';
   const st = d.stocktake;
   const stt = AR.table([{ label: '일시', key: 'date_time' }, { label: '제품', key: 'product' },
     { label: '전산', key: 'before', num: true }, { label: '실제', key: 'after', num: true },
@@ -232,6 +237,7 @@ R.ops = d => {
   return `<div class="card ar-card"><h3>담당자별 판매</h3>${staff}</div>
     <div class="card ar-card"><h3>근태</h3>${att}</div>
     <div class="card ar-card"><h3>취소 내역 <span class="hint">최근 100건</span></h3>${can}</div>
+    <div class="card ar-card"><h3>거래 수정 내역 <span class="hint">${AR.num(ed.count)}건 · 최근 100건 표시</span></h3>${edt}</div>
     <div class="card ar-card"><h3>재고 실사 차이 <span class="hint">${st.count}건 · 절대 ${st.abs_units}개 · 차이 금액 ${AR.won(st.net_value)}</span></h3>${stt}</div>
     <div class="ar-notes">${d.notes.map(AR.esc).join('<br>')}</div>`;
 };

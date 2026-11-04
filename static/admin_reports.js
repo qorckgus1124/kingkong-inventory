@@ -123,6 +123,26 @@
     a.click();
   };
 
+  // ---- 어드민 전용 공유 링크 (로그인한 어드민만 열 수 있음, 7일 유효) ----
+  AR.shareLink = async function () {
+    try {
+      const res = await fetch('/api/admin/reports/share', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: location.pathname + location.search + location.hash }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || '링크를 만들지 못했습니다.');
+      try { await navigator.clipboard.writeText(j.url); alert('링크를 복사했습니다. 어드민 로그인 상태에서만 열리며 ' + j.expires_days + '일간 유효합니다.\n' + j.url); }
+      catch (e) { window.prompt('아래 링크를 복사하세요 (어드민 로그인 필요, ' + j.expires_days + '일 유효)', j.url); }
+    } catch (e) { alert(e.message || '링크를 만들지 못했습니다.'); }
+  };
+
+  // ---- 재고 이동 화면 연결 (출발·도착 매장, 제품, 수량 미리 채움) ----
+  AR.transferUrl = function (r) {
+    const q = new URLSearchParams({ from: r.from_store_id, to: r.to_store_id, pid: r.product_id, qty: r.suggest_qty, name: r.name || r.product || '' });
+    return '/transfer?' + q.toString();
+  };
+
   AR.today = function () {
     const d = new Date(Date.now() + 9 * 3600 * 1000); // KST
     return d.toISOString().slice(0, 10);

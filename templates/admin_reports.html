@@ -9,6 +9,7 @@
     <div id="periodBar" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"></div>
     <span class="spacer"></span>
     <button class="ar-btn" onclick="exportCsv()">CSV 내려받기</button>
+    <button class="ar-btn" onclick="AR.shareLink()">링크 복사</button>
     <button class="ar-btn" onclick="window.print()">인쇄 / PDF</button>
     <button class="ar-btn" onclick="AR.saveImage('arCapture','store_report_overview.png')">이미지 저장</button>
   </div>
@@ -75,7 +76,7 @@ function render(d) {
     { label: '여유 매장', key: 'from_store' },
     { label: '여유 재고', key: 'from_qty', num: true },
     { label: '이동 추천', get: r => `<b>${r.suggest_qty}개</b>`, html: true, num: true },
-    { label: '', get: r => `<a class="ar-btn" href="/transfer">재고 이동</a>`, html: true },
+    { label: '', get: r => `<a class="ar-btn" href="${AR.esc(AR.transferUrl(r))}">재고 이동</a>`, html: true },
   ], d.imbalance) : '<div class="ar-empty">매장 간 재고 불균형이 없습니다.</div>';
 
   document.getElementById('arBody').innerHTML = `

@@ -589,10 +589,48 @@ async function doBatchTransfer() {
 }
 
 // ---------- 초기화 ----------
-document.addEventListener('DOMContentLoaded', function() {
+// 매장 리포트의 '재고 이동' 버튼에서 넘어온 경우: 출발/도착 매장, 제품, 수량을 미리 채운다.
+async function applyTransferPrefill() {
+  const q = new URLSearchParams(location.search);
+  const pid = parseInt(q.get('pid'), 10), from = q.get('from'), to = q.get('to');
+  const qty = parseInt(q.get('qty'), 10), name = q.get('name') || '';
+  if (!pid || !from || !to || !(qty > 0)) return;
+  const fromSel = document.getElementById('fromStore'), toSel = document.getElementById('toStore');
+  if (![...fromSel.options].some(o => o.value === from)) return;   // 권한/매장 없음 → 그냥 둔다
+  fromSel.value = from;
+  if ([...toSel.options].some(o => o.value === to)) toSel.value = to;
+  currentFromStore = from;
+  localStorage.setItem('global_store_id', from);
+  transferCart = {};
+  document.getElementById('searchBox').value = name;
+  searchQuery = name;
+  try {
+    const params = new URLSearchParams({ store_id: from, sort: 'qty', order: 'desc', hide_zero_stock: '1' });
+    if (name) params.append('q', name);
+    const list = await apiSearch('/api/products?' + params.toString());
+    const product = (list || []).find(p => p.id === pid);
+    if (product && product.qty > 0) {
+      transferCart[pid] = { product, qty: Math.min(qty, product.qty) };
+      saveCartToStorage(TRANSFER_CART_KEY, transferCart);
+      products = list;
+      renderTransferCart();
+      renderProductGrid();
+      toast('추천 이동 내용이 담겼습니다. 수량과 도착 매장을 확인한 뒤 이동하세요.', false, '📦');
+    } else {
+      toast('출발 매장에 해당 제품 재고가 없어 담지 못했습니다.', true, '⚠️');
+      loadProducts();
+    }
+  } catch (e) {
+    console.error('이동 미리 채우기 오류:', e);
+  }
+  try { history.replaceState(null, '', location.pathname); } catch (e) { /* 무시 */ }
+}
+
+document.addEventListener('DOMContentLoaded', async function() {
   renderTransferCart();
-  loadStores();
+  await loadStores();
   loadMovements();
+  applyTransferPrefill();
 });
 </script>
 
