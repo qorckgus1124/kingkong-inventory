@@ -23,7 +23,7 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 import psycopg2.errors
-from flask import Flask, g, jsonify, redirect, render_template, request, send_file, send_from_directory
+from flask import Flask, g, jsonify, redirect, render_template, request, send_file, send_from_directory, session
 
 # 서버가 어느 지역(UTC 등)에서 돌아가더라도 항상 한국 시간 기준으로 동작하도록 고정
 KST = ZoneInfo("Asia/Seoul")
@@ -439,6 +439,16 @@ def init_db():
                 product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
                 qty INTEGER DEFAULT 0,
                 min_qty INTEGER DEFAULT 0,
+                PRIMARY KEY (store_id, product_id)
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS store_product_cost (
+                store_id INTEGER NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+                product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                cost_price INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by TEXT,
                 PRIMARY KEY (store_id, product_id)
             );
         """)
@@ -1295,6 +1305,39 @@ def auto_assign_brand_and_category(product_name, user_brand_id=None, user_catego
 # 원격 DB는 한 번 왕복에 수십 ms가 걸리므로 검색 한 번에 수십 초가 걸렸다.
 # 지금은 결과가 몇 건이든 "묶어서 최대 5번"만 조회한다. 반환하는 항목(키)은 예전과 같다.
 
+def cost_expr(store_id, alias="p"):
+    """매장별 원가 SQL 표현식. 매장 값이 있으면 그 값, 없으면 전체 공통 원가(products.cost_price).
+    store_id는 반드시 int로 바꿔서 끼워 넣는다(SQL 주입 방지). 매장이 없으면 공통 원가."""
+    try:
+        sid = int(store_id)
+    except (TypeError, ValueError):
+        return f"{alias}.cost_price"
+    return (f"COALESCE((SELECT spc.cost_price FROM store_product_cost spc "
+            f"WHERE spc.store_id = {sid} AND spc.product_id = {alias}.id), {alias}.cost_price)")
+
+
+def unit_cost_for(cur, product_id, store_id, default=0):
+    """새 거래에 기록할 원가(unit_cost): 매장 원가 → 없으면 공통 원가."""
+    cur.execute(
+        """SELECT COALESCE(spc.cost_price, p.cost_price) AS c
+           FROM products p
+           LEFT JOIN store_product_cost spc ON spc.product_id = p.id AND spc.store_id = %s
+           WHERE p.id = %s""",
+        (store_id, product_id),
+    )
+    row = cur.fetchone()
+    if row is None or row["c"] is None:
+        return default
+    return row["c"]
+
+
+def admin_only_cost_guard():
+    """전체 제품 원가(cost_price/card_cost_price) 수정은 어드민만. 막아야 하면 (응답, 코드)를 돌려준다."""
+    if auth.current_user_is_admin():
+        return None
+    return jsonify({"error": "전체 제품 원가는 어드민만 수정할 수 있습니다. 어드민으로 로그인해 주세요."}), 403
+
+
 def enrich_product_rows(rows, store_id=None):
     """제품 행 목록에 부가 정보를 한꺼번에 붙여서 dict 리스트로 돌려준다."""
     if not rows:
@@ -1359,14 +1402,30 @@ def enrich_product_rows(rows, store_id=None):
     except Exception as e:
         print(f"⚠️ 옵션 정보 일괄 조회 오류: {e}")
 
+    # ---------- 매장별 원가 (매장을 지정했을 때만) ----------
+    store_cost_map = {}
+    if store_id:
+        try:
+            cur.execute(
+                "SELECT product_id, cost_price FROM store_product_cost WHERE store_id = %s AND product_id = ANY(%s)",
+                (store_id, product_ids),
+            )
+            store_cost_map = {r["product_id"]: r["cost_price"] for r in cur.fetchall()}
+        except Exception as e:
+            print(f"⚠️ 매장별 원가 조회 오류: {e}")
+
     # ---------- 조합 ----------
     for d in items:
+        # cost_price는 항상 "전체 공통 원가"로 둔다(제품 관리 화면에서 수정하는 값이므로 섞이면 안 된다).
+        # 매장을 고른 경우 그 매장에 적용되는 원가는 store_cost_price로 따로 내려준다.
+        d["store_cost_custom"] = d["id"] in store_cost_map
+        d["store_cost_price"] = store_cost_map.get(d["id"], d.get("cost_price") or 0)
         qty, min_qty = stock_map.get(d["id"], (0, 0))
         d["qty"] = qty
         d["min_qty"] = min_qty
 
         sale = d.get("sale_price") or 0
-        cost = d.get("cost_price") or 0
+        cost = d["store_cost_price"] if store_id else (d.get("cost_price") or 0)
         d["margin_rate"] = round((sale - cost) / sale * 100, 1) if sale > 0 else None
 
         brand = brand_map.get(d.get("brand_id"))
@@ -2733,6 +2792,13 @@ def api_product_detail(pid):
     category_id = data.get("category_id", row["category_id"])
     staff = data.get("staff") or ""
 
+    # 전체 제품 원가는 어드민만 바꿀 수 있다 (판매가는 기존대로).
+    for _cf in ("cost_price", "card_cost_price"):
+        if _cf in data and int(data[_cf] or 0) != int(row[_cf] or 0):
+            blocked = admin_only_cost_guard()
+            if blocked:
+                return blocked
+
     price_fields = ["cost_price", "card_cost_price", "sale_price"]
     for field in price_fields:
         if field in data:
@@ -2793,6 +2859,10 @@ def api_products_batch_update():
         return jsonify({"error": "선택된 제품이 없습니다."}), 400
     if not updates:
         return jsonify({"error": "수정할 항목이 없습니다."}), 400
+    if "cost_price" in updates or "card_cost_price" in updates:
+        blocked = admin_only_cost_guard()
+        if blocked:
+            return blocked
 
     placeholders = ','.join(['%s'] * len(product_ids))
     cur.execute(f"SELECT id FROM products WHERE id IN ({placeholders})", product_ids)
@@ -2835,6 +2905,10 @@ def api_batch_update_price():
         return jsonify({"error": "선택된 제품이 없습니다."}), 400
     if field not in ("cost_price", "card_cost_price", "sale_price"):
         return jsonify({"error": "올바른 필드를 선택해주세요."}), 400
+    if field in ("cost_price", "card_cost_price"):
+        blocked = admin_only_cost_guard()
+        if blocked:
+            return blocked
     if operation not in ("set", "percent"):
         return jsonify({"error": "올바른 방식을 선택해주세요."}), 400
     if operation == "percent" and (value < -100 or value > 1000):
@@ -3007,7 +3081,7 @@ def api_transactions_post():
     if err:
         return jsonify({"error": err}), 400
 
-    unit_cost = product["cost_price"]
+    unit_cost = unit_cost_for(cur, product_id, store_id, product["cost_price"])
     unit_price = product["sale_price"] if ttype == "판매출고" else None
 
     try:
@@ -4344,7 +4418,7 @@ def api_recommend_order():
             b.color as brand_color,
             c.name as category_name,
             c.color as category_color,
-            p.cost_price,
+            {cost_expr(store_id)} as cost_price,
             p.sale_price,
             COALESCE(s.current_qty, 0) as current_qty,
             COALESCE(s.min_qty, 0) as min_qty,
@@ -4511,7 +4585,7 @@ def api_forecast():
                 p.name as product_name,
                 b.name as brand_name,
                 b.color as brand_color,
-                p.cost_price,
+                {cost_expr(store_id)} as cost_price,
                 p.sale_price,
                 COALESCE(s.current_qty, 0) as current_qty,
                 COALESCE(s.min_qty, 0) as min_qty,
@@ -4788,7 +4862,7 @@ def api_sales():
             (product_id, store_id, type, quantity, unit_cost, unit_price, payment_method, staff, memo,
              date_time, no_stock_effect)
             VALUES (%s, %s, '판매출고', %s, %s, %s, %s, %s, %s, COALESCE(%s, CURRENT_TIMESTAMP), %s) RETURNING id""",
-            (pid, store_id, qty, product["cost_price"], unit_price,
+            (pid, store_id, qty, unit_cost_for(cur, pid, store_id, product["cost_price"]), unit_price,
              payment_method, staff, memo, sale_date_time, not apply_stock)
         )
         new_id = cur.fetchone()["id"]
@@ -5343,11 +5417,12 @@ def api_dashboard():
         try:
             stock_q = """
                 SELECT
-                    COALESCE(SUM(ss.qty * p.cost_price), 0) as total_cost_value,
+                    COALESCE(SUM(ss.qty * COALESCE(spc.cost_price, p.cost_price)), 0) as total_cost_value,
                     COALESCE(SUM(ss.qty * p.sale_price), 0) as total_sale_value,
-                    COALESCE(SUM(ss.qty * (p.sale_price - p.cost_price)), 0) as total_profit_potential
+                    COALESCE(SUM(ss.qty * (p.sale_price - COALESCE(spc.cost_price, p.cost_price))), 0) as total_profit_potential
                 FROM store_stock ss
                 JOIN products p ON p.id = ss.product_id
+                LEFT JOIN store_product_cost spc ON spc.product_id = ss.product_id AND spc.store_id = ss.store_id
                 WHERE p.is_active = 1
             """
             params = []
@@ -6066,11 +6141,11 @@ def api_turnover_rate():
         sql = f"""
             WITH stock AS (
                 SELECT p.id as product_id, p.name as product_name, p.category_id, p.brand_id,
-                       p.sale_price, p.cost_price, SUM(ss.qty) as qty
+                       p.sale_price, MAX({cost_expr(store_id)}) as cost_price, SUM(ss.qty) as qty
                 FROM products p
                 JOIN store_stock ss ON ss.product_id = p.id
                 WHERE {stock_where}
-                GROUP BY p.id, p.name, p.category_id, p.brand_id, p.sale_price, p.cost_price
+                GROUP BY p.id, p.name, p.category_id, p.brand_id, p.sale_price
             ),
             sales AS (
                 SELECT t.product_id,
@@ -6383,7 +6458,7 @@ def compute_analysis(cur, a):
     prev_join = "LEFT JOIN ps ON ps.product_id = p.id" if compare else ""
     sql = f"""
         WITH {", ".join(ctes)}
-        SELECT p.id AS product_id, p.name, p.option_name, p.cost_price, p.sale_price,
+        SELECT p.id AS product_id, p.name, p.option_name, {cost_expr(store_id)} AS cost_price, p.sale_price,
                p.is_active, COALESCE(p.unlimited_stock, 0) AS unlimited_stock,
                p.brand_id, b.name AS brand_name, b.color AS brand_color,
                p.category_id, c.name AS category_name, c.color AS category_color,
@@ -7000,13 +7075,23 @@ def api_import_products():
                 product_id = row.get("ID", "").strip()
 
                 if product_id and product_id.isdigit():
-                    cur.execute(
-                        """UPDATE products SET
-                            name=%s, brand_id=%s, category_id=%s, cost_price=%s, card_cost_price=%s,
-                            sale_price=%s, updated_at=CURRENT_TIMESTAMP
-                           WHERE id=%s AND is_active=1""",
-                        (name, brand_id, category_id, cost_price, card_cost_price, sale_price, int(product_id))
-                    )
+                    if auth.current_user_is_admin():
+                        cur.execute(
+                            """UPDATE products SET
+                                name=%s, brand_id=%s, category_id=%s, cost_price=%s, card_cost_price=%s,
+                                sale_price=%s, updated_at=CURRENT_TIMESTAMP
+                               WHERE id=%s AND is_active=1""",
+                            (name, brand_id, category_id, cost_price, card_cost_price, sale_price, int(product_id))
+                        )
+                    else:
+                        # 어드민이 아니면 기존 제품의 전체 원가는 그대로 둔다.
+                        cur.execute(
+                            """UPDATE products SET
+                                name=%s, brand_id=%s, category_id=%s,
+                                sale_price=%s, updated_at=CURRENT_TIMESTAMP
+                               WHERE id=%s AND is_active=1""",
+                            (name, brand_id, category_id, sale_price, int(product_id))
+                        )
                     if cur.rowcount == 0:
                         results["errors"].append(f"{row_num}행: ID {product_id}를 찾을 수 없습니다.")
                         results["failed"] += 1
@@ -7223,7 +7308,7 @@ def api_import_transactions():
                     unit_price = 0
                 else:
                     product_id = product["id"]
-                    unit_cost = product["cost_price"] or 0
+                    unit_cost = unit_cost_for(cur, product_id, store_id, product["cost_price"] or 0) or 0
                     unit_price = product["sale_price"] or 0
 
                 if product_id is None:
@@ -7515,7 +7600,7 @@ def api_pre_orders():
         if payment_method not in ("현금", "카드", "계좌이체"):
             return jsonify({"error": "결제수단은 '현금', '카드', '계좌이체'만 가능합니다."}), 400
 
-        validated_items, total_amount, item_error = _validate_pre_order_items(cur, items)
+        validated_items, total_amount, item_error = _validate_pre_order_items(cur, items, store_id)
         if item_error:
             return jsonify({"error": item_error}), 400
 
@@ -7539,7 +7624,7 @@ def api_pre_orders():
         return jsonify({"error": f"서버 내부 오류: {str(e)}"}), 500
 
 
-def _validate_pre_order_items(cur, items):
+def _validate_pre_order_items(cur, items, store_id=None):
     """선결제 주문 항목을 검증하고 (검증된 항목 목록, 총액, 오류메시지)를 돌려준다.
     신규 등록(POST)과 수정(PUT)이 똑같은 규칙을 쓰도록 한곳에 모았다."""
     if not items:
@@ -7575,6 +7660,9 @@ def _validate_pre_order_items(cur, items):
         product = cur.fetchone()
         if not product:
             return None, 0, f"제품 ID {product_id}가 존재하지 않습니다."
+        product = dict(product)
+        if store_id:
+            product["cost_price"] = unit_cost_for(cur, product_id, store_id, product["cost_price"])
 
         line_total = (unit_price * qty) - discount
         final_unit_price = line_total // qty if qty > 0 else 0
@@ -7659,11 +7747,11 @@ def api_pre_order_update(order_id):
         if order["status"] != "대기":
             return jsonify({"error": f"이미 '{order['status']}' 상태인 주문은 수정할 수 없습니다. (출고 확정 전 주문만 수정 가능)"}), 400
 
-        validated_items, total_amount, item_error = _validate_pre_order_items(cur, items)
+        store_id = order["store_id"]
+        validated_items, total_amount, item_error = _validate_pre_order_items(cur, items, store_id)
         if item_error:
             return jsonify({"error": item_error}), 400
 
-        store_id = order["store_id"]
         customer_id = upsert_customer(cur, customer_name, customer_phone, customer_address)
 
         memo_key = f"선결제 대기 #{order_id}"
@@ -8588,7 +8676,7 @@ def api_webhook_order():
             """INSERT INTO stock_transactions
             (product_id, store_id, type, quantity, unit_cost, unit_price, staff, memo)
             VALUES (%s, %s, '판매출고', %s, %s, %s, %s, %s) RETURNING id""",
-            (product["id"], store_id, quantity, product["cost_price"], unit_price, f"webhook:{channel}", item_memo)
+            (product["id"], store_id, quantity, unit_cost_for(cur, product["id"], store_id, product["cost_price"]), unit_price, f"webhook:{channel}", item_memo)
         )
         created_ids.append(cur.fetchone()["id"])
 

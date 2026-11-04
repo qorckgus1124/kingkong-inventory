@@ -2,7 +2,7 @@
 {% block content_class %}content--wide{% endblock %}
 {% block content %}
 <h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-package"></use></svg><span id="msTitle">내 재고</span></h1>
-<div class="subtitle" id="msSub">현재 재고 수량을 조회합니다. (조회 전용)</div>
+<div class="subtitle" id="msSub">현재 재고 수량을 조회합니다. 재고는 조회 전용이고, 원가는 매장에서 직접 수정할 수 있습니다. (원가 칸을 누르세요)</div>
 
 <div class="card ms-filter">
   <div class="ms-row">
@@ -69,7 +69,7 @@
     }
     data = json;
     $('msTitle').textContent = json.is_admin ? '매장 재고 조회' : (json.store.name + ' 재고');
-    $('msSub').textContent = json.store.name + ' · 현재 재고 수량 (조회 전용)';
+    $('msSub').textContent = json.store.name + ' · 재고는 조회 전용 · 원가 칸을 눌러 이 매장 원가를 수정합니다 (비우면 전체 공통 원가로 복귀)';
     if (json.is_admin) {
       const sel = $('msStore');
       sel.innerHTML = json.stores.map((s) => '<option value="' + s.id + '">' + esc(s.name) + '</option>').join('');
@@ -123,7 +123,9 @@
         '<td class="ms-name">' + esc(i.name) + '</td>' +
         '<td class="num ms-qty' + (i.qty <= 0 ? ' ms-zero' : (low ? ' ms-low' : '')) + '">' + fmt(i.qty) + (low && i.qty > 0 ? ' ⚠' : '') + '</td>' +
         '<td class="num">' + fmt(i.min_qty) + '</td>' +
-        '<td class="num">' + fmt(i.cost_price) + '</td>' +
+        '<td class="num ms-cost' + (i.cost_custom ? ' ms-custom' : '') + '" data-id="' + i.id + '" title="' +
+          (i.cost_custom ? '매장 원가 (전체 공통 ' + fmt(i.global_cost_price) + '원)' : '전체 공통 원가 · 눌러서 이 매장 원가로 수정') + '">' +
+          fmt(i.cost_price) + (i.cost_custom ? ' <span class="ms-badge">매장</span>' : '') + '</td>' +
         '<td class="num">' + fmt(i.card_cost_price) + '</td>' +
         '<td class="num">' + fmt(i.sale_price) + '</td>' +
         '</tr>';
@@ -138,6 +140,39 @@
       render();
     });
   });
+  // 원가 칸을 누르면 입력창으로 바뀐다. Enter/포커스 해제 = 저장, Esc = 취소, 빈 값 = 전체 공통 원가로 복귀.
+  $('msBody').addEventListener('click', (e) => {
+    const td = e.target.closest('td.ms-cost');
+    if (!td || td.querySelector('input')) return;
+    const item = data.items.find((x) => String(x.id) === td.dataset.id);
+    if (!item) return;
+    const input = document.createElement('input');
+    input.type = 'number'; input.min = '0'; input.step = '1'; input.className = 'ms-cost-input';
+    input.value = item.cost_custom ? item.cost_price : '';
+    input.placeholder = String(item.global_cost_price);
+    td.textContent = ''; td.appendChild(input); input.focus(); input.select();
+    let done = false;
+    const finish = async (save) => {
+      if (done) return; done = true;
+      if (save) {
+        const body = { product_id: item.id, cost_price: input.value };
+        if (data.is_admin) body.store_id = data.store.id;
+        try {
+          const res = await fetch('/api/my/cost', { method: 'PUT', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const json = await res.json();
+          if (!res.ok) { alert(json.error || '저장하지 못했습니다.'); }
+          else { item.cost_price = json.cost_price; item.cost_custom = json.cost_custom; item.global_cost_price = json.global_cost_price; }
+        } catch (err) { alert('저장하지 못했습니다. 네트워크를 확인하세요.'); }
+      }
+      render();
+    };
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') finish(true);
+      else if (ev.key === 'Escape') finish(false);
+    });
+    input.addEventListener('blur', () => finish(true));
+  });
   ['msSearch', 'msCat', 'msOnlyStock', 'msOnlyLow'].forEach((id) => $(id).addEventListener('input', render));
   $('msStore').addEventListener('change', (e) => load(e.target.value));
 
@@ -146,6 +181,10 @@
 </script>
 
 <style>
+.ms-cost { cursor: pointer; }
+.ms-cost:hover { background: rgba(120,120,255,.10); }
+.ms-badge { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: rgba(120,120,255,.18); margin-left: 4px; }
+.ms-cost-input { width: 90px; text-align: right; padding: 4px 6px; }
 .ms-filter { padding: 16px 18px; margin-bottom: 14px; }
 .ms-filter:hover { transform: none; }
 .ms-row { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }

@@ -26,6 +26,19 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 _get_db = None
 
+# 최초 기본값. 환경변수(ADMIN_USERNAME / ADMIN_INITIAL_PASSWORD)가 있으면 그쪽이 우선한다.
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "kingkong1234"
+
+# 매장 계정 초기 세팅: (매장 이름, 아이디). 비밀번호는 모두 아래 값으로 시작한다.
+STORE_ACCOUNT_SEED = [
+    ("서초점", "kingkongsc"),
+    ("논현점", "kingkongnh"),
+    ("강남역점", "kingkong"),
+    ("신사점", "kingkongblack"),
+]
+STORE_ACCOUNT_INITIAL_PASSWORD = "1234"
+
 USERNAME_RE = re.compile(r"^\S{1,50}$")
 
 
@@ -75,27 +88,66 @@ def ensure_schema():
 
         cur.execute("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1")
         if cur.fetchone() is None:
-            username = (os.environ.get("ADMIN_USERNAME") or "admin").strip() or "admin"
-            password = os.environ.get("ADMIN_INITIAL_PASSWORD")
-            generated = not password
-            if generated:
-                password = secrets.token_urlsafe(9)
+            username = (os.environ.get("ADMIN_USERNAME") or DEFAULT_ADMIN_USERNAME).strip() or DEFAULT_ADMIN_USERNAME
+            password = os.environ.get("ADMIN_INITIAL_PASSWORD") or DEFAULT_ADMIN_PASSWORD
             cur.execute(
                 """INSERT INTO users (username, password_hash, role, display_name, must_change_pw)
-                   VALUES (%s, %s, 'admin', '대표', %s)
+                   VALUES (%s, %s, 'admin', '대표', 0)
                    ON CONFLICT (username) DO NOTHING""",
-                (username, generate_password_hash(password), 1 if generated else 0),
+                (username, generate_password_hash(password)),
             )
+            created = cur.rowcount
             conn.commit()
-            if generated and cur.rowcount:
-                # 두 워커가 동시에 뜨면 한쪽만 insert 된다. 만든 쪽만 로그에 남는다.
-                print(f"🔐 어드민 계정을 새로 만들었습니다. 아이디: {username} / 임시 비밀번호: {password}"
-                      " (Render 로그에서 확인하고, 로그인 후 바꾸세요)")
-            elif cur.rowcount:
-                print(f"🔐 어드민 계정을 만들었습니다. 아이디: {username} (ADMIN_INITIAL_PASSWORD 값)")
+            if created:
+                print(f"🔐 어드민 계정을 만들었습니다. 아이디: {username}")
+
+        _seed_store_accounts(conn, cur)
     except Exception as e:
         conn.rollback()
         print(f"❌ users 테이블 준비 오류: {e}")
+
+
+def _seed_store_accounts(conn, cur):
+    """매장 4곳의 첫 계정을 만든다. 딱 한 번만 실행한다(이후 어드민이 지우거나 바꾼 계정은 되살리지 않는다).
+    매장 이름이 정확히 같은 곳을 우선 찾고, 없으면 '서초'처럼 앞부분이 같은 매장을 쓴다.
+    해당 매장이 DB에 없으면 그 매장은 건너뛴다(매장을 새로 만들지는 않는다)."""
+    cur.execute("CREATE TABLE IF NOT EXISTS auth_seed_done (name TEXT PRIMARY KEY, done_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    cur.execute("SELECT 1 FROM auth_seed_done WHERE name = 'store_accounts_v1'")
+    if cur.fetchone():
+        conn.commit()
+        return
+    # 동시에 뜬 워커 중 한쪽만 진행하도록 먼저 표시를 남긴다.
+    cur.execute("INSERT INTO auth_seed_done (name) VALUES ('store_accounts_v1') ON CONFLICT DO NOTHING")
+    if cur.rowcount == 0:
+        conn.commit()
+        return
+    pw_hash = generate_password_hash(STORE_ACCOUNT_INITIAL_PASSWORD)
+    made, skipped = [], []
+    for store_name, username in STORE_ACCOUNT_SEED:
+        cur.execute("SELECT id, name FROM stores WHERE name = %s", (store_name,))
+        store = cur.fetchone()
+        if store is None:
+            stem = store_name[:-1] if store_name.endswith("점") else store_name
+            cur.execute("SELECT id, name FROM stores WHERE name LIKE %s ORDER BY id LIMIT 1", (stem + "%",))
+            store = cur.fetchone()
+        if store is None:
+            skipped.append(f"{store_name}(매장 없음)")
+            continue
+        cur.execute("SELECT 1 FROM users WHERE role = 'store' AND store_id = %s", (store["id"],))
+        if cur.fetchone():
+            skipped.append(f"{store_name}(이미 계정 있음)")
+            continue
+        cur.execute(
+            """INSERT INTO users (username, password_hash, role, store_id, display_name, must_change_pw)
+               VALUES (%s, %s, 'store', %s, %s, 0)
+               ON CONFLICT (username) DO NOTHING""",
+            (username, pw_hash, store["id"], store["name"]),
+        )
+        (made if cur.rowcount else skipped).append(
+            f"{store['name']}:{username}" if cur.rowcount else f"{store_name}(아이디 중복)")
+    conn.commit()
+    print(f"🔐 매장 계정 초기 세팅 - 생성: {', '.join(made) or '없음'}"
+          + (f" / 건너뜀: {', '.join(skipped)}" if skipped else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +185,15 @@ def _load_user():
             session.clear()
     g._auth_user = user
     return user
+
+
+def current_user_is_admin():
+    """지금 요청의 사용자가 (중지·삭제되지 않은) 어드민인지 DB 기준으로 확인한다."""
+    try:
+        user = _load_user()
+    except Exception:
+        return False
+    return bool(user) and user["role"] == "admin"
 
 
 def _need_login():
@@ -285,17 +346,20 @@ def init_auth(app, get_db):
             """
             SELECT p.id, p.name, b.name AS brand, c.name AS category,
                    COALESCE(ss.qty, 0) AS qty, COALESCE(ss.min_qty, 0) AS min_qty,
-                   COALESCE(p.cost_price, 0) AS cost_price,
+                   COALESCE(spc.cost_price, p.cost_price, 0) AS cost_price,
+                   COALESCE(p.cost_price, 0) AS global_cost_price,
+                   (spc.cost_price IS NOT NULL) AS cost_custom,
                    COALESCE(p.card_cost_price, 0) AS card_cost_price,
                    COALESCE(p.sale_price, 0) AS sale_price
             FROM products p
             LEFT JOIN brands b ON b.id = p.brand_id
             LEFT JOIN categories c ON c.id = p.category_id
             LEFT JOIN store_stock ss ON ss.product_id = p.id AND ss.store_id = %s
+            LEFT JOIN store_product_cost spc ON spc.product_id = p.id AND spc.store_id = %s
             WHERE COALESCE(p.is_active, 1) = 1
             ORDER BY c.name NULLS LAST, b.name NULLS LAST, p.name
             """,
-            (store_id,),
+            (store_id, store_id),
         )
         items = [dict(r) for r in cur.fetchall()]
         return jsonify({
@@ -303,6 +367,69 @@ def init_auth(app, get_db):
             "stores": stores if is_admin else [],
             "is_admin": is_admin,
             "items": items,
+        })
+
+    @app.route("/api/my/cost", methods=["PUT"])
+    @login_required
+    def api_my_cost():
+        """매장 원가 수정. 매장 계정은 자기 매장만, 어드민은 store_id로 지정한 매장.
+        cost_price가 비어 있으면(null/"") 매장 값을 지우고 전체 공통 원가로 되돌린다."""
+        user = g.user
+        data = _json()
+        if user["role"] == "admin":
+            try:
+                store_id = int(data.get("store_id"))
+            except (TypeError, ValueError):
+                return _fail("매장을 선택하세요.")
+        else:
+            store_id = user["store_id"]
+            if not store_id:
+                return _fail("연결된 매장이 없습니다. 어드민에게 문의하세요.")
+        try:
+            product_id = int(data.get("product_id"))
+        except (TypeError, ValueError):
+            return _fail("제품이 올바르지 않습니다.")
+
+        raw = data.get("cost_price")
+        reset = raw is None or str(raw).strip() == ""
+        if not reset:
+            try:
+                cost = int(float(str(raw).replace(",", "")))
+            except ValueError:
+                return _fail("원가는 숫자로 입력하세요.")
+            if cost < 0 or cost > 100000000:
+                return _fail("원가는 0 이상의 올바른 금액이어야 합니다.")
+
+        conn, cur = _db()
+        cur.execute("SELECT cost_price FROM products WHERE id = %s", (product_id,))
+        prod = cur.fetchone()
+        if prod is None:
+            return _fail("제품을 찾을 수 없습니다.", 404)
+        cur.execute("SELECT 1 FROM stores WHERE id = %s", (store_id,))
+        if cur.fetchone() is None:
+            return _fail("매장을 찾을 수 없습니다.", 404)
+        try:
+            if reset:
+                cur.execute("DELETE FROM store_product_cost WHERE store_id = %s AND product_id = %s",
+                            (store_id, product_id))
+            else:
+                cur.execute(
+                    """INSERT INTO store_product_cost (store_id, product_id, cost_price, updated_by)
+                       VALUES (%s, %s, %s, %s)
+                       ON CONFLICT (store_id, product_id)
+                       DO UPDATE SET cost_price = EXCLUDED.cost_price,
+                                     updated_at = CURRENT_TIMESTAMP, updated_by = EXCLUDED.updated_by""",
+                    (store_id, product_id, cost, user["username"]),
+                )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            return _fail(f"저장 실패: {e}", 500)
+        return jsonify({
+            "ok": True,
+            "cost_price": prod["cost_price"] or 0 if reset else cost,
+            "global_cost_price": prod["cost_price"] or 0,
+            "cost_custom": not reset,
         })
 
     # ----- 내 정보 ---------------------------------------------------------
