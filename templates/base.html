@@ -33,12 +33,12 @@
 <meta name="twitter:title" content="킹콩재고 관리">
 <meta name="twitter:image" content="/static/link-thumbnail.jpg">
 
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" media="print" onload="this.media='all'">
 <!-- 수치 디스플레이용 사이버 서체(Orbitron). 한글은 Pretendard로 자동 폴백된다.
      display=swap 이라 폰트가 늦게 와도 화면이 비어 보이지 않는다. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&display=swap" media="print" onload="this.media='all'">
 <!-- ?v= 값은 파일이 바뀔 때 서버가 자동으로 바꿔준다(app.py의 asset_version).
      덕분에 브라우저가 css/js를 오래 캐시해도 새 배포는 즉시 반영된다. -->
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
