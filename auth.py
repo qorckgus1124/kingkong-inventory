@@ -520,9 +520,9 @@ def init_auth(app, get_db):
         SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),
     )
 
-    # 로그인 없이 열 수 있는 곳: 로그인/로그아웃, 정적 파일, 서비스워커·매니페스트,
+    # 로그인 없이 열 수 있는 곳: 로그인/로그아웃, 헬스체크(/health), 정적 파일, 서비스워커·매니페스트,
     # API 키로 보호되는 /api/webhook/*, 토큰으로 여는 공유 링크 /share/*
-    _OPEN_PATHS = {"/login", "/logout", "/sw.js", "/manifest.json", "/favicon.ico"}
+    _OPEN_PATHS = {"/login", "/logout", "/sw.js", "/manifest.json", "/favicon.ico", "/health", "/healthz"}
     _OPEN_PREFIXES = ("/static/", "/api/webhook/", "/share/")
 
     @app.before_request

@@ -1535,6 +1535,14 @@ def service_worker():
     return resp
 
 
+@app.route("/health")
+@app.route("/healthz")
+def health_check():
+    """Render 헬스체크용. 로그인·DB 없이 즉시 200을 돌려준다.
+    (auth.py의 _OPEN_PATHS에도 등록되어 있어야 로그인 페이지로 리다이렉트되지 않는다)"""
+    return "OK", 200
+
+
 @app.route("/api/version")
 def api_version():
     """지금 Render에 실제로 어떤 코드가 떠 있는지 브라우저에서 바로 확인하기 위한 엔드포인트.

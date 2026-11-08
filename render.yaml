@@ -3,6 +3,7 @@ services:
     name: my-inventory-app
     runtime: python
     plan: free
+    healthCheckPath: /health
     buildCommand: "./build.sh"
     # gunicorn 워커 수(WEB_CONCURRENCY) x DB_POOL_MAXCONN 합이 DB 무료 플랜의
     # 최대 동시 연결 수를 넘지 않도록 --timeout도 넉넉히 준다.
