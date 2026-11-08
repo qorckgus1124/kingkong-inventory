@@ -216,10 +216,7 @@ def _get_database_url():
 
 def _create_pool():
     result = urlparse(_get_database_url())
-    # minconn=1: 워커 시작 시 연결 1개 미리 생성
-    # maxconn: 워커 하나당 최대 동시 연결 수 (Neon pooler(-pooler)를 쓰면 실제 Postgres 커넥션이
-    # 아니라 PgBouncer 커넥션이라 여유 있게 잡아도 안전하다. DB_POOL_MAXCONN 환경변수로 조절 가능)
-    return psycopg2.pool.ThreadedConnectionPool(
+    base = dict(
         minconn=1,
         maxconn=int(os.environ.get("DB_POOL_MAXCONN", "10")),
         dbname=result.path[1:],
@@ -227,9 +224,20 @@ def _create_pool():
         password=result.password,
         host=result.hostname,
         port=result.port,
-        sslmode='require',  # Render에서는 'require'로 자동 설정됨
+        sslmode="require",
         connect_timeout=10,
+        # 무료 DB는 한참 안 쓰면 연결을 조용히 끊는다. 그 죽은 연결을 서버가 영원히 기다리다
+        # 화면이 안 뜨는 일을 막기 위해, 연결 상태를 주기적으로 확인하고 응답 없으면 끊는다.
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=3,
     )
+    try:
+        return psycopg2.pool.ThreadedConnectionPool(tcp_user_timeout=15000, **base)
+    except psycopg2.Error:
+        # 오래된 DB 클라이언트 라이브러리는 tcp_user_timeout을 모른다 -> 빼고 다시 시도
+        return psycopg2.pool.ThreadedConnectionPool(**base)
 
 
 def _init_pool():
