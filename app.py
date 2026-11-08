@@ -235,8 +235,10 @@ def _create_pool():
     )
     try:
         return psycopg2.pool.ThreadedConnectionPool(tcp_user_timeout=15000, **base)
-    except psycopg2.Error:
-        # 오래된 DB 클라이언트 라이브러리는 tcp_user_timeout을 모른다 -> 빼고 다시 시도
+    except psycopg2.ProgrammingError:
+        # 오래된 DB 클라이언트 라이브러리는 tcp_user_timeout을 모른다("invalid dsn") -> 빼고 다시 시도.
+        # (DB 접속 자체가 실패한 OperationalError는 여기서 잡지 않는다. 예전에는 모든 psycopg2 오류를
+        #  잡아서 접속 실패 때 10초씩 두 번 기다렸다.)
         return psycopg2.pool.ThreadedConnectionPool(**base)
 
 
@@ -966,14 +968,116 @@ def _mark_schema_current(sig):
             pass
 
 
-with app.app_context():
-    _sig = _schema_signature()
-    if _schema_is_current(_sig):
-        print("✅ 코드 변경 없음 - DB 구조 점검 생략 (빠른 시작)")
-    else:
-        init_db()
-        auth.ensure_schema()
-        _mark_schema_current(_sig)
+# ---------------------------------------------------------------------------
+# 서버 시작 시 DB 준비 (죽지 않고, 한 번에 한 워커만, 실패하면 다음 요청 때 재시도)
+# ---------------------------------------------------------------------------
+# 예전에는 import 시점에 바로 DB를 건드렸고, auth.ensure_schema()의 접속 오류가 밖으로 새면서
+# "무료 DB가 아직 자는 상태"로 서버가 켜지면 gunicorn 워커가 부팅에 실패해 서버 전체가 죽었다.
+# (Render 무료 플랜: 15분 뒤 절전 → 깨어날 때 이 현상으로 화면이 계속 로딩만 됨)
+# 이제는 DB가 안 열려도 서버는 일단 뜨고, 요청이 올 때 다시 시도하며, 그동안은 안내 화면을 보여준다.
+import threading
+
+_STARTUP_DONE = [False]
+_STARTUP_LOCK = threading.Lock()
+_STARTUP_ATTEMPTS = [0]
+_STARTUP_MAX_ATTEMPTS = 3          # 점검 자체가 반복 실패해도 서버가 영원히 막히지 않게 하는 한도
+_SCHEMA_ADVISORY_KEY = 7203991     # 워커 두 개가 동시에 테이블을 만들다 충돌하지 않게 하는 DB 잠금 번호
+
+
+_CONNECTED_ONCE = [False]
+
+
+def g_db_ever_connected():
+    return _CONNECTED_ONCE[0]
+
+
+def _run_startup():
+    """DB 구조 점검. 끝났거나(또는 포기했으면) True, DB에 아직 못 붙으면 False."""
+    if _STARTUP_DONE[0]:
+        return True
+    with _STARTUP_LOCK:
+        if _STARTUP_DONE[0]:
+            return True
+        try:
+            with app.app_context():
+                get_db()                       # DB가 안 열려 있으면 여기서 예외 -> 아래 except
+                _CONNECTED_ONCE[0] = True
+                sig = _schema_signature()
+                if _schema_is_current(sig):
+                    print("✅ 코드 변경 없음 - DB 구조 점검 생략 (빠른 시작)")
+                    _STARTUP_DONE[0] = True
+                    return True
+
+                cur = g.cursor
+                locked = False
+                deadline = time.time() + 60
+                try:
+                    while time.time() < deadline:
+                        cur.execute("SELECT pg_try_advisory_lock(%s) AS got", (_SCHEMA_ADVISORY_KEY,))
+                        locked = bool(cur.fetchone()["got"])
+                        g.db.commit()
+                        if locked:
+                            break
+                        time.sleep(1)               # 다른 워커가 점검 중 -> 끝나길 기다림
+                        if _schema_is_current(sig):
+                            break
+                    if _schema_is_current(sig):
+                        print("✅ 다른 워커가 DB 구조 점검을 마쳤음 - 생략")
+                        _STARTUP_DONE[0] = True
+                        return True
+
+                    _INIT_FAILED[0] = False
+                    init_db()
+                    auth_ok = auth.ensure_schema()
+                    if _INIT_FAILED[0] or not auth_ok:
+                        raise RuntimeError("DB 구조 점검이 끝까지 되지 않았습니다")
+                    _mark_schema_current(sig)
+                    _STARTUP_DONE[0] = True
+                    return True
+                finally:
+                    if locked:
+                        try:
+                            g.db.rollback()
+                            g.cursor.execute("SELECT pg_advisory_unlock(%s)", (_SCHEMA_ADVISORY_KEY,))
+                            g.db.commit()
+                        except Exception:
+                            pass
+        except Exception as e:
+            if isinstance(e, psycopg2.OperationalError) and not g_db_ever_connected():
+                # DB에 아직 접속조차 못 한 경우(깨어나는 중): 횟수에 넣지 않고 계속 기다린다.
+                print(f"⚠️ DB가 아직 준비되지 않음 - 다음 요청 때 다시 시도: {str(e).strip()[:120]}")
+                return False
+            _STARTUP_ATTEMPTS[0] += 1
+            print(f"⚠️ 시작 점검 실패({_STARTUP_ATTEMPTS[0]}/{_STARTUP_MAX_ATTEMPTS}) - 다음 요청 때 다시 시도: {e}")
+            if _STARTUP_ATTEMPTS[0] >= _STARTUP_MAX_ATTEMPTS:
+                # 점검이 계속 실패해도 서버를 막아 두지는 않는다(테이블은 이미 있을 가능성이 큼).
+                print("⚠️ 시작 점검을 포기하고 그대로 서비스합니다.")
+                _STARTUP_DONE[0] = True
+                return True
+            return False
+
+
+# 로그인 가드(auth)보다 먼저 실행되도록 맨 앞에 끼워 넣는다.
+def _ensure_startup_before_request():
+    if _STARTUP_DONE[0]:
+        return None
+    path = request.path
+    if path in ("/health", "/healthz", "/sw.js", "/manifest.json", "/favicon.ico") or path.startswith("/static/"):
+        return None
+    # 로그인 안 한 사람이 보는 로그인 화면(GET)은 DB가 필요 없으니 그대로 보여준다.
+    if path == "/login" and request.method == "GET" and not session.get("uid"):
+        return None
+    if _run_startup():
+        return None
+    return auth.db_waking_response()
+
+
+app.before_request_funcs.setdefault(None, []).insert(0, _ensure_startup_before_request)
+
+try:
+    _run_startup()       # 서버가 켜질 때 한 번 시도. 실패해도 서버는 뜬다(위 요청 훅이 다시 시도).
+except Exception as _e:
+    print(f"⚠️ 시작 점검 중 예기치 못한 오류(무시하고 계속): {_e}")
 
 # ===== 어드민 전용 매장 리포트 (/admin/reports) =====
 import admin_reports

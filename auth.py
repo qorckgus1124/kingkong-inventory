@@ -74,7 +74,18 @@ def _temp_password():
 # ---------------------------------------------------------------------------
 
 def ensure_schema():
-    conn, cur = _db()
+    """users 테이블과 최초 계정을 준비한다. 성공하면 True, 실패하면 False.
+
+    ⚠️ 절대 예외를 밖으로 던지지 않는다. 서버가 켜지는 순간 무료 DB(Neon 등)가 아직 잠들어 있으면
+    여기서 접속 오류가 나는데, 이 예외가 밖으로 나가면 gunicorn 워커가 부팅에 실패해서
+    서버 전체가 죽고(= Render에서 화면이 계속 로딩만 됨) 다시 켜지기를 반복한다.
+    실패하면 False를 돌려주고, 호출한 쪽(app.py)이 다음 요청 때 다시 시도한다.
+    """
+    try:
+        conn, cur = _db()
+    except Exception as e:
+        print(f"❌ users 테이블 준비 실패 - DB에 연결할 수 없음(나중에 다시 시도): {e}")
+        return False
     try:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -112,9 +123,14 @@ def ensure_schema():
 
         _seed_store_accounts(conn, cur)
         _reset_admin_password_once(conn, cur)
+        return True
     except Exception as e:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         print(f"❌ users 테이블 준비 오류: {e}")
+        return False
 
 
 def _reset_admin_password_once(conn, cur):
@@ -230,6 +246,38 @@ def current_user_is_admin():
     except Exception:
         return False
     return bool(user) and user["role"] == "admin"
+
+
+_WAKING_HTML = """<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="refresh" content="4">
+<title>서버 준비 중</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Noto Sans KR",sans-serif;
+background:#1d1d1f;color:#f5f5f7;text-align:center;padding:24px;box-sizing:border-box}
+@media (prefers-color-scheme: light){body{background:#f5f5f7;color:#1d1d1f}}
+h1{font-size:20px;margin:0 0 8px}p{font-size:14px;opacity:.75;margin:0}
+</style></head><body><div>
+<h1>서버를 깨우는 중입니다…</h1>
+<p>데이터베이스가 준비되면 자동으로 다시 불러옵니다. (보통 10~30초)</p>
+</div></body></html>"""
+
+
+def db_waking_response():
+    """DB에 아직 연결할 수 없을 때(무료 DB가 깨어나는 중 등): 빈 화면으로 계속 로딩되는 대신
+    안내 문구를 보여주고 4초마다 자동으로 다시 시도한다. 503이라 서비스워커도 캐시하지 않는다."""
+    if request.path.startswith("/api/"):
+        resp = jsonify({"error": "서버를 깨우는 중입니다. 잠시 후 다시 시도해 주세요."})
+        resp.status_code = 503
+    else:
+        from flask import make_response
+        resp = make_response(_WAKING_HTML, 503)
+        resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    resp.headers["Retry-After"] = "4"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def _need_login():
@@ -530,7 +578,11 @@ def init_auth(app, get_db):
         path = request.path
         if request.method == "OPTIONS" or path in _OPEN_PATHS or path.startswith(_OPEN_PREFIXES):
             return None
-        user = _load_user()
+        try:
+            user = _load_user()
+        except psycopg2.Error as e:
+            print(f"⚠️ 로그인 확인 중 DB 오류(깨어나는 중일 수 있음): {e}")
+            return db_waking_response()
         if not user:
             return _need_login()
         if user["role"] == "store":
