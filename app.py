@@ -810,6 +810,7 @@ def init_db():
 
     except Exception as e:
         print(f"❌ DB 초기화 오류: {e}")
+        _INIT_FAILED[0] = True
         import traceback
         traceback.print_exc()
 
@@ -910,9 +911,69 @@ def load_brand_mapping_from_csv():
 import auth
 auth.init_auth(app, get_db)
 
+# 서버가 켜질 때마다 테이블/인덱스 수십 개를 점검(ALTER·CREATE INDEX)하면 느리고,
+# 워커 2개가 동시에 하면 서로(그리고 아직 떠 있는 옛 서버와) 잠금이 걸려 멈출 수 있다.
+# -> 코드가 바뀌지 않았다면(= 같은 코드로 재시작) 이 점검을 통째로 건너뛴다.
+# 코드를 수정해 새로 배포하면 해시가 달라지므로 그때는 예전처럼 전체 점검을 한 번 한다.
+_INIT_FAILED = [False]
+
+
+def _schema_signature():
+    import hashlib
+    import inspect
+    try:
+        src = inspect.getsource(init_db) + inspect.getsource(auth.ensure_schema)
+        return hashlib.sha256(src.encode("utf-8")).hexdigest()[:24]
+    except Exception:
+        return None
+
+
+def _schema_is_current(sig):
+    if not sig:
+        return False
+    try:
+        get_db()
+        g.cursor.execute("SELECT value FROM settings WHERE key = 'schema_signature'")
+        row = g.cursor.fetchone()
+        g.db.rollback()
+        if not row:
+            return False
+        val = row["value"] if isinstance(row, dict) else row[0]
+        return val == sig
+    except Exception:
+        try:
+            g.db.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def _mark_schema_current(sig):
+    if not sig or _INIT_FAILED[0]:
+        return
+    try:
+        g.cursor.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_signature', %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (sig,),
+        )
+        g.db.commit()
+    except Exception as e:
+        print(f"⚠️ 스키마 서명 저장 실패(무시): {e}")
+        try:
+            g.db.rollback()
+        except Exception:
+            pass
+
+
 with app.app_context():
-    init_db()
-    auth.ensure_schema()
+    _sig = _schema_signature()
+    if _schema_is_current(_sig):
+        print("✅ 코드 변경 없음 - DB 구조 점검 생략 (빠른 시작)")
+    else:
+        init_db()
+        auth.ensure_schema()
+        _mark_schema_current(_sig)
 
 # ===== 어드민 전용 매장 리포트 (/admin/reports) =====
 import admin_reports
