@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block content %}
+<h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-clipboard-check"></use></svg>데이터 점검</h1>
+<div class="subtitle">원가·판매가·브랜드가 빠졌거나 원가가 판매가 이상인 제품입니다. 원가가 비어 있으면 순이익과 예상 순이익이 실제보다 크게 나옵니다. 여기서 바로 고치면 목록에서 사라집니다.</div>
+
+<div class="card">
+  <div id="dcChips" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;"></div>
+  <div style="display:flex; gap:8px; margin-top:10px; align-items:center;">
+    <input type="text" id="dcSearch" placeholder="제품명·브랜드 검색" oninput="render()" style="flex:1;">
+    <button onclick="load()">🔄 새로고침</button>
+  </div>
+</div>
+
+<datalist id="dcBrandList"></datalist>
+
+<div style="overflow-x:auto;">
+<table>
+  <thead>
+    <tr>
+      <th>문제</th><th>제품명</th><th style="min-width:150px">브랜드</th><th>카테고리</th>
+      <th class="num" style="width:110px">원가</th><th class="num" style="width:110px">판매가</th>
+      <th class="num">재고</th><th style="width:70px"></th>
+    </tr>
+  </thead>
+  <tbody id="dcBody"><tr><td colspan="8"><div class="empty">불러오는 중…</div></td></tr></tbody>
+</table>
+</div>
+
+<style>
+.dc-tag { display:inline-block; font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; margin:1px 2px 1px 0; white-space:nowrap; }
+.dc-no_cost { background:rgba(255,159,10,.18); color:#c46a00; }
+.dc-no_price { background:rgba(255,69,58,.15); color:#d0302a; }
+.dc-no_brand { background:rgba(120,120,140,.18); color:var(--text-light); }
+.dc-neg_margin { background:rgba(191,90,242,.16); color:#9a3fd0; }
+.dc-chip.active { outline:2px solid var(--primary, #4f8ff7); }
+td.num, th.num, input.num { text-align:right; }
+#dcBody input, #dcBody select { width:100%; padding:5px 8px; font-size:13px; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const apiFailed = (r) => !!(r && r.__apiError);
+const DC_LABELS = { no_cost: '원가 없음', no_price: '판매가 없음', no_brand: '브랜드 없음', neg_margin: '역마진' };
+let dcItems = [], dcBrands = [], dcCategories = [], dcFilter = '';
+
+async function load() {
+  const [items, brands, cats] = await Promise.all([api('/api/data_check'), api('/api/brands'), api('/api/categories')]);
+  if (apiFailed(items)) return;
+  dcItems = items;
+  dcBrands = apiFailed(brands) ? [] : brands;
+  dcCategories = apiFailed(cats) ? [] : cats;
+  document.getElementById('dcBrandList').innerHTML = dcBrands.map(b => `<option value="${escapeHtml(b.name)}">`).join('');
+  render();
+}
+
+function render() {
+  const counts = {};
+  dcItems.forEach(i => i.issues.forEach(k => counts[k] = (counts[k] || 0) + 1));
+  document.getElementById('dcChips').innerHTML =
+    `<button class="dc-chip ${dcFilter === '' ? 'active' : ''}" onclick="setFilter('')">전체 ${dcItems.length}</button>` +
+    Object.keys(DC_LABELS).map(k =>
+      `<button class="dc-chip ${dcFilter === k ? 'active' : ''}" onclick="setFilter('${k}')">${DC_LABELS[k]} ${counts[k] || 0}</button>`).join('');
+
+  const q = document.getElementById('dcSearch').value.trim().toLowerCase();
+  const rows = dcItems.filter(i => (!dcFilter || i.issues.includes(dcFilter)) &&
+    (!q || (i.name + ' ' + (i.brand_name || '')).toLowerCase().includes(q)));
+  const body = document.getElementById('dcBody');
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="8"><div class="empty"><span class="empty-icon">✅</span>고칠 제품이 없습니다.</div></td></tr>';
+    return;
+  }
+  const catOptions = (sel) => '<option value="">미분류</option>' +
+    dcCategories.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+  body.innerHTML = rows.map(i => `
+    <tr data-id="${i.id}">
+      <td>${i.issues.map(k => `<span class="dc-tag dc-${k}">${DC_LABELS[k]}</span>`).join('')}</td>
+      <td>${escapeHtml(i.name)}</td>
+      <td><input list="dcBrandList" class="dc-brand" value="${escapeHtml(i.brand_name || '')}" placeholder="브랜드 선택"></td>
+      <td><select class="dc-cat">${catOptions(i.category_id)}</select></td>
+      <td><input type="number" class="dc-cost num" value="${i.cost_price || ''}" placeholder="0"></td>
+      <td><input type="number" class="dc-sale num" value="${i.sale_price || ''}" placeholder="0"></td>
+      <td class="num">${fmt(i.qty)}</td>
+      <td><button class="primary" onclick="saveRow(${i.id}, this)">저장</button></td>
+    </tr>`).join('');
+}
+
+function setFilter(k) { dcFilter = k; render(); }
+
+async function saveRow(id, btn) {
+  const tr = btn.closest('tr');
+  const brandName = tr.querySelector('.dc-brand').value.trim();
+  let brand_id = null;
+  if (brandName) {
+    const b = dcBrands.find(x => x.name === brandName);
+    if (!b) { toast('없는 브랜드입니다. 브랜드 관리에서 먼저 추가해주세요.', true, '⚠️'); return; }
+    brand_id = b.id;
+  }
+  const cost = parseInt(tr.querySelector('.dc-cost').value) || 0;
+  const sale = parseInt(tr.querySelector('.dc-sale').value) || 0;
+  // 카드원가는 제품 관리 화면과 같은 식으로 다시 계산한다
+  const cardCost = sale > 0 ? Math.max(Math.round(cost + sale - (sale / 1.1 * 0.975)), 0) : 0;
+  const catVal = tr.querySelector('.dc-cat').value;
+  btn.disabled = true;
+  const res = await api(`/api/products/${id}`, { method: 'PUT', body: JSON.stringify({
+    brand_id, category_id: catVal ? Number(catVal) : null,
+    cost_price: cost, sale_price: sale, card_cost_price: cardCost, staff: '데이터 점검'
+  }) });
+  btn.disabled = false;
+  if (apiFailed(res)) return;
+  toast('저장했습니다.', false, '✅');
+  await load();
+}
+
+load();
+</script>
+{% endblock %}

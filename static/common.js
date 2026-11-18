@@ -70,6 +70,11 @@ async function api(url, options, retries = 3) {
         toast('서버 응답을 읽지 못했습니다.', true, '⚠️');
         return apiFailure('빈 응답');
       }
+      // 큰 목록은 서버가 {cols, rows} 형태로 보낸다 -> 원래의 객체 배열로 되돌린다
+      if (data && Array.isArray(data.cols) && Array.isArray(data.rows) && Object.keys(data).length === 2) {
+        const cols = data.cols;
+        data = data.rows.map(r => { const o = {}; for (let k = 0; k < cols.length; k++) o[cols[k]] = r[k]; return o; });
+      }
       if (method === 'GET' && url === '/api/stores') writeStoreListCache(data);
       // 판매/입출고 등 데이터가 바뀌는 요청이 성공하면 "오늘 매출"을 즉시 새로 불러온다.
       // (플로팅 패널과 대시보드 오늘 카드가 실시간으로 보이게 하는 부분)
@@ -397,6 +402,8 @@ function clearSearchCache() {
 }
 
 async function apiSearch(url) {
+  // 제품 목록은 압축 형식(cols/rows)으로 받는다 (api()가 객체 배열로 되돌림)
+  if (url.startsWith('/api/products?') && !/[?&]compact=/.test(url)) url += '&compact=1';
   const hit = _searchCache.get(url);
   if (hit && (Date.now() - hit.t) < SEARCH_CACHE_TTL_MS) {
     return hit.d;

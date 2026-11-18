@@ -57,7 +57,7 @@ def inject_asset_version():
     global _ASSET_VERSION
     if _ASSET_VERSION is None:
         newest = 0
-        for name in ("common.js", "style.css", "immersive.js"):
+        for name in ("common.js", "style.css", "immersive.js", "base.js", "icons3d.svg", "sw.js"):
             try:
                 newest = max(newest, int(os.path.getmtime(os.path.join(BASE_DIR, "static", name))))
             except OSError:
@@ -1637,6 +1637,23 @@ def enrich_product_rows(rows, store_id=None):
     return items
 
 
+# 목록 화면에서 쓰지 않는 필드 (응답 크기만 키운다)
+_PRODUCT_LIST_DROP = ("created_at", "updated_at", "image_path")
+
+
+def product_list_response(items, store_id=None):
+    """제품 목록 응답. 화면에 안 쓰는 필드를 빼고, compact=1이면 열 이름은 한 번만(cols),
+    값은 배열(rows)로 보낸다 (common.js의 api()가 다시 객체 목록으로 되돌린다)."""
+    drop = _PRODUCT_LIST_DROP if store_id else _PRODUCT_LIST_DROP + ("store_cost_custom", "store_cost_price")
+    for d in items:
+        for k in drop:
+            d.pop(k, None)
+    if request.args.get("compact") != "1" or not items:
+        return jsonify(items)
+    cols = list(items[0].keys())
+    return jsonify({"cols": cols, "rows": [[d.get(c) for c in cols] for d in items]})
+
+
 def product_row_to_dict(db, row, store_id=None):
     """단일 제품 행용 (내부적으로 enrich_product_rows를 쓰므로 결과 형식이 동일하다)."""
     if row is None:
@@ -1703,7 +1720,11 @@ def service_worker():
     # 서비스 워커는 자기가 위치한 경로 아래(/static/ 이하)만 기본적으로 제어할 수 있다.
     # /dashboard, /sales 같은 실제 페이지 이동까지 오프라인 대응이 되게 하려면
     # 루트 경로(/)에서 서비스 워커 파일을 내려줘야 한다 (스코프가 /가 됨).
-    resp = send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
+    # sw.js 안의 __ASSET_VERSION__ 자리에 css/js 주소의 ?v= 값과 같은 버전을 넣어 준다.
+    # -> 배포로 파일이 바뀌면 sw.js 내용도 바뀌어 새 서비스워커가 설치되고, 예전 캐시는 지워진다.
+    with open(os.path.join(app.static_folder, "sw.js"), encoding="utf-8") as f:
+        body = f.read().replace("__ASSET_VERSION__", inject_asset_version()["asset_version"])
+    resp = app.response_class(body, mimetype="application/javascript")
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
@@ -1817,6 +1838,51 @@ def quick_io_page():
 def turnover_page():
     # 재고회전율은 통합 화면(출고 분석)으로 합쳐졌다.
     return redirect("/analysis")
+
+@app.route("/data_check")
+def data_check_page():
+    return render_template("data_check.html", active="data_check")
+
+
+@app.route("/api/data_check")
+def api_data_check():
+    """제품 데이터 점검: 원가 없음 / 판매가 없음 / 브랜드 없음 / 역마진(원가 >= 판매가).
+    원가가 0이면 순이익·예상 순이익이 부풀려지므로 여기서 모아 보고 바로 고친다.
+    활성 제품만, 옵션이 있는 부모 제품(묶음 라벨)과 퀵상품은 제외한다."""
+    cur = g.cursor
+    cur.execute(
+        """
+        SELECT p.id, p.name, p.brand_id, b.name AS brand_name, p.category_id, c.name AS category_name,
+               COALESCE(p.cost_price, 0) AS cost_price, COALESCE(p.sale_price, 0) AS sale_price,
+               COALESCE(p.card_cost_price, 0) AS card_cost_price,
+               COALESCE((SELECT SUM(ss.qty) FROM store_stock ss WHERE ss.product_id = p.id), 0) AS qty
+        FROM products p
+        LEFT JOIN brands b ON b.id = p.brand_id
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.is_active = 1
+          AND COALESCE(p.unlimited_stock, 0) = 0
+          AND NOT EXISTS (SELECT 1 FROM products v WHERE v.parent_product_id = p.id AND v.is_active = 1)
+          AND (COALESCE(p.cost_price, 0) = 0 OR COALESCE(p.sale_price, 0) = 0 OR p.brand_id IS NULL
+               OR (COALESCE(p.sale_price, 0) > 0 AND COALESCE(p.cost_price, 0) >= p.sale_price))
+        ORDER BY b.name NULLS FIRST, p.name
+        """
+    )
+    items = []
+    for r in cur.fetchall():
+        d = dict(r)
+        issues = []
+        if not d["cost_price"]:
+            issues.append("no_cost")
+        if not d["sale_price"]:
+            issues.append("no_price")
+        if d["brand_id"] is None:
+            issues.append("no_brand")
+        if d["sale_price"] > 0 and d["cost_price"] >= d["sale_price"]:
+            issues.append("neg_margin")
+        d["issues"] = issues
+        items.append(d)
+    return jsonify(items)
+
 
 @app.route("/static/product_images/<path:filename>")
 def product_image(filename):
@@ -2428,7 +2494,7 @@ def api_products():
                 result.sort(key=lambda x: x.get("qty", 0), reverse=reverse)
                 if min_qty_warning:
                     result = [p for p in result if p.get("qty", 0) <= p.get("min_qty", 0)]
-                return jsonify(result)
+                return product_list_response(result, store_id)
             else:
                 allowed_sort = {"id": "id", "name": "name", "cost_price": "cost_price", "sale_price": "sale_price", "card_cost_price": "card_cost_price"}
                 sort_col = allowed_sort.get(sort, "id")
@@ -2442,7 +2508,7 @@ def api_products():
                 result = enrich_product_rows(rows, store_id)
                 if min_qty_warning:
                     result = [p for p in result if p.get("qty", 0) <= p.get("min_qty", 0)]
-                return jsonify(result)
+                return product_list_response(result, store_id)
 
         except Exception as e:
             print(f"❌ 제품 목록 API 오류: {e}")
@@ -7830,6 +7896,11 @@ def api_pre_orders():
                 sql += " AND po.status = %s"
                 params.append(status)
             sql += " GROUP BY po.id ORDER BY po.created_at DESC"
+            # 출고 완료 목록처럼 계속 쌓이는 목록은 최근 N건만 받는다 (limit 없으면 전체 - 예전 호출 호환)
+            limit = request.args.get("limit", type=int)
+            if limit and limit > 0:
+                sql += " LIMIT %s"
+                params.append(min(limit, 500))
 
             cur.execute(sql, params)
             rows = cur.fetchall()

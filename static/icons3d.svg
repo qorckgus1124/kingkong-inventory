@@ -1,20 +1,3 @@
-{# ============================================================================
-   KINGKONG HYPER-GLASS — 3D 이머시브 아이콘 오브젝트 (직접 제작)
-   ----------------------------------------------------------------------------
-   설계 규칙
-     · 캔버스 32×32. 모든 오브젝트는 "정면 살짝 위" 시점의 입체물이다.
-     · 색은 currentColor 를 상속받는다. → nav-item 의 기본/호버/활성 색,
-       h1 캡슐의 흰색, 하단탭의 네온색이 아이콘에 그대로 적용된다.
-     · 음영은 3톤 + 스페큘러로 만든다.
-         밝은 면  : currentColor + url(#i3dTop)      (위에서 오는 광원)
-         중간 면  : currentColor
-         그림자면 : currentColor + #05010F 오버레이  (두께/측면)
-         스페큘러 : #fff 하이라이트
-     · CSS 클래스 대신 presentation attribute(fill/opacity)를 쓴다.
-       <use> 섀도우 트리는 문서 CSS 선택자가 닿지 않지만, 상속 속성인
-       currentColor 는 전달되기 때문이다.
-     · 크기/두께/색은 static/style.css 의 .i3d 규칙이 담당한다.
-   ========================================================================= #}
 <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0"
      style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
   <defs>

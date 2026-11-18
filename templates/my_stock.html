@@ -67,6 +67,9 @@
       $('msBody').innerHTML = '<tr><td colspan="8"><div class="empty"><span class="empty-icon">⚠️</span>' + esc(json.error || '불러오지 못했습니다.') + '</div></td></tr>';
       return;
     }
+    // 서버는 열 이름(cols) + 값 배열(rows)로 보낸다 -> 객체 목록으로 되돌린다
+    json.items = json.rows.map((r) => Object.fromEntries(json.cols.map((c, i) => [c, r[i]])));
+    delete json.rows;
     data = json;
     $('msTitle').textContent = json.is_admin ? '매장 재고 조회' : (json.store.name + ' 재고');
     $('msSub').textContent = json.store.name + ' · 재고는 조회 전용 · 원가 칸을 눌러 이 매장 원가를 수정합니다 (비우면 전체 공통 원가로 복귀)';

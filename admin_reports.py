@@ -6,8 +6,11 @@
 - 경로가 /admin/ , /api/admin/ 아래라 auth.py의 _STORE_BLOCKED_* 에서 한 번 막히고,
   모든 라우트에 @admin_required 를 한 번 더 건다(이중 방어).
 - 모든 지표는 이 파일의 '공용 지표' 부분에서만 계산하고 모든 탭이 같은 함수를 쓴다.
-- 지표 기준은 /api/analysis(compute_analysis)와 같다:
-  제외 = 선결출고, 이동/교환 메모 거래, 옵션 부모 제품, 퀵상품(unlimited_stock).
+- 매출 기준(돈): 대시보드·매출 통계·금일 보고와 같은 하나의 식(app.py SALES_*_SQL)을 쓴다.
+  판매출고 + 선결예약 - 판매취소, 퀵상품(퀵비/공팟) 포함, 제외 규칙 없음.
+  -> 매출/이익/추이/결제수단/직원 실적은 money=True 로 이 기준을 쓴다.
+- 제품 순위(베스트셀러 등)만 제품 분석 기준을 쓴다:
+  제외 = 이동/교환 메모 거래, 옵션 부모 제품, 퀵상품(unlimited_stock).
 """
 import csv
 import io
@@ -207,15 +210,19 @@ MEMO_OK_SQL = "(t.memo IS NULL OR (t.memo NOT LIKE %s AND t.memo NOT LIKE %s))"
 MEMO_PARAMS = ["%이동%", "%교환%"]
 
 
-def _sales_where(start, end, store_ids=None, types=SALE_TYPES):
-    """판매 거래 FROM/WHERE 조각과 파라미터. t=stock_transactions, p=products"""
+def _sales_where(start, end, store_ids=None, types=SALE_TYPES, money=False):
+    """판매 거래 FROM/WHERE 조각과 파라미터. t=stock_transactions, p=products
+    money=True: 매출(돈) 기준 - 제외 규칙 없음 (대시보드/매출 통계/금일 보고와 같은 숫자)
+    money=False: 제품 분석 기준 - 이동/교환 메모, 옵션 부모, 퀵상품 제외"""
     d0, d1 = _dt_range(start, end)
     sql = (
         " FROM stock_transactions t JOIN products p ON p.id = t.product_id"
         " WHERE t.type = ANY(%s) AND t.date_time >= %s AND t.date_time < %s"
-        f" AND {MEMO_OK_SQL} AND {PRODUCT_OK_SQL}"
     )
-    params = [list(types), d0, d1] + MEMO_PARAMS
+    params = [list(types), d0, d1]
+    if not money:
+        sql += f" AND {MEMO_OK_SQL} AND {PRODUCT_OK_SQL}"
+        params += MEMO_PARAMS
     if store_ids is not None:
         sql += " AND t.store_id = ANY(%s)"
         params.append(list(store_ids))
@@ -224,10 +231,10 @@ def _sales_where(start, end, store_ids=None, types=SALE_TYPES):
 
 def metrics_by_store(start, end, store_ids=None):
     """매장별 핵심 지표. {store_id: {qty, revenue, profit, margin, orders, aov}} (거래가 없는 매장은 0)"""
-    frm, params = _sales_where(start, end, store_ids)
+    frm, params = _sales_where(start, end, store_ids, money=True)
     rows = _q(f"SELECT t.store_id, {QTY_SQL} AS qty, {REV_SQL} AS revenue, {PROFIT_SQL} AS profit"
               f"{frm} GROUP BY t.store_id", params)
-    frm2, params2 = _sales_where(start, end, store_ids, GOOD_SALE_TYPES)
+    frm2, params2 = _sales_where(start, end, store_ids, GOOD_SALE_TYPES, money=True)
     order_rows = _q(
         "SELECT t.store_id, COUNT(DISTINCT (t.type || date_trunc('minute', t.date_time)::text)) AS orders"
         f"{frm2} GROUP BY t.store_id", params2)
@@ -248,7 +255,7 @@ def metrics_by_store(start, end, store_ids=None):
 
 def daily_series(start, end, store_ids=None):
     """{store_id: {'YYYY-MM-DD': {revenue, profit, qty}}}"""
-    frm, params = _sales_where(start, end, store_ids)
+    frm, params = _sales_where(start, end, store_ids, money=True)
     rows = _q(f"SELECT t.store_id, date(t.date_time) AS d, {REV_SQL} AS revenue, {PROFIT_SQL} AS profit, "
               f"{QTY_SQL} AS qty{frm} GROUP BY t.store_id, date(t.date_time)", params)
     out = defaultdict(dict)
@@ -571,7 +578,7 @@ def section_sales(store, p, args):
     gran = args.get("granularity", "day")
     if gran not in ("day", "week", "month"):
         gran = "day"
-    frm, params = _sales_where(p["start"], p["end"], [sid])
+    frm, params = _sales_where(p["start"], p["end"], [sid], money=True)
     trend = _q(
         f"SELECT date_trunc('{gran}', t.date_time)::date AS d, {REV_SQL} AS revenue, "
         f"{PROFIT_SQL} AS profit, {QTY_SQL} AS qty{frm} GROUP BY 1 ORDER BY 1", params)
@@ -873,7 +880,7 @@ def _field_labels(csv):
 
 def section_ops(store, p, args):
     sid = store["id"]
-    frm, params = _sales_where(p["start"], p["end"], [sid])
+    frm, params = _sales_where(p["start"], p["end"], [sid], money=True)
     staff_rows = _q(
         f"SELECT COALESCE(NULLIF(t.staff, ''), '미지정') AS staff, {QTY_SQL} AS qty, {REV_SQL} AS revenue, "
         f"{PROFIT_SQL} AS profit, "
@@ -1103,8 +1110,9 @@ def build_consistency(day):
         out.append(item)
     return {"date": day.isoformat(), "stores": out,
             "apply_override": APPLY_REVENUE_OVERRIDE,
-            "note": "리포트는 분석 화면과 같은 제외 규칙(선결출고, 이동/교환 메모, 옵션 부모, 퀵상품)을 적용하고, "
-                    "기존 매출 통계/금일 보고는 이 규칙을 쓰지 않아 차이가 날 수 있습니다. 보정 매출은 지표에 반영하지 않습니다."}
+            "note": "매출·이익은 모든 화면(대시보드/매출 통계/금일 보고/매장 리포트)이 같은 기준을 씁니다: "
+                    "판매출고 + 선결예약 - 판매취소, 퀵상품 포함. 아래 '제외' 금액은 제품 순위(베스트셀러 등)에서만 빠지는 금액입니다. "
+                    "보정 매출은 지표에 반영하지 않습니다."}
 
 
 # ===========================================================================

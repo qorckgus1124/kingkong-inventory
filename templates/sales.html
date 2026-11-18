@@ -1578,6 +1578,12 @@ async function deletePreOrder(orderId) {
 }
 
 // ---------- 선결제 출고 완료(확정) 목록 & 취소 ----------
+// 출고 완료 목록은 계속 쌓이므로 최근 20건만 받고, '더 보기'로 20건씩 늘린다.
+let confirmedPreOrderLimit = 20;
+async function loadMoreConfirmedPreOrders() {
+  confirmedPreOrderLimit += 20;
+  await loadConfirmedPreOrders();
+}
 async function loadConfirmedPreOrders() {
   const store_id = document.getElementById('pre_store').value;
   if (!store_id) {
@@ -1586,7 +1592,7 @@ async function loadConfirmedPreOrders() {
   }
 
   try {
-    const orders = await api(`/api/pre_orders?store_id=${store_id}&status=출고완료`);
+    const orders = await api(`/api/pre_orders?store_id=${store_id}&status=출고완료&limit=${confirmedPreOrderLimit}`);
     const container = document.getElementById('pre_order_confirmed_list');
     if (apiFailed(orders)) {
       container.innerHTML = '<div style="color:var(--danger); text-align:center; padding:10px 0;">⚠️ 출고 완료 목록을 불러오지 못했습니다. 🔄 새로고침을 눌러주세요.</div>';
@@ -1616,7 +1622,9 @@ async function loadConfirmedPreOrders() {
           <button class="danger" onclick="cancelPreOrder(${o.id})" style="padding:2px 10px; font-size:11px;">↩️ 주문 취소</button>
         </div>
       </div>
-    `).join('');
+    `).join('') + (orders.length >= confirmedPreOrderLimit
+      ? `<button onclick="loadMoreConfirmedPreOrders()" style="width:100%; font-size:12px; padding:6px;">더 보기 (최근 ${confirmedPreOrderLimit}건 표시 중)</button>`
+      : '');
   } catch (e) {
     console.error('❌ 출고 완료 목록 로드 오류:', e);
     document.getElementById('pre_order_confirmed_list').innerHTML = '<div style="color:var(--danger); text-align:center; padding:10px 0;">⚠️ 데이터를 불러올 수 없습니다.</div>';

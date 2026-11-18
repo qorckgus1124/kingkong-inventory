@@ -404,11 +404,12 @@ def _fail(message, status=400):
 
 _STORE_SELF_PATHS = {"/account", "/my-stock", "/logout"}
 _STORE_SELF_PREFIXES = ("/api/account", "/api/my/")
-_STORE_BLOCKED_PAGES = {"/settings"}
+_STORE_BLOCKED_PAGES = {"/settings", "/data_check"}
 _STORE_BLOCKED_PAGE_PREFIXES = ("/admin/", "/maintenance/")
 _STORE_BLOCKED_API_PREFIXES = (
     "/api/admin/", "/api/backup", "/api/api_keys", "/api/webhook_logs",
     "/api/share_links", "/api/maintenance/", "/api/products/duplicates", "/api/products/merge",
+    "/api/data_check",
 )
 
 # id로 가리키는 항목: (경로 패턴, 그 항목이 속한 매장을 알려주는 쿼리)
@@ -760,12 +761,16 @@ def init_auth(app, get_db):
             """,
             (store_id, store_id),
         )
-        items = [dict(r) for r in cur.fetchall()]
+        rows = cur.fetchall()
+        # 제품 수천 개를 객체로 보내면 키 이름이 매번 반복돼 응답이 커진다.
+        # 열 이름은 한 번만(cols), 값은 배열(rows)로 보내고 화면에서 객체로 되돌린다.
+        cols = [d[0] for d in cur.description]
         return jsonify({
             "store": store,
             "stores": stores if is_admin else [],
             "is_admin": is_admin,
-            "items": items,
+            "cols": cols,
+            "rows": [[r[c] for c in cols] for r in rows],
         })
 
     @app.route("/api/my/cost", methods=["PUT"])
