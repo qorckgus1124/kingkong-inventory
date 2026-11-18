@@ -2,3 +2,4 @@ Flask>=3.0
 gunicorn
 psycopg2-binary
 tzdata  
+cryptography

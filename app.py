@@ -4298,8 +4298,17 @@ def api_daily_report():
         return jsonify({"error": "매장을 선택해주세요."}), 400
 
     try:
-        today = now_kst().strftime("%Y-%m-%d")
-        date_display = now_kst().strftime("%m/%d")
+        # date 파라미터('YYYY-MM-DD')가 있으면 그 날짜의 내역을(이전 출고 목록), 없으면 오늘 내역을 조회한다.
+        date_arg = (request.args.get("date") or "").strip()
+        if date_arg:
+            try:
+                target_day = datetime.strptime(date_arg, "%Y-%m-%d")
+            except ValueError:
+                return jsonify({"error": "날짜 형식이 올바르지 않습니다."}), 400
+        else:
+            target_day = now_kst()
+        today = target_day.strftime("%Y-%m-%d")
+        date_display = target_day.strftime("%m/%d")
 
         cur.execute("SELECT name FROM stores WHERE id=%s", (store_id,))
         store = cur.fetchone()
@@ -5013,7 +5022,7 @@ def api_sales():
     client_uuid = data.get("client_uuid") or None
 
     # 📅 날짜 지정 판매: 반영하지 못했던 과거 판매를 선택한 날짜의 매출로 등록한다.
-    #   - sale_date: 'YYYY-MM-DD'. 오늘 이전이면 그날 낮 12시로 기록하고, 없거나 오늘이면 지금 시각.
+    #   - sale_date: 'YYYY-MM-DD', sale_time: 'HH:MM'(선택). 시간을 안 주면 오늘 이전은 그날 낮 12시, 오늘은 지금 시각.
     #   - apply_stock: False면 매출만 기록하고 재고는 변경하지 않는다 (재고 실사로 이미 맞춰둔 경우 등).
     sale_date_raw = data.get("sale_date")
     sale_date_raw = sale_date_raw.strip() if isinstance(sale_date_raw, str) else ""
@@ -5026,7 +5035,19 @@ def api_sales():
         today_kst = now_kst().date()
         if sale_day > today_kst:
             return jsonify({"error": "미래 날짜로는 판매를 등록할 수 없습니다."}), 400
-        if sale_day < today_kst:
+        # sale_time('HH:MM')이 있으면 그 시각으로, 없으면 과거 날짜는 낮 12시 / 오늘은 지금 시각으로 기록한다.
+        sale_time_raw = data.get("sale_time")
+        sale_time_raw = sale_time_raw.strip() if isinstance(sale_time_raw, str) else ""
+        if sale_time_raw:
+            try:
+                sale_clock = datetime.strptime(sale_time_raw[:5], "%H:%M").time()
+            except ValueError:
+                return jsonify({"error": "판매 시간 형식이 올바르지 않습니다."}), 400
+            sale_dt = datetime.combine(sale_day, sale_clock)
+            if sale_dt > now_kst().replace(tzinfo=None):
+                return jsonify({"error": "미래 시각으로는 판매를 등록할 수 없습니다."}), 400
+            sale_date_time = sale_dt.strftime("%Y-%m-%d %H:%M:00")
+        elif sale_day < today_kst:
             sale_date_time = f"{sale_day.isoformat()} 12:00:00"
     apply_stock = data.get("apply_stock") is not False
     if memo is None and sale_date_raw:

@@ -3,6 +3,34 @@
 <h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-clipboard-list"></use></svg>금일 보고 목록</h1>
 <div class="subtitle">상단에서 선택한 매장의 오늘 판매 갯수를 브랜드별로 확인하고 복사하세요.</div>
 
+<!-- 탭 -->
+<div class="tab-row">
+  <button class="tab-btn active" data-tab="today" onclick="switchReportTab('today')">금일 보고 목록</button>
+  <button class="tab-btn" data-tab="past" onclick="switchReportTab('past')">이전 출고 목록</button>
+</div>
+
+<!-- ============================================================ -->
+<!-- 이전 출고 목록 (날짜를 골라 그 날짜의 브랜드별 판매 갯수 + 입출고 내역 조회) -->
+<!-- ============================================================ -->
+<div id="tab-past" class="tab-content" style="display:none;">
+  <div class="card" style="margin-bottom:16px;">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <h3 style="margin:0;">📅 이전 출고 목록</h3>
+      <input type="date" id="pastDate" style="padding:4px 8px;" onchange="loadPastReport()">
+      <button onclick="loadPastReport()">🔍 조회</button>
+    </div>
+    <div class="subtitle" style="margin-top:6px;">날짜를 고르면 그날의 브랜드별 판매 갯수와 입출고 내역을 볼 수 있어요.</div>
+  </div>
+  <div class="card" style="margin-bottom:16px;">
+    <h3 style="margin:0 0 10px;">🧾 브랜드별 판매 갯수</h3>
+    <div id="pastSummaryContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:14px;">
+      <div class="empty"><span class="empty-icon">📅</span>날짜를 선택해주세요.</div>
+    </div>
+  </div>
+  <div id="pastReportsContainer"></div>
+</div>
+
+<div id="tab-today" class="tab-content">
 <!-- ============================================================ -->
 <!-- 금일 보고 목록 (브랜드별 판매 갯수 요약) -->
 <!-- ============================================================ -->
@@ -19,6 +47,7 @@
 <div class="report-scroll" style="max-height:80vh; overflow-y:auto; padding-right:8px;">
   <div id="reportsContainer"></div>
 </div>
+</div><!-- /#tab-today -->
 
 <script>
 function renderSummarySection(section) {
@@ -54,6 +83,7 @@ function copySummaryText(btn) {
 }
 
 async function loadDailySalesSummary() {
+  if (typeof isPastTabOpen === 'function' && isPastTabOpen()) loadPastReport();
   const container = document.getElementById('dailySummaryContainer');
   const storeId = localStorage.getItem('global_store_id') || document.getElementById('globalStoreSelect')?.value;
   if (!storeId) {
@@ -76,6 +106,87 @@ async function loadDailySalesSummary() {
 </script>
 
 <script>
+function reportCardHtml(storeName, data) {
+  return `      <div class="card" style="margin-bottom:16px;">
+        <h3 style="color:var(--text);">🏪 ${escapeHtml(storeName)} (${data.date})</h3>
+        <div style="display:flex; gap:20px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:250px;">
+            <strong style="color:var(--text);">🕘 4시 입출고 내역</strong>
+            <textarea class="report-textarea" readonly>${escapeHtml(data.morning || '내역 없음')}</textarea>
+            <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
+          </div>
+          <div style="flex:1; min-width:250px;">
+            <strong style="color:var(--text);">🕓 마감 입출고 내역</strong>
+            <textarea class="report-textarea" readonly>${escapeHtml(data.afternoon || '내역 없음')}</textarea>
+            <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
+          </div>
+        </div>
+      </div>`;
+}
+
+// ---------- 탭 / 이전 출고 목록 ----------
+function ymdLocal(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function isPastTabOpen() {
+  const el = document.getElementById('tab-past');
+  return !!el && el.style.display !== 'none';
+}
+
+function switchReportTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+  document.getElementById(`tab-${tab}`).style.display = 'block';
+  if (tab === 'past') {
+    const dateEl = document.getElementById('pastDate');
+    const now = new Date();
+    dateEl.max = ymdLocal(now);
+    if (!dateEl.value) dateEl.value = ymdLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+    loadPastReport();
+  }
+}
+
+async function loadPastReport() {
+  const sumBox = document.getElementById('pastSummaryContainer');
+  const repBox = document.getElementById('pastReportsContainer');
+  const date = document.getElementById('pastDate').value;
+  const storeId = localStorage.getItem('global_store_id') || document.getElementById('globalStoreSelect')?.value;
+  if (!date) {
+    sumBox.innerHTML = '<div class="empty"><span class="empty-icon">📅</span>날짜를 선택해주세요.</div>';
+    repBox.innerHTML = '';
+    return;
+  }
+  if (!storeId) {
+    sumBox.innerHTML = '<div class="empty"><span class="empty-icon">🏪</span>좌측 상단에서 매장을 선택해주세요.</div>';
+    repBox.innerHTML = '';
+    return;
+  }
+  sumBox.innerHTML = '<div class="empty"><span class="empty-icon">⏳</span>불러오는 중...</div>';
+  repBox.innerHTML = '';
+  try {
+    const [summary, report, stores] = await Promise.all([
+      api(`/api/daily_sales_summary?store_id=${storeId}&date=${date}`),
+      api(`/api/daily_report?store_id=${storeId}&date=${date}`),
+      api('/api/stores'),
+    ]);
+    if (document.getElementById('pastDate').value !== date) return; // 그 사이 날짜가 바뀌었으면 무시
+    if (summary.error) {
+      sumBox.innerHTML = `<div class="empty"><span class="empty-icon">⚠️</span>${escapeHtml(summary.error)}</div>`;
+    } else {
+      sumBox.innerHTML = summary.sections.map(renderSummarySection).join('');
+    }
+    if (!report.error) {
+      const store = (stores || []).find(s => String(s.id) === String(storeId));
+      repBox.innerHTML = reportCardHtml(store ? store.name : '', report);
+    }
+  } catch (e) {
+    console.error('이전 출고 목록 로드 오류:', e);
+    sumBox.innerHTML = '<div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러오는 중 오류가 발생했습니다.</div>';
+  }
+}
+
 async function loadAllReports() {
   const container = document.getElementById('reportsContainer');
   const storeId = localStorage.getItem('global_store_id') || document.getElementById('globalStoreSelect')?.value;
@@ -91,26 +202,7 @@ async function loadAllReports() {
     const data = await api(`/api/daily_report?store_id=${storeId}`);
     console.log(`📋 ${storeName} (ID: ${storeId}) 응답:`, data);
 
-    const morningText = data.morning || '내역 없음';
-    const afternoonText = data.afternoon || '내역 없음';
-
-    container.innerHTML = `
-      <div class="card" style="margin-bottom:16px;">
-        <h3 style="color:var(--text);">🏪 ${escapeHtml(storeName)} (${data.date})</h3>
-        <div style="display:flex; gap:20px; flex-wrap:wrap;">
-          <div style="flex:1; min-width:250px;">
-            <strong style="color:var(--text);">🕘 4시 입출고 내역</strong>
-            <textarea class="report-textarea" readonly>${escapeHtml(morningText)}</textarea>
-            <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
-          </div>
-          <div style="flex:1; min-width:250px;">
-            <strong style="color:var(--text);">🕓 마감 입출고 내역</strong>
-            <textarea class="report-textarea" readonly>${escapeHtml(afternoonText)}</textarea>
-            <button onclick="copyText(this.previousElementSibling)" style="margin-top:4px;">📋 복사</button>
-          </div>
-        </div>
-      </div>
-    `;
+    container.innerHTML = reportCardHtml(storeName, data);
   } catch (e) {
     console.error('❌ 보고 목록 로드 오류:', e);
     container.innerHTML = '<div class="card"><div class="empty"><span class="empty-icon">⚠️</span>데이터를 불러오는 중 오류가 발생했습니다.</div></div>';

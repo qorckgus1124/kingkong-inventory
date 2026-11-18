@@ -20,6 +20,9 @@
     <label style="display:flex; align-items:center; gap:6px; font-size:13px;">판매 날짜
       <input type="date" id="bf_date" style="padding:4px 8px;">
     </label>
+    <label style="display:flex; align-items:center; gap:6px; font-size:13px;" title="비워두면 지난 날짜는 낮 12:00, 오늘은 현재 시각으로 기록됩니다.">판매 시간
+      <input type="time" id="bf_time" style="padding:4px 8px;">
+    </label>
     <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
       <input type="checkbox" id="bf_apply_stock" checked onchange="onBackfillStockToggle()"> 재고도 함께 차감
     </label>
@@ -1061,13 +1064,19 @@ async function checkout() {
 
   // 📅 날짜 지정 판매: 날짜를 확인하고, 실수로 엉뚱한 날짜에 들어가지 않도록 한 번 더 묻는다.
   const isBackfill = saleMode === 'backfill';
-  let saleDate = null, applyStock = true;
+  let saleDate = null, saleTime = null, applyStock = true;
   if (isBackfill) {
     saleDate = document.getElementById('bf_date').value;
     if (!saleDate) { toast('판매 날짜를 선택해주세요.', true, '⚠️'); return; }
     if (saleDate > ymdLocal(new Date())) { toast('미래 날짜로는 등록할 수 없습니다.', true, '⚠️'); return; }
+    saleTime = document.getElementById('bf_time').value || null;
+    if (saleTime && saleDate === ymdLocal(new Date())) {
+      const nowD = new Date();
+      const nowHm = String(nowD.getHours()).padStart(2, '0') + ':' + String(nowD.getMinutes()).padStart(2, '0');
+      if (saleTime > nowHm) { toast('미래 시각으로는 등록할 수 없습니다.', true, '⚠️'); return; }
+    }
     applyStock = document.getElementById('bf_apply_stock').checked;
-    const msg = `${saleDate} 날짜의 매출로 등록합니다.\n\n` +
+    const msg = `${saleDate} ${saleTime || '(시간 미지정)'} 매출로 등록합니다.\n\n` +
       `결제 금액: ${fmt(Math.max(subtotal - discount, 0))}원\n` +
       `재고: ${applyStock ? '함께 차감' : '변경 안 함'}\n\n계속할까요?`;
     if (!confirm(msg)) return;
@@ -1114,12 +1123,13 @@ async function checkout() {
   };
   if (isBackfill) {
     payload.sale_date = saleDate;
+    if (saleTime) payload.sale_time = saleTime;
     payload.apply_stock = applyStock;
   }
   try {
     const result = await apiOrQueue('/api/sales', 'POST', payload, '판매 등록');
     if (result && result.error) return; // apiOrQueue가 이미 오류 토스트를 띄웠다
-    toast(result && result.queued ? '오프라인 상태입니다. 온라인이 되면 자동으로 등록됩니다.' : (isBackfill ? `${saleDate} 날짜로 판매가 등록되었습니다.` : '판매가 등록되었습니다.'), false, result && result.queued ? '📴' : '✅');
+    toast(result && result.queued ? '오프라인 상태입니다. 온라인이 되면 자동으로 등록됩니다.' : (isBackfill ? `${saleDate}${saleTime ? ' ' + saleTime : ''} 판매가 등록되었습니다.` : '판매가 등록되었습니다.'), false, result && result.queued ? '📴' : '✅');
     cart = {};
     saveCartToStorage(CART_STORAGE_KEY, cart);
     cartDiscount = 0;

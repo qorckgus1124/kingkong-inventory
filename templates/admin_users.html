@@ -2,10 +2,10 @@
 {% block content_class %}content--wide{% endblock %}
 {% block content %}
 <h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-settings"></use></svg>계정 관리</h1>
-<div class="subtitle">매장당 계정은 1개입니다. 비밀번호는 해시로만 저장되어, 직접 정하거나 초기화한 직후 이 화면에서만 확인할 수 있습니다.</div>
+<div class="subtitle">매장당 계정은 1개입니다. 어드민은 모든 계정의 아이디와 비밀번호를 볼 수 있습니다. (비밀번호 사본이 없는 예전 계정은 "미저장"으로 보이며, 수정/초기화로 비밀번호를 다시 설정하면 표시됩니다.)</div>
 
 <div class="card au-issued" id="auIssued" style="display:none;">
-  <div class="au-issued-title">🔑 방금 설정된 로그인 정보 <span class="au-hint">(이 화면을 벗어나면 다시 볼 수 없습니다)</span></div>
+  <div class="au-issued-title">🔑 방금 설정된 로그인 정보 <span class="au-hint">(아래 목록에서도 언제든 다시 볼 수 있습니다)</span></div>
   <div class="au-issued-body">아이디 <b id="auIdText"></b> &nbsp;/&nbsp; 비밀번호 <b id="auPwText"></b></div>
   <div class="au-issued-actions">
     <button type="button" onclick="copyIssued()">복사</button>
@@ -20,9 +20,9 @@
 <div class="table-wrap">
   <table id="auTable">
     <thead>
-      <tr><th>구분 / 매장</th><th>아이디</th><th>이름</th><th>전화번호</th><th>이메일</th><th>상태</th><th>마지막 로그인</th><th>관리</th></tr>
+      <tr><th>구분 / 매장</th><th>아이디</th><th>비밀번호</th><th>이름</th><th>전화번호</th><th>이메일</th><th>상태</th><th>마지막 로그인</th><th>관리</th></tr>
     </thead>
-    <tbody id="auBody"><tr><td colspan="8"><div class="empty"><span class="empty-icon">⏳</span>불러오는 중...</div></td></tr></tbody>
+    <tbody id="auBody"><tr><td colspan="9"><div class="empty"><span class="empty-icon">⏳</span>불러오는 중...</div></td></tr></tbody>
   </table>
 </div>
 
@@ -83,15 +83,37 @@ async function load() {
   try {
     [users, stores] = await Promise.all([api('/api/admin/users'), api('/api/stores')]);
   } catch (e) {
-    $('auBody').innerHTML = '<tr><td colspan="8"><div class="empty">' + esc(e.message) + '</div></td></tr>';
+    $('auBody').innerHTML = '<tr><td colspan="9"><div class="empty">' + esc(e.message) + '</div></td></tr>';
     return;
   }
   render();
 }
 
+const shownPw = new Set(); // 비밀번호를 펼쳐 둔 계정 id
+
+function pwCell(u) {
+  if (u.password == null) return '<span class="au-hint">미저장</span>';
+  const open = shownPw.has(u.id);
+  return '<span class="au-pw">' + (open ? esc(u.password) : '••••••') + '</span> ' +
+    '<button type="button" class="au-mini" title="' + (open ? '숨기기' : '보기') + '" onclick="togglePw(' + u.id + ')">' + (open ? '🙈' : '👁') + '</button>' +
+    '<button type="button" class="au-mini" title="아이디/비밀번호 복사" onclick="copyCred(' + u.id + ')">📋</button>';
+}
+
+function togglePw(id) {
+  if (shownPw.has(id)) shownPw.delete(id); else shownPw.add(id);
+  render();
+}
+
+function copyCred(id) {
+  const u = users.find((x) => x.id === id);
+  if (!u || u.password == null) return;
+  const text = '아이디: ' + u.username + '\n비밀번호: ' + u.password;
+  if (navigator.clipboard) navigator.clipboard.writeText(text);
+}
+
 function render() {
   if (!users.length) {
-    $('auBody').innerHTML = '<tr><td colspan="8"><div class="empty">계정이 없습니다.</div></td></tr>';
+    $('auBody').innerHTML = '<tr><td colspan="9"><div class="empty">계정이 없습니다.</div></td></tr>';
     return;
   }
   $('auBody').innerHTML = users.map((u) => {
@@ -100,6 +122,7 @@ function render() {
     return '<tr>' +
       '<td><b>' + esc(who) + '</b></td>' +
       '<td>' + esc(u.username) + (u.is_me ? ' <span class="au-hint">(나)</span>' : '') + '</td>' +
+      '<td>' + pwCell(u) + '</td>' +
       '<td>' + esc(u.display_name) + '</td>' +
       '<td>' + esc(u.phone) + '</td>' +
       '<td>' + esc(u.email) + '</td>' +
@@ -231,6 +254,8 @@ load();
 .au-issued-body { font-size: 17px; margin-bottom: 10px; }
 .au-issued-body b { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--accent-light); padding: 2px 8px; border-radius: 6px; }
 .au-issued-actions { display: flex; gap: 8px; }
+.au-pw { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.au-mini { padding: 2px 6px; font-size: 12px; margin-left: 2px; }
 .au-hint { font-size: 12px; color: var(--text-light); font-weight: 400; }
 #auTable td { white-space: nowrap; font-size: 14px; }
 .au-actions { display: flex; gap: 6px; }

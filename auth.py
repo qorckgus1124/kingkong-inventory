@@ -3,8 +3,9 @@
 
 구조
 - 매장당 계정 1개(role='store') + 어드민(role='admin').
-- 비밀번호는 해시로만 저장한다. 어드민이 직접 정했거나 "초기화"로 발급한 비밀번호는
-  그 순간 화면에 한 번 보여준다(저장된 해시에서 원문을 되살릴 수는 없다).
+- 비밀번호는 로그인 검증용 해시(password_hash)로 저장하고, 어드민이 계정 관리 화면에서
+  아이디/비밀번호를 볼 수 있도록 암호화한 사본(password_enc, Fernet, 키=SECRET_KEY)도 함께 저장한다.
+  이 사본이 없는 예전 계정은 비밀번호를 다시 설정/초기화하기 전까지 화면에 "미저장"으로 보인다.
 - 로그인하지 않으면 로그인 화면으로 보낸다(전역 가드, 아래 require_login_everywhere).
 - 어드민: 모든 매장의 모든 기능/데이터.
 - 매장 계정: 대시보드의 기능은 모두 쓸 수 있지만, 서버가 모든 요청을 자기 매장으로 고정한다
@@ -16,6 +17,7 @@ app.py 쪽 연결은 두 줄이다:
     auth.init_auth(app, get_db)      # 라우트 등록
     auth.ensure_schema()             # users 테이블 + 최초 어드민 계정
 """
+import base64
 import hashlib
 import os
 import re
@@ -69,6 +71,59 @@ def _temp_password():
     return "".join(secrets.choice("0123456789") for _ in range(6))
 
 
+def _pw_cipher():
+    """어드민 화면 표시용 비밀번호 사본을 암호화/복호화하는 Fernet. cryptography가 없으면 None."""
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        return None
+    secret = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
+    key = base64.urlsafe_b64encode(hashlib.sha256(("pw-view:" + secret).encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def _enc_pw(password):
+    c = _pw_cipher()
+    if c is None or not password:
+        return None
+    return c.encrypt(str(password).encode("utf-8")).decode("ascii")
+
+
+def _dec_pw(token):
+    if not token:
+        return None
+    c = _pw_cipher()
+    if c is None:
+        return None
+    try:
+        return c.decrypt(token.encode("ascii")).decode("utf-8")
+    except Exception:
+        return None
+
+
+def _backfill_known_passwords(conn, cur):
+    """password_enc가 비어 있는 기존 계정 중, 알려진 초기 비밀번호(1234 등)가 그대로인 계정만 사본을 채운다.
+    해시에서 원문을 되살릴 수는 없으므로, 그 외 계정은 비밀번호를 다시 설정/초기화할 때 채워진다."""
+    if _pw_cipher() is None:
+        return
+    candidates = []
+    for c in (STORE_ACCOUNT_INITIAL_PASSWORD, ADMIN_RESET_PASSWORD, DEFAULT_ADMIN_PASSWORD,
+              os.environ.get("ADMIN_INITIAL_PASSWORD")):
+        if c and c not in candidates:
+            candidates.append(c)
+    cur.execute("SELECT id, password_hash FROM users WHERE password_enc IS NULL")
+    filled = 0
+    for row in cur.fetchall():
+        for c in candidates:
+            if check_password_hash(row["password_hash"], c):
+                cur.execute("UPDATE users SET password_enc = %s WHERE id = %s", (_enc_pw(c), row["id"]))
+                filled += 1
+                break
+    conn.commit()
+    if filled:
+        print(f"🔐 기본 비밀번호 그대로인 계정 {filled}개의 표시용 사본을 채웠습니다")
+
+
 # ---------------------------------------------------------------------------
 # 테이블 / 최초 어드민
 # ---------------------------------------------------------------------------
@@ -104,6 +159,7 @@ def ensure_schema():
             );
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_users_store ON users(store_id);")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc TEXT;")
         conn.commit()
 
         cur.execute("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1")
@@ -111,10 +167,10 @@ def ensure_schema():
             username = (os.environ.get("ADMIN_USERNAME") or DEFAULT_ADMIN_USERNAME).strip() or DEFAULT_ADMIN_USERNAME
             password = os.environ.get("ADMIN_INITIAL_PASSWORD") or DEFAULT_ADMIN_PASSWORD
             cur.execute(
-                """INSERT INTO users (username, password_hash, role, display_name, must_change_pw)
-                   VALUES (%s, %s, 'admin', '대표', 0)
+                """INSERT INTO users (username, password_hash, password_enc, role, display_name, must_change_pw)
+                   VALUES (%s, %s, %s, 'admin', '대표', 0)
                    ON CONFLICT (username) DO NOTHING""",
-                (username, generate_password_hash(password)),
+                (username, generate_password_hash(password), _enc_pw(password)),
             )
             created = cur.rowcount
             conn.commit()
@@ -123,6 +179,7 @@ def ensure_schema():
 
         _seed_store_accounts(conn, cur)
         _reset_admin_password_once(conn, cur)
+        _backfill_known_passwords(conn, cur)
         return True
     except Exception as e:
         try:
@@ -144,8 +201,8 @@ def _reset_admin_password_once(conn, cur):
         conn.commit()
         return
     cur.execute(
-        "UPDATE users SET password_hash = %s, must_change_pw = 0 WHERE role = 'admin'",
-        (generate_password_hash(ADMIN_RESET_PASSWORD),),
+        "UPDATE users SET password_hash = %s, password_enc = %s, must_change_pw = 0 WHERE role = 'admin'",
+        (generate_password_hash(ADMIN_RESET_PASSWORD), _enc_pw(ADMIN_RESET_PASSWORD)),
     )
     changed = cur.rowcount
     conn.commit()
@@ -183,10 +240,10 @@ def _seed_store_accounts(conn, cur):
             skipped.append(f"{store_name}(이미 계정 있음)")
             continue
         cur.execute(
-            """INSERT INTO users (username, password_hash, role, store_id, display_name, must_change_pw)
-               VALUES (%s, %s, 'store', %s, %s, 0)
+            """INSERT INTO users (username, password_hash, password_enc, role, store_id, display_name, must_change_pw)
+               VALUES (%s, %s, %s, 'store', %s, %s, 0)
                ON CONFLICT (username) DO NOTHING""",
-            (username, pw_hash, store["id"], store["name"]),
+            (username, pw_hash, _enc_pw(STORE_ACCOUNT_INITIAL_PASSWORD), store["id"], store["name"]),
         )
         (made if cur.rowcount else skipped).append(
             f"{store['name']}:{username}" if cur.rowcount else f"{store_name}(아이디 중복)")
@@ -827,8 +884,8 @@ def init_auth(app, get_db):
         try:
             # 임시 비밀번호와 같은 값을 써도 된다(요청 사항). 변경 화면을 거쳤다는 표시만 해제한다.
             cur.execute(
-                "UPDATE users SET password_hash=%s, must_change_pw=0 WHERE id=%s",
-                (generate_password_hash(new), g.user["id"]),
+                "UPDATE users SET password_hash=%s, password_enc=%s, must_change_pw=0 WHERE id=%s",
+                (generate_password_hash(new), _enc_pw(new), g.user["id"]),
             )
             conn.commit()
         except Exception as e:
@@ -875,13 +932,14 @@ def init_auth(app, get_db):
         cur.execute(
             """SELECT u.id, u.username, u.role, u.store_id, s.name AS store_name,
                       u.display_name, u.phone, u.email, u.must_change_pw, u.is_active,
-                      u.created_at, u.last_login_at
+                      u.created_at, u.last_login_at, u.password_enc
                FROM users u LEFT JOIN stores s ON s.id = u.store_id
                ORDER BY (u.role = 'admin') DESC, s.name NULLS LAST, u.username"""
         )
         rows = []
         for r in cur.fetchall():
             d = dict(r)
+            d["password"] = _dec_pw(d.pop("password_enc", None))  # 사본이 없거나 복호화 실패면 None
             d["created_at"] = _ts(d["created_at"])
             d["last_login_at"] = _ts(d["last_login_at"])
             d["must_change_pw"] = bool(d["must_change_pw"])
@@ -930,9 +988,9 @@ def init_auth(app, get_db):
         must_change = 1 if data.get("must_change_pw", True) else 0
         try:
             cur.execute(
-                """INSERT INTO users (username, password_hash, role, store_id, display_name, phone, email, must_change_pw)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-                (username, generate_password_hash(password), role, store_id,
+                """INSERT INTO users (username, password_hash, password_enc, role, store_id, display_name, phone, email, must_change_pw)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (username, generate_password_hash(password), _enc_pw(password), role, store_id,
                  _clean(data.get("display_name"), 50) or None,
                  _clean(data.get("phone"), 30) or None,
                  _clean(data.get("email"), 100) or None, must_change),
@@ -989,6 +1047,7 @@ def init_auth(app, get_db):
             if len(pw) > 128:
                 return _fail("비밀번호가 너무 깁니다.")
             sets.append("password_hash = %s"); params.append(generate_password_hash(pw))
+            sets.append("password_enc = %s"); params.append(_enc_pw(pw))
             issued_password = pw
         if "must_change_pw" in data:
             sets.append("must_change_pw = %s"); params.append(1 if data.get("must_change_pw") else 0)
@@ -1019,8 +1078,8 @@ def init_auth(app, get_db):
         temp = _temp_password()
         try:
             cur.execute(
-                "UPDATE users SET password_hash = %s, must_change_pw = 1 WHERE id = %s RETURNING username",
-                (generate_password_hash(temp), uid),
+                "UPDATE users SET password_hash = %s, password_enc = %s, must_change_pw = 1 WHERE id = %s RETURNING username",
+                (generate_password_hash(temp), _enc_pw(temp), uid),
             )
             row = cur.fetchone()
             if row is None:
