@@ -4063,8 +4063,8 @@ def api_movements():
 def _brand_sales_rows(cur, store_id, date_str, brand_names, category_name=None):
     """지정한 브랜드(들)의 특정 매장/날짜 순 판매 수량(제품명별)을 반환한다.
     category_name을 지정하면 해당 카테고리(예: '일회용')에 속한 제품만 집계한다.
-    집계 대상 유형: 판매출고, 선결출고(선결제 확정), 출고(매출 제외) → 모두 더하고,
-    판매취소는 뺀다. 반품/폐기/조정/실사조정/이동출고/이동입고/입고는 판매가 아니므로
+    집계 대상 유형: 판매출고, 선결출고(선결제 확정) → 더하고, 판매취소는 뺀다.
+    입출고 관리에서 직접 등록한 일반 '출고'는 판매가 아니므로 집계하지 않는다. 반품/폐기/조정/실사조정/이동출고/이동입고/입고는 판매가 아니므로
     금일 보고 목록 집계에 포함하지 않는다."""
     if not brand_names:
         return []
@@ -4072,7 +4072,7 @@ def _brand_sales_rows(cur, store_id, date_str, brand_names, category_name=None):
     cat_filter = " AND c.name = %s" if category_name else ""
     sql = f"""
         SELECT p.name as product_name,
-               COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결출고', '출고') THEN t.quantity ELSE 0 END), 0)
+               COALESCE(SUM(CASE WHEN t.type IN ('판매출고', '선결출고') THEN t.quantity ELSE 0 END), 0)
                - COALESCE(SUM(CASE WHEN t.type = '판매취소' THEN t.quantity ELSE 0 END), 0) as qty
         FROM stock_transactions t
         JOIN products p ON p.id = t.product_id
@@ -4081,7 +4081,7 @@ def _brand_sales_rows(cur, store_id, date_str, brand_names, category_name=None):
         WHERE b.name IN ({placeholders})
           AND t.store_id = %s
           AND date(t.date_time) = %s
-          AND t.type IN ('판매출고', '판매취소', '선결출고', '출고')
+          AND t.type IN ('판매출고', '판매취소', '선결출고')
           {cat_filter}
         GROUP BY p.id, p.name
     """
@@ -4217,12 +4217,17 @@ def api_daily_sales_summary():
             elfbar_buckets.setdefault(_pct, 0)
         joinone_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 조인원"], category_name="일회용")
         joinone_buckets = _bucket_by_prefix(joinone_rows, [("조인원 킷", ["킷"]), ("조인원 팟", ["팟"])])
+        # 아이스킹 프로: 별도 브랜드("엘프바 아이스킹 프로") → 맛/% 구분 없이 "프로" 한 줄로 합산.
+        # 오늘 판매가 없어도 항상 0개로 표시하며, 목록 맨 위(1% 위)에 둔다.
+        pro_rows = _brand_sales_rows(cur, store_id, date_str, ["엘프바 아이스킹 프로"])
+        pro_qty = sum((qty or 0) for _name, qty in pro_rows)
         sections.append({
             "key": "elfbar",
             "title": f"[{date_label} {store_name} 엘프바]",
-            "lines": [{"label": k, "qty": v} for k, v in sorted(elfbar_buckets.items(), key=lambda x: int(x[0].rstrip('%')))],
+            "lines": [{"label": "프로", "qty": pro_qty}]
+                     + [{"label": k, "qty": v} for k, v in sorted(elfbar_buckets.items(), key=lambda x: int(x[0].rstrip('%')))],
             "extra_lines": [{"label": k, "qty": v} for k, v in joinone_buckets.items()],
-            "total": sum(elfbar_buckets.values()) + sum(joinone_buckets.values())
+            "total": pro_qty + sum(elfbar_buckets.values()) + sum(joinone_buckets.values())
         })
 
         # ---- 칠렉스 바이브(카테고리=일회용, 브랜드=칠렉스 바이브) : 킷/팟 ----
@@ -5751,7 +5756,7 @@ def api_dashboard():
 
             disposable_brand_groups = {
                 "플릭": ["플릭 슬림"],
-                "엘프바": ["엘프바 25K 아이스킹", "엘프바 조인원"],
+                "엘프바": ["엘프바 25K 아이스킹", "엘프바 아이스킹 프로", "엘프바 조인원"],
                 "칠렉스 바이브": ["칠렉스 바이브 킷", "칠렉스 바이브 팟"],
                 "카오린": ["카오린"],
             }
@@ -6506,10 +6511,9 @@ ANALYSIS_SORT_KEYS = (
 ANALYSIS_ASC_DEFAULT_KEYS = ("name", "brand", "days_to_deplete")
 
 # 판매출고/선결예약은 +, 판매취소는 - 로 합산하는 수량식
-# 일반 '출고'(매출 없이 내보낸 서비스 출고)도 판매 수량에 합친다. 단가가 없으므로(NULL) 매출은 0원,
-# 서비스 수량(service_qty)에도 자동으로 잡힌다.
+# 입출고 관리에서 직접 등록한 일반 '출고'는 통계에 포함하지 않는다.
 _ANALYSIS_SIGNED_QTY = (
-    "(CASE WHEN t.type IN ('판매출고', '선결예약', '출고') THEN t.quantity::bigint "
+    "(CASE WHEN t.type IN ('판매출고', '선결예약') THEN t.quantity::bigint "
     "WHEN t.type = '판매취소' THEN -t.quantity::bigint ELSE 0 END)"
 )
 
@@ -6670,7 +6674,7 @@ def compute_analysis(cur, a):
         sql = f"""{name} AS (
             SELECT t.product_id, {cols}
             FROM stock_transactions t
-            WHERE t.type IN ('판매출고', '선결예약', '판매취소', '출고')
+            WHERE t.type IN ('판매출고', '선결예약', '판매취소')
               AND t.date_time >= %s AND t.date_time < %s{clause}
               AND (t.memo IS NULL OR (t.memo NOT LIKE %s AND t.memo NOT LIKE %s))
             GROUP BY t.product_id
