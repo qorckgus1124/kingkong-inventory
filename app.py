@@ -6275,7 +6275,8 @@ def api_stocktake():
         try:
             cur.execute("""
                 SELECT p.id as product_id, p.name as product_name,
-                       c.name as category_name, b.name as brand_name,
+                       p.category_id, c.name as category_name, c.color as category_color,
+                       b.name as brand_name, b.color as brand_color,
                        ss.qty as system_qty, ss.qty as actual_qty, ss.min_qty,
                        COALESCE(sales.sold_qty, 0) as recent_sold_qty,
                        COALESCE(sales.sold_qty, 0) * p.sale_price as recent_revenue
