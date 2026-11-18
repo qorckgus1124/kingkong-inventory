@@ -1884,6 +1884,45 @@ def api_data_check():
     return jsonify(items)
 
 
+@app.route("/api/data_check/delete", methods=["POST"])
+def api_data_check_delete():
+    """데이터 점검 화면의 삭제 (여러 개 한 번에).
+    - 입출고·선결제·재고이동 기록이 하나도 없는 제품: 완전히 삭제 (재고/원가/가격이력은 CASCADE로 함께 삭제)
+    - 기록이 있는 제품: 비활성화(숨김)만 한다. 지우면 과거 매출 통계가 바뀌기 때문.
+      (제품 관리에서 '비활성 포함'으로 보면 다시 살릴 수 있다)"""
+    conn = get_db()
+    cur = g.cursor
+    data = request.get_json(force=True) or {}
+    try:
+        ids = sorted({int(x) for x in (data.get("product_ids") or [])})
+    except (TypeError, ValueError):
+        return jsonify({"error": "잘못된 제품 번호가 있습니다."}), 400
+    if not ids:
+        return jsonify({"error": "선택된 제품이 없습니다."}), 400
+    cur.execute(
+        """SELECT p.id,
+                  EXISTS (SELECT 1 FROM stock_transactions t WHERE t.product_id = p.id)
+               OR EXISTS (SELECT 1 FROM pre_order_items i WHERE i.product_id = p.id)
+               OR EXISTS (SELECT 1 FROM stock_movements m WHERE m.product_id = p.id) AS has_history
+           FROM products p WHERE p.id = ANY(%s)""",
+        (ids,),
+    )
+    rows = cur.fetchall()
+    hide = [r["id"] for r in rows if r["has_history"]]
+    drop = [r["id"] for r in rows if not r["has_history"]]
+    try:
+        if hide:
+            cur.execute("UPDATE products SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ANY(%s)", (hide,))
+        if drop:
+            cur.execute("DELETE FROM products WHERE id = ANY(%s)", (drop,))
+        conn.commit()
+    except Exception as e:
+        rollback_quietly()
+        print(f"❌ 데이터 점검 삭제 오류: {e}")
+        return jsonify({"error": "삭제 중 오류가 발생했습니다."}), 500
+    return jsonify({"ok": True, "deleted": len(drop), "hidden": len(hide)})
+
+
 @app.route("/static/product_images/<path:filename>")
 def product_image(filename):
     return send_from_directory(IMAGE_DIR, filename)

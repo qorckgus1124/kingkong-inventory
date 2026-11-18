@@ -11,18 +11,31 @@
   </div>
 </div>
 
+<div class="card" id="dcBulk" style="display:none; position:sticky; top:8px; z-index:5;">
+  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+    <strong id="dcSelCount">0개 선택</strong>
+    <input list="dcBrandList" id="dcBulkBrand" placeholder="브랜드 일괄 지정" style="width:160px;">
+    <button onclick="bulkBrand()">브랜드 적용</button>
+    <select id="dcBulkCat" style="width:130px;"></select>
+    <button onclick="bulkCategory()">카테고리 적용</button>
+    <button class="danger" onclick="deleteProducts([...dcSelected])">🗑️ 선택 삭제</button>
+    <button onclick="dcSelected.clear(); render();">선택 해제</button>
+  </div>
+</div>
+
 <datalist id="dcBrandList"></datalist>
 
 <div style="overflow-x:auto;">
 <table>
   <thead>
     <tr>
+      <th style="width:34px"><input type="checkbox" id="dcAll" onchange="toggleAll(this.checked)" title="보이는 제품 전체 선택"></th>
       <th>문제</th><th>제품명</th><th style="min-width:150px">브랜드</th><th>카테고리</th>
       <th class="num" style="width:110px">원가</th><th class="num" style="width:110px">판매가</th>
-      <th class="num">재고</th><th style="width:70px"></th>
+      <th class="num">재고</th><th style="width:120px"></th>
     </tr>
   </thead>
-  <tbody id="dcBody"><tr><td colspan="8"><div class="empty">불러오는 중…</div></td></tr></tbody>
+  <tbody id="dcBody"><tr><td colspan="9"><div class="empty">불러오는 중…</div></td></tr></tbody>
 </table>
 </div>
 
@@ -42,7 +55,8 @@ td.num, th.num, input.num { text-align:right; }
 <script>
 const apiFailed = (r) => !!(r && r.__apiError);
 const DC_LABELS = { no_cost: '원가 없음', no_price: '판매가 없음', no_brand: '브랜드 없음', neg_margin: '역마진' };
-let dcItems = [], dcBrands = [], dcCategories = [], dcFilter = '';
+let dcItems = [], dcBrands = [], dcCategories = [], dcFilter = '', dcVisible = [];
+const dcSelected = new Set();
 
 async function load() {
   const [items, brands, cats] = await Promise.all([api('/api/data_check'), api('/api/brands'), api('/api/categories')]);
@@ -51,6 +65,11 @@ async function load() {
   dcBrands = apiFailed(brands) ? [] : brands;
   dcCategories = apiFailed(cats) ? [] : cats;
   document.getElementById('dcBrandList').innerHTML = dcBrands.map(b => `<option value="${escapeHtml(b.name)}">`).join('');
+  document.getElementById('dcBulkCat').innerHTML = '<option value="">카테고리 선택</option><option value="__none__">미분류</option>' +
+    dcCategories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  // 목록에서 사라진(고쳐진/삭제된) 제품은 선택에서도 뺀다
+  const alive = new Set(dcItems.map(i => i.id));
+  [...dcSelected].forEach(id => { if (!alive.has(id)) dcSelected.delete(id); });
   render();
 }
 
@@ -65,15 +84,18 @@ function render() {
   const q = document.getElementById('dcSearch').value.trim().toLowerCase();
   const rows = dcItems.filter(i => (!dcFilter || i.issues.includes(dcFilter)) &&
     (!q || (i.name + ' ' + (i.brand_name || '')).toLowerCase().includes(q)));
+  dcVisible = rows.map(i => i.id);
+  updateBulkBar();
   const body = document.getElementById('dcBody');
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="8"><div class="empty"><span class="empty-icon">✅</span>고칠 제품이 없습니다.</div></td></tr>';
+    body.innerHTML = '<tr><td colspan="9"><div class="empty"><span class="empty-icon">✅</span>고칠 제품이 없습니다.</div></td></tr>';
     return;
   }
   const catOptions = (sel) => '<option value="">미분류</option>' +
     dcCategories.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
   body.innerHTML = rows.map(i => `
     <tr data-id="${i.id}">
+      <td><input type="checkbox" ${dcSelected.has(i.id) ? 'checked' : ''} onchange="toggleOne(${i.id}, this.checked)"></td>
       <td>${i.issues.map(k => `<span class="dc-tag dc-${k}">${DC_LABELS[k]}</span>`).join('')}</td>
       <td>${escapeHtml(i.name)}</td>
       <td><input list="dcBrandList" class="dc-brand" value="${escapeHtml(i.brand_name || '')}" placeholder="브랜드 선택"></td>
@@ -81,11 +103,60 @@ function render() {
       <td><input type="number" class="dc-cost num" value="${i.cost_price || ''}" placeholder="0"></td>
       <td><input type="number" class="dc-sale num" value="${i.sale_price || ''}" placeholder="0"></td>
       <td class="num">${fmt(i.qty)}</td>
-      <td><button class="primary" onclick="saveRow(${i.id}, this)">저장</button></td>
+      <td style="white-space:nowrap;"><button class="primary" onclick="saveRow(${i.id}, this)">저장</button>
+        <button class="danger" onclick="deleteProducts([${i.id}])" title="삭제">🗑️</button></td>
     </tr>`).join('');
 }
 
 function setFilter(k) { dcFilter = k; render(); }
+
+function updateBulkBar() {
+  const n = dcSelected.size;
+  document.getElementById('dcBulk').style.display = n ? '' : 'none';
+  document.getElementById('dcSelCount').textContent = `${n}개 선택`;
+  const all = document.getElementById('dcAll');
+  const shownSel = dcVisible.filter(id => dcSelected.has(id)).length;
+  all.checked = dcVisible.length > 0 && shownSel === dcVisible.length;
+  all.indeterminate = shownSel > 0 && shownSel < dcVisible.length;
+}
+function toggleOne(id, on) { on ? dcSelected.add(id) : dcSelected.delete(id); updateBulkBar(); }
+function toggleAll(on) { dcVisible.forEach(id => on ? dcSelected.add(id) : dcSelected.delete(id)); render(); }
+
+async function deleteProducts(ids) {
+  if (!ids.length) return;
+  const names = dcItems.filter(i => ids.includes(i.id));
+  const withStock = names.filter(i => i.qty > 0).length;
+  const msg = `${ids.length}개 제품을 삭제할까요?\n\n` +
+    `· 판매·입출고 기록이 없는 제품은 완전히 삭제됩니다.\n` +
+    `· 기록이 있는 제품은 과거 매출을 지키기 위해 숨김(비활성) 처리됩니다. (제품 관리에서 다시 살릴 수 있음)` +
+    (withStock ? `\n\n⚠️ 이 중 ${withStock}개는 재고가 남아 있습니다.` : '');
+  if (!confirm(msg)) return;
+  const res = await api('/api/data_check/delete', { method: 'POST', body: JSON.stringify({ product_ids: ids }) });
+  if (apiFailed(res)) return;
+  ids.forEach(id => dcSelected.delete(id));
+  toast(`삭제 ${res.deleted}개 · 숨김 ${res.hidden}개`, false, '🗑️');
+  await load();
+}
+
+async function batchUpdate(updates, label) {
+  const ids = [...dcSelected];
+  if (!ids.length) return;
+  const res = await api('/api/products/batch_update', { method: 'POST', body: JSON.stringify({ product_ids: ids, updates }) });
+  if (apiFailed(res)) return;
+  toast(`${res.updated}개 제품의 ${label}을(를) 바꿨습니다.`, false, '✅');
+  await load();
+}
+function bulkBrand() {
+  const name = document.getElementById('dcBulkBrand').value.trim();
+  const b = dcBrands.find(x => x.name === name);
+  if (!b) { toast('목록에 있는 브랜드를 골라주세요.', true, '⚠️'); return; }
+  batchUpdate({ brand_id: b.id }, '브랜드');
+}
+function bulkCategory() {
+  const v = document.getElementById('dcBulkCat').value;
+  if (!v) { toast('카테고리를 골라주세요.', true, '⚠️'); return; }
+  batchUpdate({ category_id: v === '__none__' ? null : Number(v) }, '카테고리');
+}
 
 async function saveRow(id, btn) {
   const tr = btn.closest('tr');
