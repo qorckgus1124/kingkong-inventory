@@ -67,7 +67,13 @@ body.dark-mode {
   --page-bg: #17171A;
 }
 
-* { box-sizing: border-box; transition: background-color var(--transition), color var(--transition), border-color var(--transition), box-shadow var(--transition); }
+/* ⚡ 예전에는 모든 요소(*)에 transition을 걸어서, 표 칸 수천 개까지 다시 그릴 때마다 전환 계산이
+   붙어 화면이 버벅였다. 눈에 보이는 효과가 있는 상호작용 요소에만 건다. */
+* { box-sizing: border-box; }
+a, button, input, select, textarea, .card, .summary-card, .product-card, .nav-item, .chip, .tab-btn, .cat-tab,
+.page-btn, .sidebar, .floating-panel, .modal, .theme-toggle-btn {
+  transition: background-color var(--transition), color var(--transition), border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+}
 
 body {
   margin: 0;
@@ -1479,7 +1485,16 @@ body.dark-mode .product-card::after {
 .summary-card:hover::after,
 .product-card:hover::after { opacity: 1; }
 
+/* ⚡ 마우스 위치 변수는 자식에게 물려주지 않는다(inherits:false).
+   물려주면 마우스가 움직일 때마다 카드 안의 모든 요소(큰 표 수천 칸)가 다시 계산돼 렉이 생긴다. */
+@property --px { syntax: '<percentage>'; inherits: false; initial-value: 50%; }
+@property --py { syntax: '<percentage>'; inherits: false; initial-value: 50%; }
+@property --tilt-x { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@property --tilt-y { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+
 .card:hover { transform: translateY(-2px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)); }
+/* 표·입력칸이 든 카드는 작업 공간이므로 떠오르거나 기울지 않는다 (누르려는 칸이 움직이지 않게) */
+.card:has(table, input, select, textarea):hover { transform: none; }
 .summary-card:hover { transform: translateY(-3px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)); }
 .product-card:hover { transform: translateY(-3px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)); }
 

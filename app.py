@@ -6296,7 +6296,9 @@ def api_stocktake():
                 ORDER BY COALESCE(c.name, ''), COALESCE(b.name, ''), p.name
             """, (store_id, store_id))
             rows = cur.fetchall()
-            return jsonify([dict(r) for r in rows])
+            # 품목이 수천 개라 열 이름은 한 번만(cols), 값은 배열(rows)로 보낸다 (common.js api()가 객체로 되돌림)
+            cols = [d[0] for d in cur.description]
+            return jsonify({"cols": cols, "rows": [[r[c] for c in cols] for r in rows]})
         except Exception as e:
             # 빈 배열로 조용히 넘기면 "재고가 없다"로 오해하게 되므로 오류를 그대로 알린다.
             rollback_quietly()
@@ -6307,27 +6309,53 @@ def api_stocktake():
     store_id = data.get("store_id")
     items = data.get("items") or []
     staff = data.get("staff") or ""
-    if not store_id:
+    try:
+        store_id = int(store_id)
+    except (TypeError, ValueError):
         return jsonify({"error": "매장을 선택해주세요."}), 400
     try:
-        result = []
+        # 예전에는 품목마다 SELECT/UPDATE/INSERT를 따로 보내서(전체 2,500품목이면 수천 번 왕복)
+        # 저장이 매우 느렸다. 현재 수량을 한 번에 읽고, 바뀐 것만 한 번에 쓴다.
+        wanted = {}
         for item in items:
-            product_id = item.get("product_id")
-            actual_qty = int(item.get("actual_qty") or 0)
-            cur.execute("SELECT qty FROM store_stock WHERE store_id=%s AND product_id=%s", (store_id, product_id))
-            stock = cur.fetchone()
-            system_qty = stock["qty"] if stock else 0
-            if actual_qty != system_qty:
-                cur.execute("UPDATE store_stock SET qty=%s WHERE store_id=%s AND product_id=%s", (actual_qty, store_id, product_id))
-                cur.execute(
-                    """INSERT INTO stock_transactions
-                    (product_id, store_id, type, quantity, before_qty, after_qty, staff, memo)
-                    VALUES (%s, %s, '실사조정', %s, %s, %s, %s, %s)""",
-                    (product_id, store_id, abs(actual_qty - system_qty), system_qty, actual_qty, staff, "재고실사")
-                )
-                result.append({"product_id": product_id, "system_qty": system_qty, "actual_qty": actual_qty, "diff": actual_qty - system_qty})
+            try:
+                wanted[int(item.get("product_id"))] = int(item.get("actual_qty") or 0)
+            except (TypeError, ValueError):
+                return jsonify({"error": "수량은 숫자로 입력해주세요."}), 400
+        if not wanted:
+            return jsonify({"ok": True, "changes": [], "current": {}})
+        cur.execute(
+            "SELECT product_id, qty FROM store_stock WHERE store_id=%s AND product_id = ANY(%s) FOR UPDATE",
+            (store_id, list(wanted)),
+        )
+        system = {r["product_id"]: r["qty"] or 0 for r in cur.fetchall()}
+        result = []
+        for pid, actual_qty in wanted.items():
+            if pid not in system:
+                continue
+            if actual_qty != system[pid]:
+                result.append({"product_id": pid, "system_qty": system[pid], "actual_qty": actual_qty,
+                               "diff": actual_qty - system[pid]})
+        if result:
+            psycopg2.extras.execute_values(
+                cur,
+                # store_id는 위에서 int로 확인했으므로 SQL에 그대로 넣어도 안전하다
+                f"""UPDATE store_stock AS ss SET qty = v.qty
+                   FROM (VALUES %s) AS v(product_id, qty)
+                   WHERE ss.store_id = {store_id} AND ss.product_id = v.product_id""",
+                [(r["product_id"], r["actual_qty"]) for r in result],
+            )
+            psycopg2.extras.execute_values(
+                cur,
+                """INSERT INTO stock_transactions
+                   (product_id, store_id, type, quantity, before_qty, after_qty, staff, memo) VALUES %s""",
+                [(r["product_id"], store_id, "실사조정", abs(r["diff"]), r["system_qty"], r["actual_qty"], staff, "재고실사")
+                 for r in result],
+            )
+        # 화면이 바로 맞출 수 있게, 보낸 품목들의 저장 후 수량을 돌려준다
+        current = {pid: (wanted[pid] if pid in system else None) for pid in wanted}
         conn.commit()
-        return jsonify({"ok": True, "changes": result})
+        return jsonify({"ok": True, "changes": result, "current": current})
     except Exception as e:
         # 일부만 반영된 채로 커밋되지 않도록 되돌린다 (실사 저장은 여러 건을 한 트랜잭션으로 처리).
         rollback_quietly()

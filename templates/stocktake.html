@@ -1,24 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
 <h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-clipboard-check"></use></svg>재고 실사</h1>
-<div class="subtitle">매장을 돌면서 실제 수량을 입력하면 시스템 재고와 차이를 자동으로 비교합니다. 저장 시 실제 수량으로 재고가 변경되고, 과거 입출고 내역은 수정되지 않습니다.</div>
+<div class="subtitle">검색하면 바로 뜹니다. 실제 수량을 고치고 <b>Enter</b>(또는 ✔)를 누르면 그 제품만 즉시 저장되고 다음 칸으로 넘어갑니다. 과거 입출고 내역은 수정되지 않습니다.</div>
 
 <div class="summary-cards">
   <div class="summary-card"><div class="label">📦 전체 품목</div><div class="value" id="statTotal">-</div></div>
-  <div class="summary-card" style="background:var(--accent-light);"><div class="label">⚠️ 차이 발생 품목</div><div class="value" id="statDiffCount">-</div></div>
-  <div class="summary-card"><div class="label">🔀 순증감 수량</div><div class="value" id="statNetDiff">-</div></div>
+  <div class="summary-card" style="background:var(--accent-light);"><div class="label">⚠️ 저장 안 한 차이</div><div class="value" id="statDiffCount">-</div></div>
+  <div class="summary-card"><div class="label">🔀 저장 안 한 순증감</div><div class="value" id="statNetDiff">-</div></div>
 </div>
 
-<div class="card">
-  <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr;">
+<div class="card st-controls">
+  <div class="form-grid" style="grid-template-columns: 1fr 1fr 2fr 1fr 1fr;">
     <div class="form-field"><label>매장</label><select id="storeSelect" onchange="onStocktakeStoreChange()"></select></div>
-    <div class="form-field"><label>실사 담당자</label><input type="text" id="staffInput" placeholder="이름"></div>
+    <div class="form-field"><label>실사 담당자</label><input type="text" id="staffInput" placeholder="이름" onchange="try{localStorage.setItem('stocktake_staff', this.value.trim())}catch(e){}"></div>
     <div class="form-field">
       <label>제품 검색</label>
       <span class="search-field">
         <svg class="i3d" aria-hidden="true"><use href="#i3d-search"></use></svg>
-        <input type="text" id="searchInput" placeholder="제품명 또는 브랜드로 검색" oninput="onFilterChange()">
+        <input type="text" id="searchInput" placeholder="제품명·브랜드 (띄어써도 됨, 예: 밤 백향)" oninput="onFilterChange()" autocomplete="off">
       </span>
+    </div>
+    <div class="form-field"><label>보기</label>
+      <select id="viewSelect" onchange="onFilterChange()">
+        <option value="all">전체</option>
+        <option value="stock">재고 있는 제품만</option>
+        <option value="dirty">저장 안 한 차이만</option>
+      </select>
     </div>
     <div class="form-field"><label>정렬</label>
       <select id="sortSelect" onchange="onFilterChange()">
@@ -28,25 +35,20 @@
         <option value="diff_desc">차이 큰 순</option>
       </select>
     </div>
-    <div class="form-field">
-      <label>&nbsp;</label>
-      <button class="primary" onclick="save()" style="width:100%;">💾 실사 결과 저장</button>
-    </div>
   </div>
-  <div style="font-size:12px; color:var(--text-light); margin-top:8px;">
-    📌 매장과 조회 줄수를 고른 뒤 아래 <strong>🔍 조회</strong> 버튼을 눌러야 목록이 표시됩니다. (매장을 바꾸면 다시 조회해야 합니다)
+  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px;">
+    <button onclick="load()" id="reloadBtn">🔄 새로고침</button>
+    <button class="primary" onclick="saveAllDirty()" id="saveAllBtn">💾 변경 일괄 저장</button>
+    <span style="font-size:12px; color:var(--text-light);">± 버튼이나 숫자를 바꾼 뒤 Enter = 그 줄만 바로 저장 · 여러 줄을 고쳐두고 한 번에 저장해도 됩니다.</span>
   </div>
 </div>
 
-<!-- ============================================================ -->
-<!-- 실사 업로드칸 (입출고 관리와 동일한 스타일) -->
-<!-- ============================================================ -->
 <div class="card upload-area">
   <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
     <div>
       <strong>📥 실사표 업로드하여 일괄 적용</strong>
-      <div style="font-size:12px; color:var(--text-light);">📌 매장을 돌며 종이나 엑셀에 적어둔 실사 수량을 CSV로 올리면, ID가 일치하는 항목의 "실사 수량"만 자동으로 채워집니다. 실제 저장은 아래 💾 실사 결과 저장 버튼을 눌러야 반영됩니다.</div>
-      <div style="font-size:11px; color:var(--text-light);">필수 형식: ID, 카테고리, 브랜드, 제품명, 갯수 (⬇️ 실사표 내보내기로 받은 파일과 동일). 이름이 같은 제품이 있어도 ID로 정확히 구분됩니다.</div>
+      <div style="font-size:12px; color:var(--text-light);">📌 종이나 엑셀에 적어둔 실사 수량을 CSV로 올리면 ID가 일치하는 항목의 "실사 수량"만 채워집니다. 확인 후 💾 변경 일괄 저장을 눌러야 반영됩니다.</div>
+      <div style="font-size:11px; color:var(--text-light);">필수 형식: ID, 카테고리, 브랜드, 제품명, 갯수 (⬇️ 실사표 내보내기로 받은 파일과 동일).</div>
     </div>
     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
       <button onclick="exportCsv(event)">⬇️ 실사표 내보내기</button>
@@ -57,20 +59,10 @@
   <div id="stocktakeUploadResult" style="margin-top:8px; font-size:13px; padding:8px 12px; border-radius:var(--radius); background:var(--card-bg); border:1px solid var(--border); min-height:20px; display:none;"></div>
 </div>
 
-<!-- ============================================================ -->
-<!-- 조회 줄수 / 페이지네이션 (입출고 관리와 동일한 스타일) -->
-<!-- ============================================================ -->
-<div class="toolbar" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
-  <label style="font-size:12px; color:var(--text-light);">조회 줄수:
-    <input type="number" id="rowsPerPage" value="20" min="20" max="500" step="10" style="width:70px;" onchange="onRowsPerPageChange()">
-  </label>
-  <span style="font-size:11px; color:var(--text-light);">(최소 20줄, 원하는 수로 변경 가능)</span>
-  <button class="primary" onclick="load()" id="searchBtn">🔍 조회</button>
-  <button onclick="resetView()">↺ 초기화</button>
-</div>
-
-<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:13px; color:var(--text-light);">
-  <span>총 <span id="totalCount">0</span>건</span>
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:13px; color:var(--text-light); flex-wrap:wrap; gap:8px;">
+  <span>총 <span id="totalCount">0</span>건
+    <label style="margin-left:10px;">한 페이지 <input type="number" id="rowsPerPage" value="50" min="20" max="500" step="10" style="width:70px;" onchange="onRowsPerPageChange()">줄</label>
+  </span>
   <div>
     <button onclick="changePage(-1)" id="prevPageBtn">◀ 이전</button>
     <span id="pageInfo">0 / 0</span>
@@ -79,10 +71,10 @@
 </div>
 
 <div class="table-wrap">
-<table>
+<table class="st-table">
   <thead>
     <tr>
-      <th>카테고리</th><th>브랜드</th><th>제품명</th><th>시스템 수량</th><th>최근 30일 매출</th><th>실사 수량</th><th>차이</th>
+      <th>카테고리</th><th>브랜드</th><th>제품명</th><th class="num">시스템 수량</th><th class="num">최근 30일 매출</th><th style="width:190px">실사 수량</th><th class="num">차이</th><th style="width:60px"></th>
     </tr>
   </thead>
   <tbody id="tbody"></tbody>
@@ -96,163 +88,123 @@
 </div>
 
 <style>
-/* .page-btn 스타일은 static/style.css(HYPER-GLASS)에서 관리한다. */
 #prevPageBtn:disabled, #nextPageBtn:disabled { opacity: 0.35; cursor: not-allowed; }
+.st-table th.num, .st-table td.num { text-align: right; }
+.st-qty { display: inline-flex; align-items: center; gap: 4px; }
+.st-qty input { width: 80px; text-align: right; }
+.st-qty button { padding: 4px 10px; min-width: 32px; }
+.st-table tr.st-dirty-up { background: rgba(79,143,247,0.10); }
+.st-table tr.st-dirty-down { background: rgba(196,69,54,0.10); }
+.st-table tr.st-saved { background: rgba(31,157,85,0.12); transition: background .6s; }
+.st-save { padding: 4px 10px; }
+.st-table tr:not(.st-dirty-up):not(.st-dirty-down) .st-save { visibility: hidden; }
 </style>
 
 <script>
-let items = [];
-let hasLoaded = false; // 아직 매장을 선택/조회하지 않은 초기 상태인지 여부 (그 전에는 목록을 표시하지 않음)
+let items = [];          // 서버 목록 (system_qty = 마지막으로 저장된 수량, actual_qty = 화면에서 입력한 수량)
+let byId = new Map();
+let hasLoaded = false;
+let loadSeq = 0;
 let currentPage = 1;
 let totalPages = 1;
+let lastShown = [];      // 지금 화면에 그려진 제품 id 순서 (Enter로 다음 칸 이동용)
 
 async function loadStores() {
   const res = await api('/api/stores');
-  // api()는 오류 시 {}를 돌려주므로 배열인지 확인한다 (그대로 map을 호출하면 스크립트가 멈춘다).
   const stores = Array.isArray(res) ? res : [];
   const sel = document.getElementById('storeSelect');
   sel.innerHTML = stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
-  // 🔥 다른 화면(판매/입출고/이동 등)과 동일하게 전역 매장 선택값을 적용/동기화한다.
   const saved = localStorage.getItem('global_store_id');
-  if (saved && stores.some(s => s.id == saved)) {
-    sel.value = saved;
-  } else if (stores.length > 0) {
-    sel.value = stores[0].id;
-  }
+  if (saved && stores.some(s => s.id == saved)) sel.value = saved;
+  else if (stores.length > 0) sel.value = stores[0].id;
 }
 
-// 매장을 바꾸면 이전 매장의 목록이 남아 오해를 부르므로, 목록을 비우고
-// "조회 전" 상태로 되돌린다. (다시 🔍 조회를 눌러야 표시됨)
+function dirtyItems() { return items.filter(it => it.actual_qty !== it.system_qty); }
+
 function onStocktakeStoreChange() {
-  const storeId = document.getElementById('storeSelect').value;
-  if (storeId) {
-    localStorage.setItem('global_store_id', storeId);
-  }
-  resetView();
-}
-
-// 조회 전 상태로 되돌린다 (목록/통계 모두 비움)
-function resetView() {
-  items = [];
-  hasLoaded = false;
-  currentPage = 1;
-  const searchEl = document.getElementById('searchInput');
-  if (searchEl) searchEl.value = '';
-  const uploadResult = document.getElementById('stocktakeUploadResult');
-  if (uploadResult) { uploadResult.style.display = 'none'; uploadResult.innerHTML = ''; }
-  updateStats();
-  render();
-}
-
-async function load() {
-  const storeId = document.getElementById('storeSelect').value;
-  if (!storeId) {
-    toast('매장을 선택해주세요.', true, '⚠️');
-    resetView();
+  if (dirtyItems().length && !confirm('저장하지 않은 실사 수량이 있습니다. 매장을 바꾸면 사라집니다. 계속할까요?')) {
+    document.getElementById('storeSelect').value = window.__stStore || '';
     return;
   }
-  const btn = document.getElementById('searchBtn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 조회 중...'; }
+  const storeId = document.getElementById('storeSelect').value;
+  if (storeId) localStorage.setItem('global_store_id', storeId);
+  load();
+}
+
+// 매장을 고르면(페이지를 열면) 바로 불러온다. 따로 '조회'를 누를 필요 없음.
+async function load() {
+  const storeId = document.getElementById('storeSelect').value;
+  if (!storeId) return;
+  if (hasLoaded && dirtyItems().length && window.__stStore === storeId &&
+      !confirm('저장하지 않은 실사 수량이 있습니다. 새로고침하면 사라집니다. 계속할까요?')) return;
+  const seq = ++loadSeq;
+  const btn = document.getElementById('reloadBtn');
+  btn.disabled = true; btn.textContent = '⏳ 불러오는 중...';
+  if (!hasLoaded) document.getElementById('tbody').innerHTML = '<tr><td colspan="8"><div class="empty"><span class="empty-icon">⏳</span>실사 목록을 불러오는 중...</div></td></tr>';
   try {
     const data = await api(`/api/stocktake?store_id=${encodeURIComponent(storeId)}`);
-    // 오류가 나면 api()가 __apiError가 붙은 빈 배열을 돌려준다. 이때 "재고 없음"으로
-    // 잘못 보이지 않도록 조회 전 상태를 유지한다.
-    if (!Array.isArray(data) || data.__apiError) {
-      resetView();
-      return;
-    }
+    if (seq !== loadSeq) return;               // 그 사이 다른 매장을 골랐으면 버린다
+    if (!Array.isArray(data) || data.__apiError) return;
+    data.forEach(it => { it._key = norm((it.brand_name || '') + (it.product_name || '') + (it.category_name || '')); });
     items = data;
+    byId = new Map(items.map(it => [it.product_id, it]));
     hasLoaded = true;
-    document.getElementById('searchInput').value = '';
-    currentPage = 1;
+    window.__stStore = storeId;
     updateStats();
     render();
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔍 조회'; }
+    if (seq === loadSeq) { btn.disabled = false; btn.textContent = '🔄 새로고침'; }
   }
 }
 
-// 검색/정렬 조건이 바뀌면 1페이지로 돌아간다 (입출고 관리와 동일한 동작)
+function norm(t) { return String(t || '').replace(/\s+/g, '').toLowerCase(); }
+
+let filterTimer = null;
 function onFilterChange() {
-  if (!hasLoaded) return;
-  currentPage = 1;
-  render();
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => { currentPage = 1; render(); }, 60);
 }
 
-// "조회 줄수"는 최소 20줄 (수정 가능) — 20 미만으로 입력해도 20으로 보정한다.
 function getRowsPerPage() {
   const el = document.getElementById('rowsPerPage');
-  let v = parseInt(el ? el.value : '20', 10);
+  let v = parseInt(el ? el.value : '50', 10);
   if (isNaN(v) || v < 20) v = 20;
   if (v > 500) v = 500;
   return v;
 }
-
 function onRowsPerPageChange() {
-  const el = document.getElementById('rowsPerPage');
-  const v = getRowsPerPage();
-  if (el) el.value = v;
-  if (!hasLoaded) return;
-  changePage(0);
+  document.getElementById('rowsPerPage').value = getRowsPerPage();
+  currentPage = 1; render();
 }
-
 function changePage(delta) {
-  if (delta === 0) {
-    currentPage = 1;
-  } else {
-    const newPage = currentPage + delta;
-    if (newPage < 1 || newPage > totalPages) return;
-    currentPage = newPage;
-  }
-  render();
-}
-
-function updatePageButtons() {
-  const prevBtn = document.getElementById('prevPageBtn');
-  const nextBtn = document.getElementById('nextPageBtn');
-  if (prevBtn) prevBtn.disabled = currentPage <= 1;
-  if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
+  const p = currentPage + delta;
+  if (p < 1 || p > totalPages) return;
+  currentPage = p; render();
+  document.querySelector('.table-wrap').scrollIntoView({ block: 'start' });
 }
 
 function updateStats() {
-  // 조회 전에는 통계도 비워둔다.
-  if (!hasLoaded) {
-    document.getElementById('statTotal').textContent = '-';
-    document.getElementById('statDiffCount').textContent = '-';
-    const el = document.getElementById('statNetDiff');
-    el.textContent = '-';
-    el.style.color = '';
-    return;
-  }
-  const list = items || [];
-  const diffItems = list.filter(it => it.actual_qty !== it.system_qty);
-  const netDiff = list.reduce((sum, it) => sum + (it.actual_qty - it.system_qty), 0);
-  document.getElementById('statTotal').textContent = fmt(list.length) + '개';
-  document.getElementById('statDiffCount').textContent = fmt(diffItems.length) + '개';
+  if (!hasLoaded) return;
+  const dirty = dirtyItems();
+  const netDiff = dirty.reduce((sum, it) => sum + (it.actual_qty - it.system_qty), 0);
+  document.getElementById('statTotal').textContent = fmt(items.length) + '개';
+  document.getElementById('statDiffCount').textContent = fmt(dirty.length) + '개';
   const netEl = document.getElementById('statNetDiff');
   netEl.textContent = (netDiff > 0 ? '+' : '') + fmt(netDiff) + '개';
   netEl.style.color = netDiff === 0 ? '' : (netDiff > 0 ? 'var(--accent)' : 'var(--danger)');
+  document.getElementById('saveAllBtn').textContent = dirty.length ? `💾 변경 일괄 저장 (${dirty.length}개)` : '💾 변경 일괄 저장';
 }
 
 function getFilteredItems() {
-  const term = (document.getElementById('searchInput')?.value || '').trim().toLowerCase();
-  let list = items;
-  if (term) {
-    list = list.filter(it =>
-      (it.product_name || '').toLowerCase().includes(term) ||
-      (it.brand_name || '').toLowerCase().includes(term) ||
-      (it.category_name || '').toLowerCase().includes(term)
-    );
-  }
-  const sortBy = document.getElementById('sortSelect')?.value || 'default';
-  list = list.slice();
-  if (sortBy === 'qty_desc') {
-    list.sort((a, b) => (b.system_qty || 0) - (a.system_qty || 0));
-  } else if (sortBy === 'revenue_desc') {
-    list.sort((a, b) => (b.recent_revenue || 0) - (a.recent_revenue || 0));
-  } else if (sortBy === 'diff_desc') {
-    list.sort((a, b) => Math.abs(b.actual_qty - b.system_qty) - Math.abs(a.actual_qty - a.system_qty));
-  }
+  const tokens = (document.getElementById('searchInput').value || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const view = document.getElementById('viewSelect').value;
+  let list = items.filter(it =>
+    tokens.every(t => it._key.includes(t)) &&
+    (view === 'all' || (view === 'stock' ? (it.system_qty > 0 || it.actual_qty > 0) : it.actual_qty !== it.system_qty)));
+  const sortBy = document.getElementById('sortSelect').value;
+  if (sortBy === 'qty_desc') list.sort((a, b) => (b.system_qty || 0) - (a.system_qty || 0));
+  else if (sortBy === 'revenue_desc') list.sort((a, b) => (b.recent_revenue || 0) - (a.recent_revenue || 0));
+  else if (sortBy === 'diff_desc') list.sort((a, b) => Math.abs(b.actual_qty - b.system_qty) - Math.abs(a.actual_qty - a.system_qty));
   return list;
 }
 
@@ -260,56 +212,42 @@ function setPageInfo(current, total, totalCount) {
   document.getElementById('totalCount').textContent = fmt(totalCount);
   document.getElementById('pageInfo').textContent = `${current} / ${total}`;
   document.getElementById('pageInfoBottom').textContent = `${current} / ${total}`;
-  updatePageButtons();
+  document.getElementById('prevPageBtn').disabled = current <= 1;
+  document.getElementById('nextPageBtn').disabled = current >= total;
+}
+
+function emptyRow(icon, msg) { return `<tr><td colspan="8"><div class="empty"><span class="empty-icon">${icon}</span>${msg}</div></td></tr>`; }
+
+function rowHtml(it) {
+  return `<tr id="row_${it.product_id}" data-id="${it.product_id}">
+      <td>${it.category_name ? `<span class="chip" style="background:#8a8f98;">${escapeHtml(it.category_name)}</span>` : '<span style="color:var(--text-light);">-</span>'}</td>
+      <td>${escapeHtml(it.brand_name || '-')}</td>
+      <td>${escapeHtml(it.product_name)}</td>
+      <td class="num" data-k="sys">${fmt(it.system_qty)}</td>
+      <td class="num">${fmt(it.recent_revenue || 0)}원</td>
+      <td><span class="st-qty">
+        <button type="button" tabindex="-1" data-act="minus">−</button>
+        <input type="number" inputmode="numeric" value="${it.actual_qty}" data-act="qty">
+        <button type="button" tabindex="-1" data-act="plus">＋</button></span></td>
+      <td class="num" data-k="diff" style="font-weight:600;"></td>
+      <td><button type="button" class="primary st-save" data-act="save" title="이 줄 저장 (Enter)">✔</button></td>
+    </tr>`;
 }
 
 function render() {
   const tbody = document.getElementById('tbody');
-
-  // 🔍 조회를 누르기 전에는 아무 목록도 표시하지 않는다.
-  if (!hasLoaded) {
-    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">🔍</span>매장과 조회 줄수를 고른 뒤 <strong>🔍 조회</strong> 버튼을 누르면 실사 목록이 표시됩니다.</div></td></tr>';
-    currentPage = 1; totalPages = 1;
-    setPageInfo(0, 0, 0);
-    return;
-  }
-  if (!items || items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">📦</span>실사할 재고가 없습니다.</div></td></tr>';
-    currentPage = 1; totalPages = 1;
-    setPageInfo(0, 0, 0);
-    return;
-  }
-
+  if (!hasLoaded) return;
+  if (!items.length) { tbody.innerHTML = emptyRow('📦', '실사할 재고가 없습니다.'); setPageInfo(0, 0, 0); lastShown = []; return; }
   const fullList = getFilteredItems();
-  if (fullList.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><span class="empty-icon">🔍</span>검색 결과가 없습니다.</div></td></tr>';
-    currentPage = 1; totalPages = 1;
-    setPageInfo(0, 0, 0);
-    return;
-  }
-
-  // ---------- 조회 줄수(최소 20, 수정 가능) 기준 페이지네이션 ----------
+  if (!fullList.length) { tbody.innerHTML = emptyRow('🔍', '검색 결과가 없습니다.'); setPageInfo(0, 0, 0); lastShown = []; return; }
   const limit = getRowsPerPage();
   totalPages = Math.ceil(fullList.length / limit) || 1;
-  if (currentPage > totalPages) currentPage = totalPages;
-  if (currentPage < 1) currentPage = 1;
-  const start = (currentPage - 1) * limit;
-  const list = fullList.slice(start, start + limit);
-
+  currentPage = Math.min(Math.max(currentPage, 1), totalPages);
+  const list = fullList.slice((currentPage - 1) * limit, currentPage * limit);
   setPageInfo(currentPage, totalPages, fullList.length);
-
-  tbody.innerHTML = list.map((it) => `
-    <tr id="row_${it.product_id}">
-      <td>${it.category_name ? `<span class="chip" style="background:#8a8f98;">${escapeHtml(it.category_name)}</span>` : '<span style="color:var(--text-light);">-</span>'}</td>
-      <td>${escapeHtml(it.brand_name || '-')}</td>
-      <td>${escapeHtml(it.product_name)}</td>
-      <td>${fmt(it.system_qty)}</td>
-      <td>${fmt(it.recent_revenue || 0)}원</td>
-      <td><input type="number" value="${it.actual_qty}" style="width:90px;" oninput="updateActual(${it.product_id}, this.value)"></td>
-      <td id="diff_${it.product_id}" style="font-weight:600;">${diffLabel(it.actual_qty - it.system_qty)}</td>
-    </tr>
-  `).join('');
-  list.forEach((it) => applyRowTint(it.product_id, it.actual_qty - it.system_qty));
+  tbody.innerHTML = list.map(rowHtml).join('');
+  lastShown = list.map(it => it.product_id);
+  list.forEach(paintRow);
 }
 
 function diffLabel(diff) {
@@ -318,49 +256,120 @@ function diffLabel(diff) {
   return `<span style="color:${color};">${diff > 0 ? '+' : ''}${diff}</span>`;
 }
 
-function applyRowTint(productId, diff) {
-  const row = document.getElementById(`row_${productId}`);
-  if (!row) return;
-  row.style.background = diff === 0 ? '' : (diff > 0 ? 'rgba(79,143,247,0.08)' : 'rgba(196,69,54,0.08)');
+// 한 줄만 다시 칠한다 (표 전체를 다시 그리지 않으므로 입력 중 깜빡임/커서 튐이 없다)
+function paintRow(it) {
+  const tr = document.getElementById(`row_${it.product_id}`);
+  if (!tr) return;
+  const diff = it.actual_qty - it.system_qty;
+  tr.querySelector('[data-k="diff"]').innerHTML = diffLabel(diff);
+  tr.querySelector('[data-k="sys"]').textContent = fmt(it.system_qty);
+  tr.classList.toggle('st-dirty-up', diff > 0);
+  tr.classList.toggle('st-dirty-down', diff < 0);
 }
 
-function updateActual(productId, value) {
-  const item = items.find(it => it.product_id === productId);
-  if (!item) return;
-  item.actual_qty = parseInt(value || '0', 10);
-  const diff = item.actual_qty - item.system_qty;
-  const diffEl = document.getElementById(`diff_${productId}`);
-  if (diffEl) diffEl.innerHTML = diffLabel(diff);
-  applyRowTint(productId, diff);
+function setActual(it, value) {
+  const v = parseInt(value, 10);
+  it.actual_qty = isNaN(v) ? 0 : v;
+  paintRow(it);
   updateStats();
 }
 
-async function save() {
+// 실사 결과 저장 (보낸 제품만 서버에 반영). 성공하면 그 제품들의 시스템 수량을 바로 맞춘다.
+async function saveItems(list) {
   const storeId = document.getElementById('storeSelect').value;
   const staff = document.getElementById('staffInput').value.trim();
-  if (!storeId) { toast('매장을 선택해주세요.', true, '⚠️'); return; }
-  // 조회하지 않은 상태에서 저장하면 빈 목록이 전송되어 아무 일도 일어나지 않으므로 막는다.
-  if (!hasLoaded || items.length === 0) {
-    toast('먼저 🔍 조회 버튼을 눌러 실사 목록을 불러와주세요.', true, '⚠️');
-    return;
+  const res = await api('/api/stocktake', { method: 'POST', body: JSON.stringify({
+    store_id: storeId, staff, items: list.map(it => ({ product_id: it.product_id, actual_qty: it.actual_qty })) }) });
+  if (!res || !res.ok) return null;
+  list.forEach(it => {
+    const cur = res.current && res.current[it.product_id];
+    if (cur !== undefined && cur !== null) { it.system_qty = cur; it.actual_qty = cur; }
+    paintRow(it);
+    const tr = document.getElementById(`row_${it.product_id}`);
+    if (tr) { tr.classList.add('st-saved'); setTimeout(() => tr.classList.remove('st-saved'), 900); }
+  });
+  updateStats();
+  return res;
+}
+
+async function saveRow(id, moveNext) {
+  const it = byId.get(id);
+  if (!it) return;
+  const tr = document.getElementById(`row_${id}`);
+  const input = tr && tr.querySelector('[data-act="qty"]');
+  if (input) setActual(it, input.value);
+  if (it.actual_qty !== it.system_qty) {
+    const res = await saveItems([it]);
+    if (res) toast(`${it.product_name}: ${fmt(it.system_qty)}개로 저장`, false, '✅');
   }
-  const changed = items.filter(it => it.actual_qty !== it.system_qty);
-  if (changed.length === 0) {
-    toast('시스템 재고와 다른 항목이 없습니다. 실사 수량을 입력해주세요.', true, 'ℹ️');
-    return;
-  }
-  if (!confirm(`${changed.length}개 품목의 재고를 실사 수량으로 조정합니다. 진행할까요?`)) return;
-  const payload = {
-    store_id: storeId,
-    staff,
-    items: items.map(it => ({ product_id: it.product_id, actual_qty: it.actual_qty }))
-  };
-  const res = await api('/api/stocktake', { method: 'POST', body: JSON.stringify(payload) });
-  if (res && res.ok) {
-    toast(`${(res.changes || []).length}건의 재고가 조정되었습니다.`, false, '✅');
-    load();
+  if (moveNext) {
+    const idx = lastShown.indexOf(id);
+    const nextId = lastShown[idx + 1];
+    const next = nextId && document.querySelector(`#row_${nextId} [data-act="qty"]`);
+    if (next) { next.focus(); next.select(); }
   }
 }
+
+async function saveAllDirty() {
+  if (!hasLoaded) return;
+  const dirty = dirtyItems();
+  if (!dirty.length) { toast('저장할 변경이 없습니다.', false, 'ℹ️'); return; }
+  if (!confirm(`${dirty.length}개 품목의 재고를 실사 수량으로 조정합니다. 진행할까요?`)) return;
+  const btn = document.getElementById('saveAllBtn');
+  btn.disabled = true;
+  try {
+    const res = await saveItems(dirty);
+    if (res) toast(`${(res.changes || []).length}건의 재고가 조정되었습니다.`, false, '✅');
+  } finally { btn.disabled = false; }
+}
+
+// 표 이벤트는 한 곳에서 처리 (줄마다 onclick을 달지 않아 그리기가 가볍다)
+const tbodyEl = document.getElementById('tbody');
+tbodyEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const id = Number(btn.closest('tr').dataset.id);
+  const it = byId.get(id);
+  if (!it) return;
+  const input = btn.closest('tr').querySelector('[data-act="qty"]');
+  if (btn.dataset.act === 'minus' || btn.dataset.act === 'plus') {
+    const v = Math.max(0, (parseInt(input.value, 10) || 0) + (btn.dataset.act === 'plus' ? 1 : -1));
+    input.value = v;
+    setActual(it, v);
+  } else if (btn.dataset.act === 'save') {
+    saveRow(id, false);
+  }
+});
+tbodyEl.addEventListener('input', (e) => {
+  if (e.target.dataset.act !== 'qty') return;
+  const it = byId.get(Number(e.target.closest('tr').dataset.id));
+  if (it) setActual(it, e.target.value);
+});
+tbodyEl.addEventListener('keydown', (e) => {
+  if (e.target.dataset.act !== 'qty') return;
+  const id = Number(e.target.closest('tr').dataset.id);
+  if (e.key === 'Enter') { e.preventDefault(); saveRow(id, true); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const idx = lastShown.indexOf(id) + (e.key === 'ArrowDown' ? 1 : -1);
+    const el = lastShown[idx] && document.querySelector(`#row_${lastShown[idx]} [data-act="qty"]`);
+    if (el) { el.focus(); el.select(); }
+  }
+});
+tbodyEl.addEventListener('focusin', (e) => { if (e.target.dataset.act === 'qty') e.target.select(); });
+
+// 검색창에서 Enter = 첫 번째 결과의 실사 수량 칸으로 이동
+document.getElementById('searchInput').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  clearTimeout(filterTimer); currentPage = 1; render();
+  const first = lastShown[0] && document.querySelector(`#row_${lastShown[0]} [data-act="qty"]`);
+  if (first) { first.focus(); first.select(); }
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (hasLoaded && dirtyItems().length) { e.preventDefault(); e.returnValue = ''; }
+});
 
 // 실사표 내보내기: 조회 여부와 무관하게 선택한 매장 기준으로 서버에서 바로 만들어 내려준다.
 // 파일 순서는 액상 → 일회용 → 기기 → 그 외 카테고리, 같은 카테고리 안에서는 브랜드·제품명 순.
@@ -419,8 +428,9 @@ async function uploadCsv(event) {
   const resultDiv = document.getElementById('stocktakeUploadResult');
   const file = (event && event.target && event.target.files && event.target.files[0]) || (fileInput.files && fileInput.files[0]);
   if (!file) { toast('업로드할 실사표 CSV 파일을 선택해주세요.', true, '⚠️'); return; }
-  if (!hasLoaded || !items || items.length === 0) {
-    toast('먼저 매장을 선택하고 🔍 조회 버튼을 눌러주세요.', true, '⚠️');
+  if (!hasLoaded) await load();
+  if (!items || items.length === 0) {
+    toast('실사할 재고가 없습니다.', true, '⚠️');
     fileInput.value = '';
     return;
   }
@@ -488,7 +498,7 @@ async function uploadCsv(event) {
     render();
     resultDiv.innerHTML = `<span style="color:var(--accent);">✅ ${matched}개 항목에 실사 수량 반영</span>` +
       (unmatched > 0 ? `<span style="color:var(--text-light);"> · ${unmatched}개 항목은 파일에 없어 시스템 수량 그대로 둠</span>` : '') +
-      `<div style="font-size:11px; color:var(--text-light); margin-top:4px;">아직 저장되지 않았습니다. 위 💾 실사 결과 저장 버튼을 눌러야 재고에 반영됩니다.</div>`;
+      `<div style="font-size:11px; color:var(--text-light); margin-top:4px;">아직 저장되지 않았습니다. 위 💾 변경 일괄 저장 버튼을 눌러야 재고에 반영됩니다.</div>`;
     toast(`업로드 적용 완료: ${matched}개 반영`, false, '📥');
     fileInput.value = '';
   } catch (e) {
@@ -499,10 +509,11 @@ async function uploadCsv(event) {
   }
 }
 
-// 페이지를 처음 열었을 때는 매장 목록만 준비하고, 실사 목록은 조회 전이므로 표시하지 않는다.
 (async () => {
+  try { document.getElementById('staffInput').value = localStorage.getItem('stocktake_staff') || ''; } catch (e) {}
   await loadStores();
-  resetView();
+  await load();
+  document.getElementById('searchInput').focus();
 })();
 </script>
 {% endblock %}

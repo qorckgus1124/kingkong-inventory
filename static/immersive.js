@@ -35,6 +35,7 @@
   var TILT_SELECTOR = '.card, .summary-card, .product-card';
 
   var pending = null;   // { el, x, y, tiltX, tiltY }
+  var workCache = new WeakMap();
   var frame = 0;
 
   function flush() {
@@ -58,6 +59,10 @@
     if (!el) return;
     // 입력 폼 행으로 쓰이는 카드는 움직이지 않는다(입력 중 흔들림 방지).
     if (el.classList.contains('product-row') || el.classList.contains('qa-card')) return;
+    // 표·입력칸이 든 카드(작업 공간)는 광원/기울기 계산을 하지 않는다 (결과를 기억해 매번 찾지 않음)
+    var work = workCache.get(el);
+    if (work === undefined) { work = !!el.querySelector('table, input, select, textarea'); workCache.set(el, work); }
+    if (work) return;
 
     var r = el.getBoundingClientRect();
     if (!r.width || !r.height) return;
