@@ -2729,7 +2729,9 @@ def api_products_search():
 # - 카테고리는 이미 있는 이름이어야 한다(오타로 쓸모없는 분류가 생기는 것을 막기 위해).
 # - 브랜드는 있는 이름이면 그대로 쓰고, 없는 이름이면 기존 방식 그대로 '승인 대기' 브랜드로
 #   새로 만든다. 비워두면 상품명에서 브랜드를 자동 인식한다(기존 제품 등록과 동일).
-# - 같은 이름(공백/대소문자 무시)의 상품이 이미 있으면 중복 방지를 위해 그 줄은 등록하지 않는다.
+# - 같은 브랜드 안에 같은 이름(공백/대소문자 무시)의 활성 상품이 이미 있으면 그 줄은 등록하지 않는다.
+#   (맛 이름은 브랜드끼리 겹치는 게 정상이라 브랜드가 다르면 등록한다)
+# - 카드원가를 비워두면 제품 관리 화면과 같은 식으로 자동 계산한다.
 
 BULK_PRODUCT_MAX_ROWS = 300
 
@@ -2781,8 +2783,8 @@ def api_products_bulk():
         cat_map = {normalize_search(r["name"]): r["id"] for r in cur.fetchall()}
         cur.execute("SELECT id, name FROM brands")
         brand_map = {normalize_search(r["name"]): r["id"] for r in cur.fetchall()}
-        cur.execute("SELECT name FROM products")
-        existing_names = {normalize_search(r["name"]) for r in cur.fetchall()}
+        cur.execute("SELECT brand_id, name FROM products WHERE is_active = 1")
+        existing_names = {(r["brand_id"], normalize_search(r["name"])) for r in cur.fetchall()}
 
         # 브랜드를 비워둔 줄의 자동 인식용 (기존 제품 등록과 같은 매핑 테이블)
         cur.execute("SELECT brand_name, category_name FROM brand_category_mapping")
@@ -2811,9 +2813,6 @@ def api_products_bulk():
             errors.append({"row": line_no, "error": "상품명을 입력해주세요."})
             continue
         name_key = normalize_search(name)
-        if name_key in existing_names or name_key in seen_in_batch:
-            errors.append({"row": line_no, "error": f"'{name}' 은(는) 이미 등록된 상품명입니다."})
-            continue
 
         cost_price, err = _bulk_to_int(raw.get("cost_price"), "원가")
         if err:
@@ -2824,6 +2823,9 @@ def api_products_bulk():
         sale_price, err = _bulk_to_int(raw.get("sale_price"), "판매가")
         if err:
             errors.append({"row": line_no, "error": err}); continue
+        if str(raw.get("card_cost_price") or "").strip() == "" and sale_price > 0:
+            # 제품 관리 화면(autoCalcCardCost)과 같은 식
+            card_cost_price = max(round(cost_price + sale_price - (sale_price / 1.1 * 0.975)), 0)
         qty, err = _bulk_to_int(raw.get("qty"), "현재 재고")
         if err:
             errors.append({"row": line_no, "error": err}); continue
@@ -2868,6 +2870,11 @@ def api_products_bulk():
                         if mapped_cat:
                             category_id = cat_map.get(normalize_search(mapped_cat))
 
+            if (brand_id, name_key) in existing_names or (brand_id, name_key) in seen_in_batch:
+                cur.execute("ROLLBACK TO SAVEPOINT bulk_row")
+                errors.append({"row": line_no, "error": f"'{name}' 은(는) 같은 브랜드에 이미 등록된 상품입니다."})
+                continue
+
             cur.execute(
                 """INSERT INTO products (name, brand_id, category_id, cost_price, card_cost_price, sale_price, memo, parent_product_id, option_name)
                    VALUES (%s, %s, %s, %s, %s, %s, NULL, NULL, NULL) RETURNING id""",
@@ -2896,7 +2903,7 @@ def api_products_bulk():
 
         if new_brand_key:
             brand_map[new_brand_key] = brand_id
-        seen_in_batch.add(name_key)
+        seen_in_batch.add((brand_id, name_key))
         created.append({"row": line_no, "id": product_id, "name": name})
 
     try:

@@ -57,7 +57,7 @@
     var el = e.target && e.target.closest ? e.target.closest(GLOW_SELECTOR) : null;
     if (!el) return;
     // 입력 폼 행으로 쓰이는 카드는 움직이지 않는다(입력 중 흔들림 방지).
-    if (el.classList.contains('product-row')) return;
+    if (el.classList.contains('product-row') || el.classList.contains('qa-card')) return;
 
     var r = el.getBoundingClientRect();
     if (!r.width || !r.height) return;

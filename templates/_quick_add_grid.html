@@ -11,7 +11,11 @@
   <div class="qa-help">
     상품명 / 카테고리 / 브랜드 / 원가 / 카드원가 / 판매가 / 현재 재고를 적으세요.
     엑셀에서 복사한 표를 <b>붙여넣기(Ctrl+V)</b> 하면 여러 줄이 한 번에 채워집니다.
-    <b>Enter</b>·<b>↑↓</b> 로 아래/위 칸 이동, 마지막 줄에서 Enter 를 누르면 줄이 늘어납니다.
+    <b>Enter</b>·<b>↑↓←→</b> 로 칸 이동, 마지막 줄에서 Enter 를 누르면 줄이 늘어납니다.<br>
+    <b>마우스로 끌거나 Shift+클릭 / Shift+방향키</b>로 여러 칸을 고른 뒤 <b>Ctrl+C · Ctrl+X · Ctrl+V · Delete</b> 를 쓸 수 있고,
+    값 하나를 여러 칸에 붙여넣으면 모두 같은 값이 들어갑니다. 줄 번호를 누르면 줄 전체가 선택되고,
+    선택 범위 오른쪽 아래 <b>파란 점</b>을 아래로 끌면 같은 값으로 채워집니다. 잘못했으면 <b>Ctrl+Z</b>.
+    카드원가를 비워두면 원가·판매가로 자동 계산됩니다.
     브랜드를 비워두면 상품명에서 자동으로 찾고, 카테고리는 이미 있는 이름만 가능합니다.
   </div>
 
@@ -79,6 +83,18 @@
 .qa-result { margin-top: 12px; font-size: 13px; line-height: 1.7; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); }
 .qa-result .qa-ok { color: var(--success, #1f9d55); font-weight: 600; }
 .qa-result .qa-fail { color: var(--danger, #e5484d); }
+/* 3D 기울기/호버 이동 없이 고정 (칸을 정확히 누르고 끌 수 있게) */
+.qa-card { transform: none !important; }
+/* 엑셀식 선택 */
+.qa-table td { position: relative; }
+.qa-table td.qa-sel { background: rgba(80, 110, 255, .13); }
+.qa-table.qa-multi input:focus { box-shadow: none; background: transparent; }
+.qa-table.qa-multi td.qa-sel { box-shadow: inset 0 0 0 1px rgba(80, 110, 255, .35); }
+.qa-table td.qa-fill-preview { background: rgba(80, 110, 255, .07); outline: 1px dashed rgba(80, 110, 255, .6); outline-offset: -1px; }
+.qa-table td.qa-fill-corner::after { content: ''; position: absolute; right: -4px; bottom: -4px; width: 8px; height: 8px;
+  background: var(--accent, #4f6bff); border: 1px solid #fff; border-radius: 2px; cursor: crosshair; z-index: 2; }
+.qa-table.qa-dragging, .qa-table.qa-dragging input { user-select: none; cursor: cell; }
+.qa-table td.qa-no { cursor: pointer; user-select: none; }
 </style>
 
 <script>
@@ -151,44 +167,259 @@
     if (input) { input.focus(); input.select(); }
   }
 
-  // ---- 키보드: Enter/↓ = 아래 칸, ↑ = 위 칸 (마지막 줄에서 아래로 가면 줄 추가) ----
-  $('qaBody').addEventListener('keydown', function (e) {
+  // =====================================================================
+  // 엑셀처럼 쓰기: 셀 범위 선택(드래그/Shift) · 복사/잘라내기/붙여넣기 · 채우기 핸들 · 되돌리기
+  // =====================================================================
+  var body = $('qaBody'), table = $('qaTable');
+  var sel = null;              // { ar, ac, fr, fc } : 기준(anchor) 칸과 끝(focus) 칸 (행/열 번호)
+  var mode = null;             // 'cells' | 'rows' | 'fill' : 마우스로 끄는 중인 동작
+  var fillTo = null;           // 채우기 핸들로 끌어내린 마지막 행
+  var undoStack = [], typedSinceBulk = true;
+
+  function cellInput(r, c) {
+    var tr = body.rows[r];
+    return tr && COLS[c] ? tr.querySelector('input[data-col="' + COLS[c] + '"]') : null;
+  }
+  function posOf(el) {
+    var td = el && el.closest ? el.closest('td') : null;
+    if (!td || !body.contains(td)) return null;
+    var c = td.dataset.col ? COLS.indexOf(td.dataset.col) : (td.classList.contains('qa-no') ? -1 : -2);
+    return { r: td.parentNode.sectionRowIndex, c: c, td: td };
+  }
+  function rect() {
+    if (!sel) return null;
+    return { r1: Math.min(sel.ar, sel.fr), r2: Math.max(sel.ar, sel.fr),
+             c1: Math.min(sel.ac, sel.fc), c2: Math.max(sel.ac, sel.fc) };
+  }
+  function isMulti() { var x = rect(); return !!x && (x.r1 !== x.r2 || x.c1 !== x.c2); }
+
+  function paint() {
+    body.querySelectorAll('.qa-sel, .qa-fill-corner, .qa-fill-preview').forEach(function (td) {
+      td.classList.remove('qa-sel', 'qa-fill-corner', 'qa-fill-preview');
+    });
+    var x = rect();
+    table.classList.toggle('qa-multi', isMulti());
+    if (!x) return;
+    for (var r = x.r1; r <= x.r2; r++) for (var c = x.c1; c <= x.c2; c++) {
+      var inp = cellInput(r, c); if (inp) inp.parentNode.classList.add('qa-sel');
+    }
+    var corner = cellInput(x.r2, x.c2); if (corner) corner.parentNode.classList.add('qa-fill-corner');
+    if (mode === 'fill' && fillTo !== null && fillTo > x.r2) {
+      for (var fr = x.r2 + 1; fr <= fillTo; fr++) for (var fc = x.c1; fc <= x.c2; fc++) {
+        var f = cellInput(fr, fc); if (f) f.parentNode.classList.add('qa-fill-preview');
+      }
+    }
+  }
+  function select(ar, ac, fr, fc) {
+    sel = { ar: ar, ac: ac, fr: fr === undefined ? ar : fr, fc: fc === undefined ? ac : fc };
+    paint();
+  }
+
+  // 여러 칸 값을 한 번에 바꾸고(되돌리기 기록 포함) 화면 표시를 갱신한다.
+  function setCells(changes) {   // [[input, newValue], ...]
+    var before = [];
+    changes.forEach(function (ch) {
+      if (ch[0].value === ch[1]) return;
+      before.push([ch[0], ch[0].value]);
+      ch[0].value = ch[1];
+    });
+    if (!before.length) return;
+    undoStack.push(before);
+    if (undoStack.length > 50) undoStack.shift();
+    typedSinceBulk = false;
+    afterChange(before.map(function (b) { return b[0]; }));
+  }
+  function afterChange(inputs) {
+    inputs.forEach(function (inp) { markBad(inp); var tr = inp.closest('tr'); if (tr) tr.classList.remove('qa-err'); });
+    updateCount();
+  }
+  function undoBulk() {
+    var last = undoStack.pop();
+    if (!last) return false;
+    last.forEach(function (b) { if (b[0].isConnected) b[0].value = b[1]; });
+    afterChange(last.map(function (b) { return b[0]; }).filter(function (i) { return i.isConnected; }));
+    return true;
+  }
+  function ensureRows(n) { if (body.rows.length < n) qaAddRows(n - body.rows.length); }
+
+  function selectionText() {
+    var x = rect(), lines = [];
+    for (var r = x.r1; r <= x.r2; r++) {
+      var cells = [];
+      for (var c = x.c1; c <= x.c2; c++) { var inp = cellInput(r, c); cells.push(inp ? inp.value : ''); }
+      lines.push(cells.join('\t'));
+    }
+    return lines.join('\n');
+  }
+  function clearSelection() {
+    var x = rect(), ch = [];
+    for (var r = x.r1; r <= x.r2; r++) for (var c = x.c1; c <= x.c2; c++) {
+      var inp = cellInput(r, c); if (inp) ch.push([inp, '']);
+    }
+    setCells(ch);
+  }
+
+  // ---- 마우스: 칸 드래그 = 범위 선택, 줄 번호 드래그 = 줄 선택, 오른쪽 아래 점 드래그 = 채우기 ----
+  body.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    if (e.target.closest('.qa-del-btn')) return;
+    var p = posOf(e.target);
+    if (!p || p.c === -2) return;
+    if (p.c === -1) {                                  // 줄 번호 칸
+      e.preventDefault();
+      if (e.shiftKey && sel) select(sel.ar, 0, p.r, COLS.length - 1);
+      else select(p.r, 0, p.r, COLS.length - 1);
+      mode = 'rows';
+      var first = cellInput(sel.ar, 0); if (first) first.focus({ preventScroll: true });
+      return;
+    }
+    if (e.target === p.td && p.td.classList.contains('qa-fill-corner')) {   // 채우기 핸들
+      e.preventDefault();
+      mode = 'fill'; fillTo = rect().r2;
+      return;
+    }
+    if (e.shiftKey && sel) {                           // Shift+클릭 = 범위 확장
+      e.preventDefault();
+      select(sel.ar, sel.ac, p.r, p.c);
+      return;
+    }
+    select(p.r, p.c);
+    mode = 'cells';
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!mode) return;
+    var p = posOf(document.elementFromPoint(e.clientX, e.clientY));
+    if (mode === 'fill') {
+      if (p) { fillTo = Math.max(p.r, rect().r2); paint(); }
+      return;
+    }
+    if (!p || p.c === -2) return;
+    if (mode === 'rows') { if (p.r !== sel.fr) select(sel.ar, 0, p.r, COLS.length - 1); return; }
+    var c = p.c < 0 ? 0 : p.c;
+    if (p.r !== sel.fr || c !== sel.fc) {
+      select(sel.ar, sel.ac, p.r, c);
+      e.preventDefault();
+      table.classList.add('qa-dragging');
+      var a = document.activeElement;   // 끌면서 생긴 글자 선택은 지운다
+      if (a && a.setSelectionRange && body.contains(a)) { try { a.setSelectionRange(a.value.length, a.value.length); } catch (er) {} }
+    }
+  });
+  document.addEventListener('mouseup', function () {
+    if (!mode) return;
+    if (mode === 'fill' && fillTo !== null) {
+      var x = rect(), h = x.r2 - x.r1 + 1, ch = [];
+      for (var r = x.r2 + 1; r <= fillTo; r++) for (var c = x.c1; c <= x.c2; c++) {
+        var src = cellInput(x.r1 + ((r - x.r1) % h), c), dst = cellInput(r, c);
+        if (src && dst) ch.push([dst, src.value]);
+      }
+      setCells(ch);
+      if (fillTo > x.r2) { mode = null; select(x.r1, x.c1, fillTo, x.c2); }
+    }
+    mode = null; fillTo = null;
+    table.classList.remove('qa-dragging');
+    paint();
+  });
+
+  // 칸에 포커스가 들어오면(Tab, 클릭 등) 그 칸 하나만 선택 (범위의 기준 칸이면 범위 유지)
+  body.addEventListener('focusin', function (e) {
+    if (mode) return;
+    var p = posOf(e.target);
+    if (!p || p.c < 0) return;
+    if (sel && isMulti() && p.r === sel.ar && p.c === sel.ac) return;
+    select(p.r, p.c);
+  });
+
+  // ---- 키보드 ----
+  body.addEventListener('keydown', function (e) {
     var input = e.target;
     if (!input || input.tagName !== 'INPUT') return;
-    var tr = input.closest('tr'), col = input.dataset.col;
-    if (e.key === 'Enter' || e.key === 'ArrowDown') {
-      // 자동완성 목록을 고르는 중의 ↓ 는 방해하지 않는다 (Enter 만 아래 칸 이동)
-      if (e.key === 'ArrowDown' && (col === 'category' || col === 'brand') && input.value === '') return;
+    var p = posOf(input); if (!p || p.c < 0) return;
+    var mod = e.ctrlKey || e.metaKey;
+    var atStart = input.selectionStart === 0 && input.selectionEnd === 0;
+    var atEnd = input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
+    var allSel = input.selectionStart === 0 && input.selectionEnd === input.value.length;
+
+    if (mod && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+      if (!typedSinceBulk && undoBulk()) e.preventDefault();
+      return;
+    }
+    if (mod && (e.key === 'a' || e.key === 'A') && isMulti()) {   // 범위 선택 중 Ctrl+A = 표 전체
+      e.preventDefault(); select(0, 0, body.rows.length - 1, COLS.length - 1); return;
+    }
+    if (e.shiftKey && !mod && /^Arrow/.test(e.key)) {
+      var horiz = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
+      if (horiz && !isMulti() && !(allSel || input.value === '' || (e.key === 'ArrowLeft' ? atStart : atEnd))) return;
       e.preventDefault();
-      if (!tr.nextElementSibling) qaAddRows(1);
-      focusCell(tr.nextElementSibling, col);
-    } else if (e.key === 'ArrowUp') {
-      if (tr.previousElementSibling) { e.preventDefault(); focusCell(tr.previousElementSibling, col); }
+      if (!sel) select(p.r, p.c);
+      var fr = sel.fr, fc = sel.fc;
+      if (e.key === 'ArrowUp') fr = Math.max(0, fr - 1);
+      if (e.key === 'ArrowDown') { fr = fr + 1; ensureRows(fr + 1); }
+      if (e.key === 'ArrowLeft') fc = Math.max(0, fc - 1);
+      if (e.key === 'ArrowRight') fc = Math.min(COLS.length - 1, fc + 1);
+      select(sel.ar, sel.ac, fr, fc);
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && isMulti()) { e.preventDefault(); clearSelection(); return; }
+    if (e.key === 'Escape' && isMulti()) { e.preventDefault(); select(p.r, p.c); return; }
+    if (e.key === 'Enter' || (e.key === 'ArrowDown' && !e.shiftKey)) {
+      // 자동완성 목록을 고르는 중의 ↓ 는 방해하지 않는다 (Enter 만 아래 칸 이동)
+      if (e.key === 'ArrowDown' && (COLS[p.c] === 'category' || COLS[p.c] === 'brand') && input.value === '') return;
+      e.preventDefault();
+      ensureRows(p.r + 2);
+      focusCell(body.rows[p.r + 1], COLS[p.c]);
+    } else if (e.key === 'ArrowUp' && !e.shiftKey) {
+      if (p.r > 0) { e.preventDefault(); focusCell(body.rows[p.r - 1], COLS[p.c]); }
+    } else if (e.key === 'ArrowLeft' && !e.shiftKey && atStart && p.c > 0) {
+      e.preventDefault(); focusCell(body.rows[p.r], COLS[p.c - 1]);
+    } else if (e.key === 'ArrowRight' && !e.shiftKey && atEnd && p.c < COLS.length - 1) {
+      e.preventDefault(); focusCell(body.rows[p.r], COLS[p.c + 1]);
     }
   });
 
-  // ---- 엑셀/표 붙여넣기: 탭·줄바꿈으로 나뉜 값을 눌러둔 칸부터 채운다 ----
-  $('qaBody').addEventListener('paste', function (e) {
+  // ---- 복사 / 잘라내기: 여러 칸이면 엑셀 형식(탭/줄바꿈), 한 칸이면 글자를 고르지 않았을 때 칸 전체 ----
+  function onCopy(e, cut) {
+    var a = document.activeElement;
+    if (!sel || !a || !body.contains(a)) return;
+    if (!isMulti() && a.selectionStart !== a.selectionEnd) return;   // 칸 안 일부 글자 복사는 기본 동작
+    e.preventDefault();
+    e.clipboardData.setData('text/plain', selectionText());
+    if (cut) clearSelection();
+  }
+  document.addEventListener('copy', function (e) { onCopy(e, false); });
+  document.addEventListener('cut', function (e) { onCopy(e, true); });
+
+  // ---- 붙여넣기: 선택 범위의 왼쪽 위 칸부터 채운다. 값 하나를 여러 칸에 붙이면 전부 같은 값 ----
+  function parseClip(text) {
+    var lines = text.replace(/\r\n?/g, '\n').split('\n');
+    while (lines.length && lines[lines.length - 1] === '') lines.pop();
+    return lines.map(function (l) { return l.split('\t').map(function (v) { return v.trim(); }); });
+  }
+  body.addEventListener('paste', function (e) {
     var input = e.target;
     if (!input || input.tagName !== 'INPUT') return;
     var text = (e.clipboardData || window.clipboardData).getData('text');
-    if (!text || (text.indexOf('\t') === -1 && text.indexOf('\n') === -1)) return; // 한 칸 붙여넣기는 기본 동작
+    if (!text) return;
+    var m = parseClip(text);
+    if (!m.length) return;
+    var single = m.length === 1 && m[0].length === 1;
+    if (single && !isMulti()) return;                 // 한 칸에 한 값: 기본 붙여넣기(글자 중간에 넣기 가능)
     e.preventDefault();
-    var lines = text.replace(/\r/g, '').split('\n');
-    while (lines.length && lines[lines.length - 1] === '') lines.pop();
-    var tr = input.closest('tr');
-    var startCol = COLS.indexOf(input.dataset.col);
-    lines.forEach(function (line, li) {
-      if (!tr) { qaAddRows(1); tr = $('qaBody').lastElementChild; }
-      line.split('\t').forEach(function (cell, ci) {
-        var col = COLS[startCol + ci];
-        if (!col) return;
-        tr.querySelector('input[data-col="' + col + '"]').value = cell.trim();
-      });
-      if (li < lines.length - 1) tr = tr.nextElementSibling;
-    });
-    $('qaBody').querySelectorAll('input').forEach(markBad);
-    updateCount();
+    var p = posOf(input);
+    var x = isMulti() ? rect() : { r1: p.r, r2: p.r, c1: p.c, c2: p.c };
+    var mh = m.length, mw = Math.max.apply(null, m.map(function (r) { return r.length; }));
+    var rh = x.r2 - x.r1 + 1, rw = x.c2 - x.c1 + 1;
+    // 선택 범위가 붙여넣을 표의 배수 크기면 반복해서 채운다 (엑셀과 같은 동작)
+    var outH = (rh > mh && rh % mh === 0) ? rh : mh;
+    var outW = (rw > mw && rw % mw === 0) ? rw : mw;
+    ensureRows(x.r1 + outH);
+    var ch = [];
+    for (var i = 0; i < outH; i++) for (var j = 0; j < outW; j++) {
+      var inp = cellInput(x.r1 + i, x.c1 + j);
+      var v = (m[i % mh] || [])[j % mw];
+      if (inp && v !== undefined) ch.push([inp, v]);
+    }
+    setCells(ch);
+    select(x.r1, x.c1, x.r1 + outH - 1, Math.min(x.c1 + outW - 1, COLS.length - 1));
   });
 
   function markBad(input) {
@@ -201,6 +432,7 @@
   $('qaBody').addEventListener('input', function (e) {
     var input = e.target;
     if (input.tagName !== 'INPUT') return;
+    typedSinceBulk = true;   // 직접 타이핑한 뒤의 Ctrl+Z 는 브라우저 기본 되돌리기
     markBad(input);
     input.closest('tr').classList.remove('qa-err');
     updateCount();

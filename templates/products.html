@@ -3,10 +3,9 @@
 <h1><svg class="i3d page-icon" aria-hidden="true"><use href="#i3d-package"></use></svg>제품 관리</h1>
 <div class="subtitle">제품명을 검색하거나 '전체 보기'를 클릭하여 목록을 확인하세요.</div>
 
-<!-- 다중 등록 탭 -->
+<!-- 등록 탭 -->
 <div class="tab-row">
   <button class="tab-btn active" data-tab="single" onclick="switchProductTab('single')">단일 등록</button>
-  <button class="tab-btn" data-tab="multi" onclick="switchProductTab('multi')">다중 등록</button>
   <button class="tab-btn" data-tab="quick" onclick="switchProductTab('quick')">⚡ 간편 추가</button>
 </div>
 
@@ -59,22 +58,6 @@
         <button onclick="addProduct(true)" style="width:100%" title="지금 입력한 정보로 등록하고, 입력칸은 그대로 남겨둡니다. 이름만 바꿔서 바로 또 등록할 수 있어요.">📑 등록 후 복사해서 또 만들기</button>
       </div>
     </div>
-  </div>
-</div>
-
-<!-- 다중 등록 -->
-<div id="tab-multi" class="tab-content" style="display:none;">
-  <div class="card">
-    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
-      <button onclick="addProductRow()" class="primary" style="padding:4px 12px;">+ 제품 추가</button>
-      <button onclick="removeProductRow()" class="danger" style="padding:4px 12px;">- 마지막 제품 제거</button>
-      <label style="font-size:12px; color:var(--text-light); display:flex; align-items:center; gap:4px;">
-        <input type="checkbox" id="autoCopy" checked> 이전 카드 값 자동 복사
-      </label>
-      <button onclick="saveMultiProducts()" class="success" style="padding:4px 16px;">💾 모두 저장</button>
-      <span id="multiSaveStatus" style="font-size:12px; color:var(--text-light);"></span>
-    </div>
-    <div id="productRows"></div>
   </div>
 </div>
 
@@ -240,7 +223,6 @@ let debounceTimer;
 let editingProductId = null;
 let selectedProductIds = new Set();
 let initialLoadDone = false;
-let productRowCount = 1;
 
 // ---------- 자동 계산 ----------
 function autoCalcCardCost() {
@@ -272,218 +254,10 @@ function switchProductTab(tab) {
   document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
   document.getElementById(`tab-${tab}`).style.display = 'block';
   
-  // 🔥 최적화: multi 탭일 때만 렌더링
-  if (tab === 'multi' && !document.querySelector('#productRows .product-row')) {
-    renderProductRows();
-  }
   if (tab === 'quick' && history.replaceState) {
     history.replaceState(null, '', '#quick');
   } else if (history.replaceState && location.hash === '#quick') {
     history.replaceState(null, '', location.pathname + location.search);
-  }
-}
-
-// ---------- 다중 등록 행 관리 ----------
-// 지금 입력된 카드 값들을 읽어둔다 (카드를 늘리거나 줄이거나 복제해도 입력값이 사라지지 않게)
-function snapshotProductRows() {
-  return Array.from(document.querySelectorAll('#productRows .product-row')).map(row => ({
-    name: row.querySelector('.multi-name')?.value || '',
-    brand: row.querySelector('.multi-brand')?.value || '',
-    category: row.querySelector('.multi-category')?.value || '',
-    cost: row.querySelector('.multi-cost')?.value ?? '0',
-    sale: row.querySelector('.multi-sale')?.value ?? '0',
-    qty: row.querySelector('.multi-qty')?.value ?? '0',
-    store: row.querySelector('.multi-store')?.value || ''
-  }));
-}
-
-function renderProductRows(values) {
-  const container = document.getElementById('productRows');
-  let html = '';
-  for (let i = 0; i < productRowCount; i++) {
-    const copyAttr = i > 0 && document.getElementById('autoCopy').checked ? 'data-copy-from="0"' : '';
-    html += `
-      <div class="product-row card" style="padding:16px; margin-bottom:8px; border:1px solid var(--border);" data-index="${i}" ${copyAttr}>
-        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:8px; align-items:end;">
-          <div class="form-field"><label>제품명</label><input type="text" class="multi-name" placeholder="제품명" value=""></div>
-          <div class="form-field"><label>브랜드</label><input type="text" class="multi-brand" placeholder="브랜드명 직접 입력"></div>
-          <div class="form-field"><label>카테고리</label>
-            <select class="multi-category" style="width:100%;">
-              <option value="">선택</option>
-              ${categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="form-field"><label>원가</label><input type="number" class="multi-cost" placeholder="0" value="0"></div>
-          <div class="form-field"><label>판매가</label><input type="number" class="multi-sale" placeholder="0" value="0"></div>
-          <div class="form-field"><label>초기 재고</label><input type="number" class="multi-qty" placeholder="0" value="0"></div>
-          <div class="form-field"><label>매장</label>
-            <select class="multi-store" style="width:100%;">
-              <option value="">전체</option>
-              ${stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div style="display:flex; gap:4px; align-items:center; justify-content:flex-end;">
-            <button onclick="duplicateProductRow(${i})" title="이 카드의 입력값을 그대로 복사해 바로 아래에 새 카드를 만듭니다." style="padding:2px 8px; font-size:12px;">⧉ 복제</button>
-            <button onclick="removeProductRow(${i})" class="danger" style="padding:2px 8px; font-size:12px;">✕</button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-  container.innerHTML = html;
-
-  if (values) {
-    container.querySelectorAll('.product-row').forEach((row, i) => {
-      const v = values[i];
-      if (!v) return;
-      row.querySelector('.multi-name').value = v.name;
-      row.querySelector('.multi-brand').value = v.brand;
-      row.querySelector('.multi-category').value = v.category;
-      row.querySelector('.multi-cost').value = v.cost;
-      row.querySelector('.multi-sale').value = v.sale;
-      row.querySelector('.multi-qty').value = v.qty;
-      row.querySelector('.multi-store').value = v.store;
-    });
-  }
-  
-  if (document.getElementById('autoCopy').checked) {
-    const firstRow = container.querySelector('.product-row');
-    if (firstRow) {
-      const inputs = firstRow.querySelectorAll('input, select');
-      inputs.forEach(input => {
-        input.addEventListener('change', function() {
-          copyFirstRowValues();
-        });
-        input.addEventListener('input', function() {
-          copyFirstRowValues();
-        });
-      });
-    }
-  }
-}
-
-function copyFirstRowValues() {
-  if (!document.getElementById('autoCopy').checked) return;
-  const firstRow = document.querySelector('#productRows .product-row');
-  if (!firstRow) return;
-  
-  const firstValues = {
-    brand: firstRow.querySelector('.multi-brand')?.value || '',
-    category: firstRow.querySelector('.multi-category')?.value || '',
-    cost: firstRow.querySelector('.multi-cost')?.value || '0',
-    sale: firstRow.querySelector('.multi-sale')?.value || '0',
-    qty: firstRow.querySelector('.multi-qty')?.value || '0',
-    store: firstRow.querySelector('.multi-store')?.value || ''
-  };
-  
-  document.querySelectorAll('#productRows .product-row').forEach((row, idx) => {
-    if (idx === 0) return;
-    if (row.querySelector('.multi-brand')) row.querySelector('.multi-brand').value = firstValues.brand;
-    if (row.querySelector('.multi-category')) row.querySelector('.multi-category').value = firstValues.category;
-    if (row.querySelector('.multi-cost')) row.querySelector('.multi-cost').value = firstValues.cost;
-    if (row.querySelector('.multi-sale')) row.querySelector('.multi-sale').value = firstValues.sale;
-    if (row.querySelector('.multi-qty')) row.querySelector('.multi-qty').value = firstValues.qty;
-    if (row.querySelector('.multi-store')) row.querySelector('.multi-store').value = firstValues.store;
-  });
-}
-
-function addProductRow() {
-  if (productRowCount >= 10) {
-    toast('최대 10개까지 추가할 수 있습니다.', true, '⚠️');
-    return;
-  }
-  const snap = snapshotProductRows();
-  productRowCount++;
-  renderProductRows(snap);
-}
-
-// 카드 하나의 입력값(제품명 포함)을 그대로 복사해 바로 아래에 새 카드로 끼워 넣는다.
-function duplicateProductRow(index) {
-  if (productRowCount >= 10) {
-    toast('최대 10개까지 추가할 수 있습니다.', true, '⚠️');
-    return;
-  }
-  const snap = snapshotProductRows();
-  if (!snap[index]) return;
-  snap.splice(index + 1, 0, { ...snap[index] });
-  productRowCount++;
-  renderProductRows(snap);
-}
-
-function removeProductRow(index) {
-  if (productRowCount <= 1) {
-    toast('최소 1개는 남겨야 합니다.', true, '⚠️');
-    return;
-  }
-  const snap = snapshotProductRows();
-  // 인덱스가 없으면(마지막 제품 제거 버튼) 마지막 카드를, 있으면 그 카드를 지운다.
-  snap.splice(Number.isInteger(index) ? index : snap.length - 1, 1);
-  productRowCount--;
-  renderProductRows(snap);
-}
-
-async function saveMultiProducts() {
-  const rows = document.querySelectorAll('#productRows .product-row');
-  const items = [];
-  let hasError = false;
-  
-  rows.forEach(row => {
-    const name = row.querySelector('.multi-name')?.value.trim();
-    if (!name) {
-      toast('모든 제품명을 입력해주세요.', true, '⚠️');
-      hasError = true;
-      return;
-    }
-    const brand_name = row.querySelector('.multi-brand')?.value.trim() || null;
-    const category_id = row.querySelector('.multi-category')?.value || null;
-    const cost = parseInt(row.querySelector('.multi-cost')?.value) || 0;
-    const sale = parseInt(row.querySelector('.multi-sale')?.value) || 0;
-    const qty = parseInt(row.querySelector('.multi-qty')?.value) || 0;
-    const store_id = row.querySelector('.multi-store')?.value || null;
-    
-    const cardCost = sale > 0 ? Math.round(cost + sale - (sale / 1.1 * 0.975)) : 0;
-    
-    items.push({
-      name, brand_name, category_id, cost_price: cost, 
-      card_cost_price: cardCost, sale_price: sale, 
-      initial_qty: qty, store_id: store_id || null
-    });
-  });
-  
-  if (hasError || items.length === 0) return;
-  
-  const status = document.getElementById('multiSaveStatus');
-  status.textContent = '저장 중...';
-  status.style.color = 'var(--text-light)';
-  
-  let success = 0;
-  let failed = 0;
-  
-  for (const item of items) {
-    try {
-      let brand_id = null;
-      if (item.brand_name) {
-        const result = await api('/api/brands', { method: 'POST', body: JSON.stringify({ name: item.brand_name }) });
-        brand_id = result.id;
-      }
-      const payload = { ...item, brand_id };
-      delete payload.brand_name;
-      await api('/api/products', { method: 'POST', body: JSON.stringify(payload) });
-      success++;
-    } catch (e) {
-      failed++;
-      console.error('등록 실패:', item.name, e);
-    }
-  }
-  
-  status.textContent = `✅ ${success}개 성공${failed > 0 ? `, ❌ ${failed}개 실패` : ''}`;
-  status.style.color = failed > 0 ? 'var(--danger)' : 'var(--accent)';
-  
-  if (success > 0) {
-    toast(`${success}개 제품이 등록되었습니다.`, failed > 0, failed > 0 ? '⚠️' : '✅');
-    load();
-    productRowCount = 1;
-    renderProductRows();
   }
 }
 
@@ -528,11 +302,6 @@ async function loadCategories() {
     const opts = categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
     catSelect.innerHTML = '<option value="">미분류</option>' + opts;
     filterSelect.innerHTML = '<option value="">전체 카테고리</option><option value="__none__">미분류</option>' + opts;
-    document.querySelectorAll('.multi-category').forEach(sel => {
-      const current = sel.value;
-      sel.innerHTML = '<option value="">선택</option>' + opts;
-      sel.value = current;
-    });
   } catch (e) {
     console.error('카테고리 로드 오류:', e);
     toast('카테고리를 불러오는 중 오류가 발생했습니다.', true, '⚠️');
@@ -555,11 +324,6 @@ async function loadStoresForSelects() {
     addStoreSelect.innerHTML = '<option value="">전체 매장</option>' + opts;
     filterStoreSelect.innerHTML = '<option value="">전체 매장</option>' + opts;
     uploadStoreSelect.innerHTML = '<option value="">전체 매장</option>' + opts;
-    document.querySelectorAll('.multi-store').forEach(sel => {
-      const current = sel.value;
-      sel.innerHTML = '<option value="">전체</option>' + opts;
-      sel.value = current;
-    });
 
     // 🔥 전역 매장 ID 적용
     const globalStoreId = localStorage.getItem('global_store_id');
@@ -1281,7 +1045,6 @@ document.addEventListener('DOMContentLoaded', function() {
   loadBrands();
   loadStoresForSelects();
   load();
-  renderProductRows();
   if (location.hash === '#quick') switchProductTab('quick');
 });
 
